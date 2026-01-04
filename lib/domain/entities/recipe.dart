@@ -4,21 +4,23 @@ class Recipe {
   final String id;
   final String title;
   final String description;
-  final int preparationTime; // in minutes
-  final int cookingTime; // in minutes
+  final int preparationTime;
+  final int cookingTime;
+  final int servings;
   final List<RecipeIngredient> ingredients;
   final List<String> instructions;
   final String category;
-  final double rating; // 0 to 5
+  final double rating;
   final DateTime createdAt;
   final bool isFavorite;
 
-  Recipe({
+  const Recipe({
     required this.id,
     required this.title,
     required this.description,
     required this.preparationTime,
     required this.cookingTime,
+    required this.servings,
     required this.ingredients,
     required this.instructions,
     required this.category,
@@ -27,16 +29,15 @@ class Recipe {
     this.isFavorite = false,
   });
 
-  // Getter for total time
   int get totalTime => preparationTime + cookingTime;
 
-  // Copy with modifications
   Recipe copyWith({
     String? id,
     String? title,
     String? description,
     int? preparationTime,
     int? cookingTime,
+    int? servings,
     List<RecipeIngredient>? ingredients,
     List<String>? instructions,
     String? category,
@@ -50,6 +51,7 @@ class Recipe {
       description: description ?? this.description,
       preparationTime: preparationTime ?? this.preparationTime,
       cookingTime: cookingTime ?? this.cookingTime,
+      servings: servings ?? this.servings,
       ingredients: ingredients ?? this.ingredients,
       instructions: instructions ?? this.instructions,
       category: category ?? this.category,

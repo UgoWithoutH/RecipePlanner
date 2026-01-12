@@ -7,7 +7,8 @@ class FirebaseCategoryRepository {
     'categories',
   );
 
-  /// Fetch all categories from Firestore and convert to List<Map<String, String>>
+  // ignore: unintended_html_in_doc_comment
+  /// Fetch all categories from Firestore and convert to List<Map<String, String\u003c\u003e>>
   Future<List<Category>> getCategories() async {
     final snap = await _categories.get();
 

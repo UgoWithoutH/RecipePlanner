@@ -1,18 +1,36 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:recipe_planner/data/services/seed_data_service.dart';
+
 import 'presentation/pages/recipes_page.dart';
-import 'presentation/pages/planner_page.dart'; // Planner page
-import 'presentation/pages/ingredients_page.dart'; // <-- Ingredients page
+import 'presentation/pages/planner_page.dart';
+import 'presentation/pages/ingredients_page.dart';
 import 'presentation/providers/auth_notifier.dart';
+
 import 'firebase_options.dart';
 
-void main() async {
+const bool useTestData = true;
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  if (useTestData) {
+    await _loadTestDataIfNeeded();
+  }
+
   runApp(const ProviderScope(child: MyApp()));
+}
+
+Future<void> _loadTestDataIfNeeded() async {
+  final firestore = FirebaseFirestore.instance;
+  final recipesSnapshot = await firestore.collection('recipes').limit(1).get();
+  if (recipesSnapshot.docs.isNotEmpty) return;
+  await seedAllTestData();
 }
 
 class MyApp extends StatelessWidget {
@@ -42,28 +60,18 @@ class _AuthWrapper extends ConsumerWidget {
       loading: () => const Scaffold(
         body: Center(child: CircularProgressIndicator()),
       ),
-      error: (error, stackTrace) => Scaffold(
+      error: (_, __) => Scaffold(
         body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text('Erreur d\'authentification'),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () {
-                  ref.read(authNotifierProvider.notifier).signInAnonymously();
-                },
-                child: const Text('Réessayer'),
-              ),
-            ],
+          child: ElevatedButton(
+            onPressed: () {
+              ref.read(authNotifierProvider.notifier).signInAnonymously();
+            },
+            child: const Text('Réessayer'),
           ),
         ),
       ),
-      data: (user) => user != null 
-          ? const HomePage() 
-          : const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
-            ),
+      data: (user) =>
+          user != null ? const HomePage() : const SizedBox.shrink(),
     );
   }
 }
@@ -78,28 +86,19 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
 
-  // List of pages to display
   final List<Widget> _pages = const [
-    PlannerPage(),      // Index 0
-    RecipesPage(),      // Index 1
-    IngredientsPage(),  // Index 2
+    PlannerPage(),
+    RecipesPage(),
+    IngredientsPage(),
   ];
-
-  void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _pages[_selectedIndex], // Show selected page
+      body: _pages[_selectedIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
-        onTap: _onItemTapped,
-        selectedItemColor: Colors.blue,
-        unselectedItemColor: Colors.grey,
+        onTap: (index) => setState(() => _selectedIndex = index),
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.calendar_today),

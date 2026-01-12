@@ -13,6 +13,7 @@ class Recipe {
   final double rating;
   final DateTime createdAt;
   final bool isFavorite;
+  final bool addExtraMeal;
 
   const Recipe({
     required this.id,
@@ -27,6 +28,7 @@ class Recipe {
     this.rating = 0.0,
     required this.createdAt,
     this.isFavorite = false,
+    this.addExtraMeal = false,
   });
 
   int get totalTime => preparationTime + cookingTime;
@@ -44,6 +46,7 @@ class Recipe {
     double? rating,
     DateTime? createdAt,
     bool? isFavorite,
+    bool? addExtraMeal,
   }) {
     return Recipe(
       id: id ?? this.id,
@@ -58,6 +61,7 @@ class Recipe {
       rating: rating ?? this.rating,
       createdAt: createdAt ?? this.createdAt,
       isFavorite: isFavorite ?? this.isFavorite,
+      addExtraMeal: addExtraMeal ?? this.addExtraMeal,
     );
   }
 }

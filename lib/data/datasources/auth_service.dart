@@ -10,11 +10,11 @@ class AuthService {
       final UserCredential userCredential =
           await _auth.signInAnonymously();
       return userCredential.user;
-    } on FirebaseAuthException catch (e) {
-      print('Erreur d\'authentification: ${e.code} - ${e.message}');
+    } on FirebaseAuthException catch (e) { // ignore: unused_catch_clause
+      // print('Erreur d\'authentification: ${e.code} - ${e.message}');
       return null;
-    } catch (e) {
-      print('Erreur inattendue: $e');
+    } catch (_) {
+      // print('Erreur inattendue');
       return null;
     }
   }

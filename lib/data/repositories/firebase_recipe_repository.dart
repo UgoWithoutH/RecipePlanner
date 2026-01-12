@@ -51,6 +51,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
   }
 
   /// Delete a recipe by its ID
+  @override
   Future<void> deleteRecipe(String id) async {
     // Try to find document by stored 'id' field first
     final query = await _recipes.where('id', isEqualTo: id).limit(1).get();

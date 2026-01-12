@@ -24,6 +24,8 @@ class CreateRecipePage extends StatefulWidget {
 }
 
 class _CreateRecipePageState extends State<CreateRecipePage> {
+  // Champ pour le switch addExtraMeal
+  bool _addExtraMeal = false;
   final _formKey = GlobalKey<FormState>();
   bool _isSaving = false;
 
@@ -91,6 +93,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
       _selectedCategoryId = r.category;
       _ingredients.addAll(r.ingredients);
       _instructions.addAll(r.instructions);
+      _addExtraMeal = r.addExtraMeal;
       _loadExistingServings();
     }
   }
@@ -118,11 +121,9 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     if (mounted) setState(() => _users = users);
   }
 
-  /// Load existing servings for the recipe if editing
   Future<void> _loadExistingServings() async {
     if (widget.recipe == null) return;
 
-    // Fetch servings for this recipe
     final servings = await _userServingRepo.fetchServingsForRecipe(
       widget.recipe!.id,
     );
@@ -185,7 +186,6 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   Future<void> _saveRecipe() async {
     if (!_formKey.currentState!.validate()) return;
 
-    // Check category
     if (_selectedCategoryId == null) {
       ScaffoldMessenger.of(
         context,
@@ -193,7 +193,6 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
       return;
     }
 
-    // Check recipe title uniqueness if creating new
     if (widget.recipe == null &&
         await _recipeTitleExists(_titleController.text)) {
       ScaffoldMessenger.of(
@@ -202,7 +201,6 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
       return;
     }
 
-    // Check ingredients and instructions
     if (_ingredients.isEmpty || _instructions.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Add ingredients and instructions')),
@@ -215,7 +213,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     try {
       String recipeId;
       final recipe = Recipe(
-        id: widget.recipe?.id ?? '', // leave empty if new
+        id: widget.recipe?.id ?? '',
         title: _titleController.text.trim().toLowerCase(),
         description: _descriptionController.text,
         preparationTime: int.parse(_preparationTimeController.text),
@@ -225,13 +223,11 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
         ingredients: _ingredients,
         instructions: _instructions,
         createdAt: widget.recipe?.createdAt ?? DateTime.now(),
+        addExtraMeal: _addExtraMeal,
       );
 
       if (widget.recipe == null) {
-        // Create new recipe and get the generated ID
-        recipeId = await _recipeRepo.createRecipe(
-          recipe,
-        ); // make sure this returns the doc ID
+        recipeId = await _recipeRepo.createRecipe(recipe);
       } else {
         await _recipeRepo.updateRecipe(recipe);
         recipeId = recipe.id;
@@ -283,7 +279,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: DropdownButtonFormField<String>(
-        value: _selectedCategoryId,
+        initialValue: _selectedCategoryId,
         decoration: const InputDecoration(
           labelText: 'Category',
           border: OutlineInputBorder(),
@@ -320,11 +316,9 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                 controller.selection = _ingredientNameController.selection;
               }
             });
-
             controller.addListener(() {
               _ingredientNameController.value = controller.value;
             });
-
             return TextFormField(
               controller: controller,
               focusNode: focusNode,
@@ -355,7 +349,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
             const SizedBox(width: 8),
             Expanded(
               child: DropdownButtonFormField<Unit>(
-                value: _selectedIngredientUnit,
+                initialValue: _selectedIngredientUnit,
                 decoration: const InputDecoration(border: OutlineInputBorder()),
                 items: _units
                     .map(
@@ -381,10 +375,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                     child: ListTile(
                       title: Text(ingredient.ingredient.name),
                       subtitle: Text(
-                        '${ingredient.quantity} ${ingredient.unit.label}' +
-                            (ingredient.notes != null
-                                ? ' (${ingredient.notes})'
-                                : ''),
+                        '${ingredient.quantity} ${ingredient.unit.label}${ingredient.notes != null ? ' (${ingredient.notes})' : ''}',
                       ),
                       trailing: IconButton(
                         icon: const Icon(Icons.delete),
@@ -475,7 +466,6 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
         const SizedBox(height: 8),
         Column(
           children: _users.map((user) {
-            // Use existing servings if available
             final lunchController = TextEditingController(
               text: _userServings[user.id]?.lunchServings.toString() ?? '0',
             );
@@ -543,77 +533,188 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     );
   }
 
+  // ------------------------
+  // BUILD PAGE
+  // ------------------------
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.recipe == null ? 'Create Recipe' : 'Edit Recipe'),
-        backgroundColor: Colors.blue,
-      ),
-      body: Stack(
-        children: [
-          SingleChildScrollView(
-            padding: const EdgeInsets.all(16).copyWith(bottom: 250),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildTextField(_titleController, 'Title'),
-                  _buildTextField(
-                    _descriptionController,
-                    'Description',
-                    maxLines: 3,
-                  ),
-                  _buildCategoryDropdown(),
-                  Row(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.only(bottom: 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              /// CUSTOM HEADER (BACK BUTTON + TITLE)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.start,
+                      children: [
+                        /// Back button
+                        _headerIcon(
+                          Icons.arrow_back,
+                          () => Navigator.pop(context),
+                          color: Colors.black87,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+
+                    /// TITLE
+                    Text(
+                      widget.recipe == null ? 'Create Recipe' : 'Edit Recipe',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              /// CONTENT WITH HORIZONTAL PADDING
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: _buildTextField(
-                          _preparationTimeController,
-                          'Prep (min)',
-                          keyboardType: TextInputType.number,
-                        ),
+                      _buildTextField(_titleController, 'Title'),
+                      _buildTextField(
+                        _descriptionController,
+                        'Description',
+                        maxLines: 3,
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildTextField(
-                          _cookingTimeController,
-                          'Cook (min)',
-                          keyboardType: TextInputType.number,
-                        ),
+                      _buildCategoryDropdown(),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildTextField(
+                              _preparationTimeController,
+                              'Prep (min)',
+                              keyboardType: TextInputType.number,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildTextField(
+                              _cookingTimeController,
+                              'Cook (min)',
+                              keyboardType: TextInputType.number,
+                            ),
+                          ),
+                        ],
                       ),
+                      const SizedBox(height: 12),
+                      _buildTextField(
+                        _servingsController,
+                        'Servings',
+                        keyboardType: TextInputType.number,
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Switch(
+                            value: _addExtraMeal,
+                            onChanged: (val) {
+                              setState(() {
+                                _addExtraMeal = val;
+                              });
+                            },
+                          ),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              "Ajouter un repas supplémentaire pour tous les utilisateurs dans le planning",
+                              style: TextStyle(fontSize: 16),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+                      _buildIngredientsSection(),
+                      const SizedBox(height: 24),
+                      _buildInstructionsSection(),
+                      _buildUserServingsSection(),
+                      const SizedBox(height: 80), // space for FAB
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  _buildTextField(
-                    _servingsController,
-                    'Servings',
-                    keyboardType: TextInputType.number,
-                  ),
-                  const SizedBox(height: 24),
-                  _buildIngredientsSection(),
-                  const SizedBox(height: 24),
-                  _buildInstructionsSection(),
-                  _buildUserServingsSection(),
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _isSaving ? null : _saveRecipe,
-                      child: const Text('Save Recipe'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+
+      /// FLOATING ACTION BUTTON SAVE
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 16, right: 16),
+        child: Material(
+          borderRadius: BorderRadius.circular(24),
+          elevation: 6,
+          child: Ink(
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF6A5AE0), Color(0xFF4FC3F7)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(24),
+              onTap: _isSaving ? null : _saveRecipe,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 14,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.save, color: Colors.white),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Save Recipe',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
-          if (_isSaving)
-            Container(
-              color: Colors.black45,
-              child: const Center(child: CircularProgressIndicator()),
-            ),
-        ],
+        ),
+      ),
+    );
+  }
+
+  // ------------------------
+  // HEADER ICON BUILDER
+  // ------------------------
+  Widget _headerIcon(IconData icon, VoidCallback? onTap, {Color? color}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Colors.black12,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(icon, color: color ?? Colors.black87),
       ),
     );
   }

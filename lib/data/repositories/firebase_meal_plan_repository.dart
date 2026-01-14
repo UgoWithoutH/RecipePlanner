@@ -6,10 +6,20 @@ class FirebaseMealPlanRepository {
   final CollectionReference _mealPlans =
       FirebaseFirestore.instance.collection('mealPlans');
 
-  /// Save a new meal plan to Firestore
+  /// Save a new meal plan to Firestore or update an existing one
   Future<String> saveMealPlan(MealPlan mealPlan) async {
     final data = mealPlan.toFirestore();
 
+    // If the plan already has an ID, update the existing document
+    if (mealPlan.id.isNotEmpty) {
+      await _mealPlans.doc(mealPlan.id).set({
+        ...data,
+        'id': mealPlan.id,
+      });
+      return mealPlan.id;
+    }
+
+    // Otherwise, create a new document
     final docRef = _mealPlans.doc();
     await docRef.set({
       ...data,
@@ -66,6 +76,8 @@ class FirebaseMealPlanRepository {
           type: mealType,
           totalServings: (mealData['totalServings'] as num?)?.toInt() ?? 1,
           userServings: userServingsMap,
+          recipeMultiplier: (mealData['recipeMultiplier'] as num?)?.toInt() ?? 1,
+          isLeftoverMeal: mealData['isLeftoverMeal'] as bool? ?? false,
         );
       }).toList();
 
@@ -125,6 +137,8 @@ class FirebaseMealPlanRepository {
         type: mealType,
         totalServings: (mealData['totalServings'] as num?)?.toInt() ?? 1,
         userServings: userServingsMap,
+        recipeMultiplier: (mealData['recipeMultiplier'] as num?)?.toInt() ?? 1,
+        isLeftoverMeal: mealData['isLeftoverMeal'] as bool? ?? false,
       );
     }).toList();
 

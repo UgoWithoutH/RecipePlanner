@@ -115,6 +115,51 @@ class FirebaseRecipeRepository implements RecipeRepository {
     }).toList();
   }
 
+  /// Fetch all recipes ordered by creation date
+  @override
+  Future<List<Recipe>> fetchAllRecipes() async {
+    final snapshot = await _recipes.orderBy('createdAt', descending: true).get();
+
+    return snapshot.docs.map((doc) {
+      final data = doc.data() as Map<String, dynamic>;
+
+      final ingredients = (data['ingredients'] as List<dynamic>? ?? []).map((i) {
+        return RecipeIngredient(
+          ingredient: Ingredient(
+            id: i['ingredientId'],
+            name: '',
+          ),
+          quantity: (i['quantity'] as num).toDouble(),
+          unit: Unit.values.firstWhere(
+            (u) => u.label == i['unit'],
+            orElse: () => Unit.g,
+          ),
+          notes: i['notes'],
+        );
+      }).toList();
+
+      final id = (data['id'] as String?)?.isNotEmpty == true
+          ? data['id'] as String
+          : doc.id;
+
+      return Recipe(
+        id: id,
+        title: data['title'] ?? '',
+        description: data['description'] ?? '',
+        preparationTime: (data['preparationTime'] as num?)?.toInt() ?? 0,
+        cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
+        servings: (data['servings'] as num?)?.toInt() ?? 1,
+        category: data['category'] ?? '',
+        ingredients: ingredients,
+        instructions: List<String>.from(data['instructions'] ?? []),
+        createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
+        isFavorite: data['isFavorite'] ?? false,
+        rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
+        addExtraMeal: data['addExtraMeal'] ?? false,
+      );
+    }).toList();
+  }
+
   /// Convert a Recipe object into a Firestore map
   Map<String, dynamic> _recipeToMap(Recipe recipe) {
     return {

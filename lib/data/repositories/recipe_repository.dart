@@ -8,4 +8,6 @@ abstract class RecipeRepository {
   Future<void> deleteRecipe(String id);
 
   Future<List<Recipe>> fetchRecipesByTitle(String title);
+
+  Future<List<Recipe>> fetchAllRecipes();
 }

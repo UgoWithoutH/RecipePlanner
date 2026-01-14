@@ -132,83 +132,168 @@ class _IngredientsPageState extends State<IngredientsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 🔹 HEADER STYLE IDENTICAL TO RECIPES PAGE
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Ingrédients',
-                    style: GoogleFonts.poppins(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
+      body: Stack(
+        children: [
+          // Background Gradient
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 300,
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFFEFEFFC), Colors.white], // Very subtle purple fading to white
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                ),
               ),
             ),
-
-            // 🔹 LISTE
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : ListView.builder(
-                      padding:
-                          const EdgeInsets.fromLTRB(16, 0, 16, 100),
-                      itemCount: _ingredients.length,
-                      itemBuilder: (_, index) {
-                        final ing = _ingredients[index];
-                        final name = ing['name'] as String;
-                        final id = ing['id'] as String;
-
-                        return Card(
-                          margin:
-                              const EdgeInsets.symmetric(vertical: 6),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
+          ),
+          SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+                  child: Row(
+                    children: [
+                      InkWell(
+                        onTap: () => Navigator.maybePop(context),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.04), 
+                                blurRadius: 4, 
+                                offset: const Offset(0, 2)
+                              )
+                            ]
                           ),
-                          child: ListTile(
-                            title: Text(
-                              name,
-                              style: GoogleFonts.poppins(
-                                fontWeight: FontWeight.w500,
+                          child: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: Colors.black54),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Text(
+                        'Ingrédients',
+                        style: GoogleFonts.poppins(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF1A1A1A),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // List
+                Expanded(
+                  child: _isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : ListView.separated(
+                          padding: const EdgeInsets.only(left: 24, right: 24, bottom: 100),
+                          itemCount: _ingredients.length,
+                          separatorBuilder: (context, index) => const SizedBox(height: 12),
+                          itemBuilder: (_, index) {
+                            final ing = _ingredients[index];
+                            final name = ing['name'] as String;
+                            final id = ing['id'] as String;
+
+                            return Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.grey.withOpacity(0.06),
+                                    blurRadius: 15,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
                               ),
-                            ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.edit),
-                                  onPressed: () =>
-                                      _editIngredientName(id, name),
+                              child: ListTile(
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                                title: Text(
+                                  name,
+                                  style: GoogleFonts.poppins(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 16,
+                                    color: const Color(0xFF2D2D2D),
+                                  ),
                                 ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete),
-                                  onPressed: () =>
-                                      _deleteIngredient(id),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.edit_rounded, color: Colors.blueAccent),
+                                      onPressed: () => _editIngredientName(id, name),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+                                      onPressed: () => _deleteIngredient(id),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
 
-      // 🔹 Consistent FAB
+      // FAB
       floatingActionButton: Padding(
         padding: const EdgeInsets.only(bottom: 16, right: 16),
-        child: FloatingActionButton(
-          onPressed: _addIngredient,
-          child: const Icon(Icons.add),
+        child: Material(
+          borderRadius: BorderRadius.circular(24),
+          elevation: 6,
+          child: Ink(
+            decoration: BoxDecoration(
+              color: const Color(0xFF6A5AE0),
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF6A5AE0).withOpacity(0.4),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
+                )
+              ],
+            ),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(24),
+              onTap: _addIngredient,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 14,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.add_rounded, color: Colors.white),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Ajouter',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );

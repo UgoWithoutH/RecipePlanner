@@ -19,10 +19,6 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  if (useTestData) {
-    await _loadTestDataIfNeeded();
-  }
-
   runApp(const ProviderScope(child: MyApp()));
 }
 
@@ -71,8 +67,46 @@ class _AuthWrapper extends ConsumerWidget {
         ),
       ),
       data: (user) =>
-          user != null ? const HomePage() : const SizedBox.shrink(),
+          user != null ? const _DataLoader() : const SizedBox.shrink(),
     );
+  }
+}
+
+class _DataLoader extends StatefulWidget {
+  const _DataLoader();
+
+  @override
+  State<_DataLoader> createState() => _DataLoaderState();
+}
+
+class _DataLoaderState extends State<_DataLoader> {
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    if (useTestData) {
+      await _loadTestDataIfNeeded();
+    }
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    return const HomePage();
   }
 }
 

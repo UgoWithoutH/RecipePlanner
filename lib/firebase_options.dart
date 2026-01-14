@@ -17,10 +17,7 @@ import 'package:flutter/foundation.dart'
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
-      throw UnsupportedError(
-        'DefaultFirebaseOptions have not been configured for web - '
-        'you can reconfigure this by running the FlutterFire CLI again.',
-      );
+      return web;
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
@@ -64,5 +61,14 @@ class DefaultFirebaseOptions {
     projectId: 'recipe-planner-22416',
     storageBucket: 'recipe-planner-22416.firebasestorage.app',
     iosBundleId: 'com.example.recipePlanner',
+  );
+
+  static const FirebaseOptions web = FirebaseOptions(
+    apiKey: "AIzaSyAc3DMyiOKdamMmOBgoCgx8z-YKawQw5P4",
+    authDomain: "recipe-planner-22416.firebaseapp.com",
+    projectId: "recipe-planner-22416",
+    storageBucket: "recipe-planner-22416.firebasestorage.app",
+    messagingSenderId: "1027242987088",
+    appId: "1:1027242987088:web:801b7c2b204cb421f70b55",
   );
 }

@@ -9,7 +9,6 @@ import '../../data/repositories/firebase_ingredient_repository.dart';
 import '../../data/repositories/firebase_meal_plan_repository.dart';
 import '../../data/repositories/firebase_user_recipe_serving_repository.dart';
 import '../../data/repositories/firebase_user_repository.dart';
-import '../../data/services/seed_data_service.dart';
 
 import '../../domain/entities/ingredient.dart';
 import '../../domain/entities/meal_plan.dart';
@@ -43,6 +42,7 @@ class _PlannerPageState extends State<PlannerPage> {
 
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedMealDate;
+  CalendarFormat? _calendarFormat;
 
   @override
   void initState() {
@@ -56,9 +56,42 @@ class _PlannerPageState extends State<PlannerPage> {
       final plans = await _mealPlanRepo.getAllMealPlans();
       if (plans.isNotEmpty) {
         plans.sort((a, b) => b.startDate.compareTo(a.startDate));
-        _generatedMealPlan = plans.first;
-        _selectedMealDate = plans.first.startDate;
-        _focusedDay = plans.first.startDate;
+        final loadedPlan = plans.first;
+        
+        // Reload full recipe details from Firestore
+        final allRecipes = await _loadRecipes();
+        final recipeMap = {for (var recipe in allRecipes) recipe.id: recipe};
+        
+        // Replace partial recipes with full ones
+        final mealsWithFullRecipes = loadedPlan.meals.map((meal) {
+          final fullRecipe = recipeMap[meal.recipe.id];
+          if (fullRecipe != null) {
+            return Meal(
+              recipe: fullRecipe,
+              date: meal.date,
+              type: meal.type,
+              totalServings: meal.totalServings,
+              userServings: meal.userServings,
+              recipeMultiplier: meal.recipeMultiplier,
+              isLeftoverMeal: meal.isLeftoverMeal,
+            );
+          }
+          return meal;
+        }).toList();
+        
+        setState(() {
+          _generatedMealPlan = MealPlan(
+            id: loadedPlan.id,
+            startDate: loadedPlan.startDate,
+            durationDays: loadedPlan.durationDays,
+            meals: mealsWithFullRecipes,
+            createdAt: loadedPlan.createdAt,
+          );
+          
+          _selectedMealDate = _generatedMealPlan!.startDate;
+          _focusedDay = _generatedMealPlan!.startDate;
+          _calendarFormat = null; // Reset to recalculate format
+        });
       }
     } finally {
       setState(() => _isLoading = false);
@@ -159,6 +192,7 @@ class _PlannerPageState extends State<PlannerPage> {
         _generatedMealPlan = plan;
         _selectedMealDate = plan.startDate;
         _focusedDay = plan.startDate;
+        _calendarFormat = null; // Reset to recalculate format
       });
 
       // Sauvegarde automatique du plan
@@ -180,7 +214,10 @@ class _PlannerPageState extends State<PlannerPage> {
 
         final ingredients = ingredientsData.map((i) {
           return RecipeIngredient(
-            ingredient: Ingredient(id: i['ingredientId'], name: 'ingredient'),
+            ingredient: Ingredient(
+              id: i['ingredientId'] ?? '',
+              name: i['ingredientName'] ?? 'Unknown ingredient',
+            ),
             quantity: (i['quantity'] as num).toDouble(),
             unit: Unit.values.firstWhere(
               (u) => u.label == i['unit'],
@@ -240,59 +277,98 @@ class _PlannerPageState extends State<PlannerPage> {
     return Scaffold(
       floatingActionButton: _generatedMealPlan == null
           ? null
-          : FloatingActionButton.extended(
-              onPressed: () {
-                showModalBottomSheet(
-                  context: context,
-                  isScrollControlled: true,
-                  backgroundColor: Colors.transparent,
-                  builder: (context) => Container(
-                    padding: EdgeInsets.only(
-                      bottom: MediaQuery.of(context).viewInsets.bottom,
-                    ),
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.only(
-                        topLeft: Radius.circular(24),
-                        topRight: Radius.circular(24),
-                      ),
-                    ),
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 40,
-                            height: 4,
-                            decoration: BoxDecoration(
-                              color: Colors.grey[300],
-                              borderRadius: BorderRadius.circular(2),
+          : Padding(
+              padding: const EdgeInsets.only(bottom: 16, right: 16),
+              child: Material(
+                elevation: 6,
+                borderRadius: BorderRadius.circular(24),
+                child: InkWell(
+                  onTap: () {
+                    showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (context) => StatefulBuilder(
+                        builder: (context, setModalState) => Container(
+                          padding: EdgeInsets.only(
+                            bottom: MediaQuery.of(context).viewInsets.bottom,
+                          ),
+                          decoration: const BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.only(
+                              topLeft: Radius.circular(24),
+                              topRight: Radius.circular(24),
                             ),
                           ),
-                          const SizedBox(height: 20),
-                          _ModernPlannerHeader(
-                            selectedStartDate: _selectedStartDate,
-                            selectedDuration: _selectedDuration,
-                            onPickStartDate: _pickStartDate,
-                            onPickDuration: _pickDuration,
-                            onLaunchPlanning: () {
-                              Navigator.pop(context);
-                              _launchPlanning();
-                            },
-                            isLoading: _isLoading,
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 4,
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[300],
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                                const SizedBox(height: 20),
+                                _ModernPlannerHeader(
+                                  selectedStartDate: _selectedStartDate,
+                                  selectedDuration: _selectedDuration,
+                                  onPickStartDate: () async {
+                                    await _pickStartDate();
+                                    setModalState(() {});
+                                  },
+                                  onPickDuration: () {
+                                    _pickDuration();
+                                    setModalState(() {});
+                                  },
+                                  onLaunchPlanning: () {
+                                    Navigator.pop(context);
+                                    _launchPlanning();
+                                  },
+                                  isLoading: _isLoading,
+                                ),
+                              ],
+                            ),
                           ),
-                        ],
+                        ),
                       ),
+                    );
+                  },
+                  borderRadius: BorderRadius.circular(24),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 14,
+                    ),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF6A5AE0), Color(0xFF4FC3F7)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.add, color: Colors.white),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Nouveau plan',
+                          style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                );
-              },
-              backgroundColor: const Color(0xFF6A5AE0),
-              icon: const Icon(Icons.add),
-              label: Text(
-                'Nouveau plan',
-                style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                ),
               ),
             ),
       body: Stack(
@@ -300,7 +376,7 @@ class _PlannerPageState extends State<PlannerPage> {
           SingleChildScrollView(
             child: Column(
               children: [
-                // === NOUVEAU HEADER AVEC SAFEAREA ===
+                // === NEW HEADER WITH SAFEAREA ===
                 SafeArea(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
@@ -319,7 +395,7 @@ class _PlannerPageState extends State<PlannerPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (_generatedMealPlan == null) ...[
+                      if (_generatedMealPlan == null && !_isLoading) ...[
                         const SizedBox(height: 40),
                         Center(
                           child: _ModernPlannerHeader(
@@ -355,12 +431,48 @@ class _PlannerPageState extends State<PlannerPage> {
   }
 
   Widget _buildModernCalendar() {
+    // Automatically choose calendar format based on plan duration (only on first load)
+    if (_calendarFormat == null) {
+      final startDate = _generatedMealPlan!.startDate;
+      final durationDays = _generatedMealPlan!.durationDays;
+      final endDate = startDate.add(Duration(days: durationDays - 1));
+      
+      // Count how many calendar weeks are spanned by checking for Mondays in the range
+      // (excluding the start date itself)
+      bool crossesIntoNewWeek = false;
+      DateTime currentDate = startDate.add(const Duration(days: 1));
+      
+      while (currentDate.isBefore(endDate) || currentDate.isAtSameMomentAs(endDate)) {
+        if (currentDate.weekday == DateTime.monday) {
+          crossesIntoNewWeek = true;
+          break;
+        }
+        currentDate = currentDate.add(const Duration(days: 1));
+      }
+      
+      if (durationDays <= 7 && !crossesIntoNewWeek) {
+        // 7 days or less within the same calendar week
+        _calendarFormat = CalendarFormat.week;
+      } else if (durationDays <= 14) {
+        // 8-14 days or 7 days spanning 2 calendar weeks
+        _calendarFormat = CalendarFormat.twoWeeks;
+      } else {
+        _calendarFormat = CalendarFormat.month;
+      }
+    }
+
     return TableCalendar(
       firstDay: _generatedMealPlan!.startDate,
       lastDay: _generatedMealPlan!.startDate.add(
         Duration(days: _generatedMealPlan!.durationDays - 1),
       ),
       focusedDay: _focusedDay,
+      calendarFormat: _calendarFormat!,
+      availableCalendarFormats: const {
+        CalendarFormat.week: 'Semaine',
+        CalendarFormat.twoWeeks: '2 semaines',
+        CalendarFormat.month: 'Mois',
+      },
       selectedDayPredicate: (day) => isSameDay(day, _selectedMealDate),
       onDaySelected: (day, focused) {
         setState(() {
@@ -368,9 +480,24 @@ class _PlannerPageState extends State<PlannerPage> {
           _focusedDay = focused;
         });
       },
-      headerStyle: const HeaderStyle(
-        formatButtonVisible: false,
+      onFormatChanged: (format) {
+        setState(() {
+          _calendarFormat = format;
+        });
+      },
+      headerStyle: HeaderStyle(
+        formatButtonVisible: true,
+        formatButtonShowsNext: false,
         titleCentered: true,
+        formatButtonTextStyle: GoogleFonts.poppins(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: const Color(0xFF6A5AE0),
+        ),
+        formatButtonDecoration: BoxDecoration(
+          border: Border.all(color: const Color(0xFF6A5AE0)),
+          borderRadius: BorderRadius.circular(12),
+        ),
       ),
       calendarStyle: const CalendarStyle(
         selectedDecoration: BoxDecoration(

@@ -5,8 +5,8 @@ import 'package:table_calendar/table_calendar.dart';
 import 'package:numberpicker/numberpicker.dart';
 
 import '../../core/constants/unit.dart';
-import '../../data/repositories/firebase_ingredient_repository.dart';
 import '../../data/repositories/firebase_meal_plan_repository.dart';
+import '../../data/repositories/firebase_meal_history_repository.dart';
 import '../../data/repositories/firebase_user_recipe_serving_repository.dart';
 import '../../data/repositories/firebase_user_repository.dart';
 
@@ -28,18 +28,21 @@ class PlannerPage extends StatefulWidget {
 }
 
 class _PlannerPageState extends State<PlannerPage> {
-  final FirebaseIngredientRepository _ingredientRepo =
-      FirebaseIngredientRepository();
   final FirebaseUserRepository _userRepo = FirebaseUserRepository();
   final FirebaseUserRecipeServingRepository _userServingRepo =
       FirebaseUserRecipeServingRepository();
   final FirebaseMealPlanRepository _mealPlanRepo = FirebaseMealPlanRepository();
+  final FirebaseMealHistoryRepository _historyRepo =
+      FirebaseMealHistoryRepository();
+
+  static const int _maxHistoryDays = 3;
 
   DateTime? _selectedStartDate;
   int? _selectedDuration;
   bool _isLoading = false;
 
   MealPlan? _generatedMealPlan;
+  Map<DateTime, List<Meal>> _mealHistory = {};
 
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedMealDate;
@@ -48,21 +51,21 @@ class _PlannerPageState extends State<PlannerPage> {
   @override
   void initState() {
     super.initState();
-    _loadMostRecentMealPlan();
+    _loadMostRecentMealPlanAndHistory();
   }
 
-  Future<void> _loadMostRecentMealPlan() async {
+  Future<void> _loadMostRecentMealPlanAndHistory() async {
     setState(() => _isLoading = true);
     try {
       final plans = await _mealPlanRepo.getAllMealPlans();
+      List<Recipe> allRecipes = [];
+      Map<String, Recipe> recipeMap = {};
       if (plans.isNotEmpty) {
         plans.sort((a, b) => b.startDate.compareTo(a.startDate));
         final loadedPlan = plans.first;
-        
         // Reload full recipe details from Firestore
-        final allRecipes = await _loadRecipes();
-        final recipeMap = {for (var recipe in allRecipes) recipe.id: recipe};
-        
+        allRecipes = await _loadRecipes();
+        recipeMap = {for (var recipe in allRecipes) recipe.id: recipe};
         // Replace partial recipes with full ones
         final mealsWithFullRecipes = loadedPlan.meals.map((meal) {
           final fullRecipe = recipeMap[meal.recipe.id];
@@ -79,37 +82,97 @@ class _PlannerPageState extends State<PlannerPage> {
           }
           return meal;
         }).toList();
-        
-        setState(() {
-          _generatedMealPlan = MealPlan(
-            id: loadedPlan.id,
-            startDate: loadedPlan.startDate,
-            durationDays: loadedPlan.durationDays,
-            meals: mealsWithFullRecipes,
-            createdAt: loadedPlan.createdAt,
-          );
-          
-          _selectedMealDate = _generatedMealPlan!.startDate;
-          _focusedDay = _generatedMealPlan!.startDate;
-          _calendarFormat = null; // Reset to recalculate format
-        });
+        _generatedMealPlan = MealPlan(
+          id: loadedPlan.id,
+          startDate: loadedPlan.startDate,
+          durationDays: loadedPlan.durationDays,
+          meals: mealsWithFullRecipes,
+          createdAt: loadedPlan.createdAt,
+        );
+        // Set today as selected if it is within the plan range
+        final today = DateTime.now();
+        final planStart = _generatedMealPlan!.startDate;
+        final planEnd = planStart.add(
+          Duration(days: _generatedMealPlan!.durationDays - 1),
+        );
+        if (!today.isBefore(planStart) && !today.isAfter(planEnd)) {
+          _selectedMealDate = today;
+          _focusedDay = today;
+        } else {
+          _selectedMealDate = planStart;
+          _focusedDay = planStart;
+        }
+        _calendarFormat = null; // Reset to recalculate format
+        // Update history from loaded plan
+        await _historyRepo.updateHistoryFromPlan(
+          _generatedMealPlan,
+          _maxHistoryDays,
+        );
+      } else {
+        // If no plan, still load recipes for history
+        allRecipes = await _loadRecipes();
+        recipeMap = {for (var recipe in allRecipes) recipe.id: recipe};
       }
+      // Load history into state
+      final rawHistory = await _historyRepo.getHistory();
+      // Replace partial recipes with full ones in history
+      _mealHistory = rawHistory.map((date, meals) {
+        final updatedMeals = meals.map((meal) {
+          final fullRecipe = recipeMap[meal.recipe.id];
+          if (fullRecipe != null) {
+            return Meal(
+              recipe: fullRecipe,
+              date: meal.date,
+              type: meal.type,
+              totalServings: meal.totalServings,
+              userServings: meal.userServings,
+              recipeMultiplier: meal.recipeMultiplier,
+              isLeftoverMeal: meal.isLeftoverMeal,
+            );
+          }
+          return meal;
+        }).toList();
+        return MapEntry(date, updatedMeals);
+      });
+      setState(() {});
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _pickStartDate() async {
+  Future<void> _pickStartDate({VoidCallback? onDatePicked}) async {
     final picked = await showDatePicker(
       context: context,
       initialDate: DateTime.now(),
       firstDate: DateTime.now(),
       lastDate: DateTime.now().add(const Duration(days: 365)),
+      locale: const Locale('fr'),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Color(0xFF6A5AE0),
+              onPrimary: Colors.white,
+              onSurface: Colors.black,
+            ),
+            textButtonTheme: TextButtonThemeData(
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF6A5AE0),
+              ),
+            ),
+          ),
+          child: child!,
+        );
+      },
     );
-    if (picked != null) setState(() => _selectedStartDate = picked);
+
+    if (picked != null) {
+      setState(() => _selectedStartDate = picked);
+      if (onDatePicked != null) onDatePicked();
+    }
   }
 
-  void _pickDuration() {
+  void _pickDuration({VoidCallback? onUpdated}) {
     int tempDuration = _selectedDuration ?? 7;
 
     showDialog(
@@ -145,8 +208,9 @@ class _PlannerPageState extends State<PlannerPage> {
                 const SizedBox(height: 12),
                 ElevatedButton(
                   onPressed: () {
-                    setState(() => _selectedDuration = tempDuration);
                     Navigator.pop(context);
+                    setState(() => _selectedDuration = tempDuration);
+                    if (onUpdated != null) onUpdated();
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.deepPurpleAccent,
@@ -197,7 +261,18 @@ class _PlannerPageState extends State<PlannerPage> {
       });
 
       // Sauvegarde automatique du plan
-      await _saveMealPlan(plan);
+      final savedId = await _saveMealPlan(plan);
+
+      // Update the plan with the saved ID
+      setState(() {
+        _generatedMealPlan = MealPlan(
+          id: savedId,
+          startDate: plan.startDate,
+          durationDays: plan.durationDays,
+          meals: plan.meals,
+          createdAt: plan.createdAt,
+        );
+      });
     } finally {
       setState(() => _isLoading = false);
     }
@@ -258,14 +333,15 @@ class _PlannerPageState extends State<PlannerPage> {
     return all;
   }
 
-  Future<void> _saveMealPlan(MealPlan plan) async {
+  Future<String> _saveMealPlan(MealPlan plan) async {
     setState(() => _isLoading = true);
     try {
-      await _mealPlanRepo.saveMealPlan(plan);
-      if (!mounted) return;
+      final savedId = await _mealPlanRepo.saveMealPlan(plan);
+      if (!mounted) return savedId;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('✅ Plan sauvegardé')));
+      return savedId;
     } finally {
       setState(() => _isLoading = false);
     }
@@ -309,10 +385,12 @@ class _PlannerPageState extends State<PlannerPage> {
       final updatedMeals = List<Meal>.from(_generatedMealPlan!.meals);
 
       // Find the index of the meal to delete
-      final indexToDelete = updatedMeals.indexWhere((m) =>
-          m.recipe.id == mealToDelete.recipe.id &&
-          m.date == mealToDelete.date &&
-          m.type == mealToDelete.type);
+      final indexToDelete = updatedMeals.indexWhere(
+        (m) =>
+            m.recipe.id == mealToDelete.recipe.id &&
+            m.date == mealToDelete.date &&
+            m.type == mealToDelete.type,
+      );
 
       if (indexToDelete == -1) return;
 
@@ -320,25 +398,29 @@ class _PlannerPageState extends State<PlannerPage> {
       if (mealToDelete.recipe.addExtraMeal && !mealToDelete.isLeftoverMeal) {
         // Also remove the leftover from the next day
         final nextDay = mealToDelete.date.add(const Duration(days: 1));
-        updatedMeals.removeWhere((m) =>
-            m.recipe.id == mealToDelete.recipe.id &&
-            m.date.year == nextDay.year &&
-            m.date.month == nextDay.month &&
-            m.date.day == nextDay.day &&
-            m.isLeftoverMeal);
+        updatedMeals.removeWhere(
+          (m) =>
+              m.recipe.id == mealToDelete.recipe.id &&
+              m.date.year == nextDay.year &&
+              m.date.month == nextDay.month &&
+              m.date.day == nextDay.day &&
+              m.isLeftoverMeal,
+        );
       }
 
       // If this is a leftover of a recipe with addExtraMeal
       if (mealToDelete.isLeftoverMeal && mealToDelete.recipe.addExtraMeal) {
         // Find the first occurrence (non-leftover) and update it to remove addExtraMeal flag
-        final firstOccurrenceIndex = updatedMeals.indexWhere((m) =>
-            m.recipe.id == mealToDelete.recipe.id &&
-            !m.isLeftoverMeal &&
-            m.date.isBefore(mealToDelete.date));
+        final firstOccurrenceIndex = updatedMeals.indexWhere(
+          (m) =>
+              m.recipe.id == mealToDelete.recipe.id &&
+              !m.isLeftoverMeal &&
+              m.date.isBefore(mealToDelete.date),
+        );
 
         if (firstOccurrenceIndex != -1) {
           final firstMeal = updatedMeals[firstOccurrenceIndex];
-          
+
           // Create a copy of the recipe with addExtraMeal set to false
           final updatedRecipe = Recipe(
             id: firstMeal.recipe.id,
@@ -391,10 +473,7 @@ class _PlannerPageState extends State<PlannerPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            '✅ Repas supprimé',
-            style: GoogleFonts.poppins(),
-          ),
+          content: Text('✅ Repas supprimé', style: GoogleFonts.poppins()),
         ),
       );
     } finally {
@@ -410,32 +489,38 @@ class _PlannerPageState extends State<PlannerPage> {
       final updatedMeals = List<Meal>.from(_generatedMealPlan!.meals);
 
       // Find the index of the meal to update
-      final indexToUpdate = updatedMeals.indexWhere((m) =>
-          m.recipe.id == mealToUpdate.recipe.id &&
-          m.date == mealToUpdate.date &&
-          m.type == mealToUpdate.type);
+      final indexToUpdate = updatedMeals.indexWhere(
+        (m) =>
+            m.recipe.id == mealToUpdate.recipe.id &&
+            m.date == mealToUpdate.date &&
+            m.type == mealToUpdate.type,
+      );
 
       if (indexToUpdate == -1) return;
 
       // --- CLEANUP OLD RECIPE LOGIC (Same as delete) ---
-      
+
       // If previous was generating a leftover, remove that leftover
       if (mealToUpdate.recipe.addExtraMeal && !mealToUpdate.isLeftoverMeal) {
         final nextDay = mealToUpdate.date.add(const Duration(days: 1));
-        updatedMeals.removeWhere((m) =>
-            m.recipe.id == mealToUpdate.recipe.id &&
-            m.date.year == nextDay.year &&
-            m.date.month == nextDay.month &&
-            m.date.day == nextDay.day &&
-            m.isLeftoverMeal);
+        updatedMeals.removeWhere(
+          (m) =>
+              m.recipe.id == mealToUpdate.recipe.id &&
+              m.date.year == nextDay.year &&
+              m.date.month == nextDay.month &&
+              m.date.day == nextDay.day &&
+              m.isLeftoverMeal,
+        );
       }
 
       // If previous WAS a leftover, unflag the original
       if (mealToUpdate.isLeftoverMeal && mealToUpdate.recipe.addExtraMeal) {
-        final firstOccurrenceIndex = updatedMeals.indexWhere((m) =>
-            m.recipe.id == mealToUpdate.recipe.id &&
-            !m.isLeftoverMeal &&
-            m.date.isBefore(mealToUpdate.date));
+        final firstOccurrenceIndex = updatedMeals.indexWhere(
+          (m) =>
+              m.recipe.id == mealToUpdate.recipe.id &&
+              !m.isLeftoverMeal &&
+              m.date.isBefore(mealToUpdate.date),
+        );
 
         if (firstOccurrenceIndex != -1) {
           final firstMeal = updatedMeals[firstOccurrenceIndex];
@@ -454,7 +539,7 @@ class _PlannerPageState extends State<PlannerPage> {
             rating: firstMeal.recipe.rating,
             addExtraMeal: false, // Remove flag
           );
-          
+
           updatedMeals[firstOccurrenceIndex] = Meal(
             recipe: updatedOriginRecipe,
             date: firstMeal.date,
@@ -468,24 +553,26 @@ class _PlannerPageState extends State<PlannerPage> {
       }
 
       // --- UPDATE CURRENT SLOT ---
-      
-      // We are "swapping" the recipe. 
+
+      // We are "swapping" the recipe.
       // Resetting multiplier to 1 and isLeftover to false ensures a clean slate.
       // (Unless we want to keep logic, but new recipe might not have same servings).
-      
+
       updatedMeals[indexToUpdate] = Meal(
         recipe: newRecipe,
         date: mealToUpdate.date,
         type: mealToUpdate.type,
-        totalServings: newRecipe.servings, // Default to recipe servings or user servings logic? 
-        // For simplicity, let's just use the recipe base servings or 
+        totalServings: newRecipe
+            .servings, // Default to recipe servings or user servings logic?
+        // For simplicity, let's just use the recipe base servings or
         // if we want to be smart, we'd recalculate based on user count but that's complex here.
         // Let's keep it simple: just the recipe.
         // Wait, 'totalServings' in Meal usually comes from aggregation.
         // Let's assume for now we take the recipe servings or keep the previous total?
-        // Let's Recalculate based on users? 
+        // Let's Recalculate based on users?
         // Actually, let's just use newRecipe.servings as a baseline for the display.
-        userServings: {}, // Reset user specific servings override? Or copy? Safe to reset.
+        userServings:
+            {}, // Reset user specific servings override? Or copy? Safe to reset.
         recipeMultiplier: 1,
         isLeftoverMeal: false,
       );
@@ -509,10 +596,7 @@ class _PlannerPageState extends State<PlannerPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            '✅ Recette modifiée',
-            style: GoogleFonts.poppins(),
-          ),
+          content: Text('✅ Recette modifiée', style: GoogleFonts.poppins()),
         ),
       );
     } finally {
@@ -520,7 +604,11 @@ class _PlannerPageState extends State<PlannerPage> {
     }
   }
 
-  Future<void> _addMealToPlan(Recipe recipe, DateTime date, MealType type) async {
+  Future<void> _addMealToPlan(
+    Recipe recipe,
+    DateTime date,
+    MealType type,
+  ) async {
     if (_generatedMealPlan == null) return;
 
     setState(() => _isLoading = true);
@@ -555,19 +643,18 @@ class _PlannerPageState extends State<PlannerPage> {
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '✅ Repas ajouté',
-            style: GoogleFonts.poppins(),
-          ),
-        ),
+        SnackBar(content: Text('✅ Repas ajouté', style: GoogleFonts.poppins())),
       );
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  void _showRecipeSelector({Meal? mealToUpdate, DateTime? date, MealType? type}) {
+  void _showRecipeSelector({
+    Meal? mealToUpdate,
+    DateTime? date,
+    MealType? type,
+  }) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -579,8 +666,46 @@ class _PlannerPageState extends State<PlannerPage> {
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
         child: RecipeSelector(
-          onRecipeSelected: (newRecipe) {
+          onRecipeSelected: (newRecipe) async {
             Navigator.pop(context); // Close modal
+            // Vérifier si c'est un repas historique (date passée, sans l'heure)
+            bool isHistory = false;
+            if (mealToUpdate != null) {
+              final now = DateTime.now();
+              final today = DateTime(now.year, now.month, now.day);
+              final mealDate = DateTime(
+                mealToUpdate.date.year,
+                mealToUpdate.date.month,
+                mealToUpdate.date.day,
+              );
+              isHistory = mealDate.isBefore(today);
+            }
+            if (mealToUpdate != null && isHistory) {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: Text('Modifier un repas historique'),
+                  content: Text(
+                    "Ce repas fait partie de l'historique. Voulez-vous vraiment modifier la recette ?",
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Annuler'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.deepPurpleAccent,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('Oui, modifier'),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed != true) return;
+            }
             if (mealToUpdate != null) {
               _changeMealRecipe(mealToUpdate, newRecipe);
             } else if (date != null && type != null) {
@@ -597,6 +722,7 @@ class _PlannerPageState extends State<PlannerPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.transparent,
       floatingActionButton: _generatedMealPlan == null
           ? null
           : Padding(
@@ -610,10 +736,12 @@ class _PlannerPageState extends State<PlannerPage> {
                       context: context,
                       isScrollControlled: true,
                       backgroundColor: Colors.transparent,
-                      builder: (context) => StatefulBuilder(
-                        builder: (context, setModalState) => Container(
+                      builder: (_) => StatefulBuilder(
+                        builder: (builderContext, setModalState) => Container(
                           padding: EdgeInsets.only(
-                            bottom: MediaQuery.of(context).viewInsets.bottom,
+                            bottom: MediaQuery.of(
+                              builderContext,
+                            ).viewInsets.bottom,
                           ),
                           decoration: const BoxDecoration(
                             color: Colors.white,
@@ -639,13 +767,13 @@ class _PlannerPageState extends State<PlannerPage> {
                                 _ModernPlannerHeader(
                                   selectedStartDate: _selectedStartDate,
                                   selectedDuration: _selectedDuration,
-                                  onPickStartDate: () async {
-                                    await _pickStartDate();
-                                    setModalState(() {});
+                                  onPickStartDate: () {
+                                    _pickStartDate(onDatePicked: () => setModalState(() {}));
                                   },
                                   onPickDuration: () {
-                                    _pickDuration();
-                                    setModalState(() {});
+                                    _pickDuration(
+                                      onUpdated: () => setModalState(() {}),
+                                    );
                                   },
                                   onLaunchPlanning: () {
                                     Navigator.pop(context);
@@ -674,7 +802,7 @@ class _PlannerPageState extends State<PlannerPage> {
                           color: const Color(0xFF6A5AE0).withOpacity(0.4),
                           blurRadius: 12,
                           offset: const Offset(0, 6),
-                        )
+                        ),
                       ],
                     ),
                     child: Row(
@@ -698,16 +826,11 @@ class _PlannerPageState extends State<PlannerPage> {
             ),
       body: Stack(
         children: [
-           // Background Gradient at the top
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 300,
+          Positioned.fill(
             child: Container(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Color(0xFFEFEFFC), Colors.white], // Very subtle purple fading to white
+                  colors: [Color(0xFFEFEFFC), Colors.white],
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                 ),
@@ -717,7 +840,6 @@ class _PlannerPageState extends State<PlannerPage> {
           SingleChildScrollView(
             child: Column(
               children: [
-                // === NEW HEADER WITH SAFEAREA ===
                 SafeArea(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
@@ -730,9 +852,11 @@ class _PlannerPageState extends State<PlannerPage> {
                     ),
                   ),
                 ),
-
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 4,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -777,20 +901,21 @@ class _PlannerPageState extends State<PlannerPage> {
       final startDate = _generatedMealPlan!.startDate;
       final durationDays = _generatedMealPlan!.durationDays;
       final endDate = startDate.add(Duration(days: durationDays - 1));
-      
+
       // Count how many calendar weeks are spanned by checking for Mondays in the range
       // (excluding the start date itself)
       bool crossesIntoNewWeek = false;
       DateTime currentDate = startDate.add(const Duration(days: 1));
-      
-      while (currentDate.isBefore(endDate) || currentDate.isAtSameMomentAs(endDate)) {
+
+      while (currentDate.isBefore(endDate) ||
+          currentDate.isAtSameMomentAs(endDate)) {
         if (currentDate.weekday == DateTime.monday) {
           crossesIntoNewWeek = true;
           break;
         }
         currentDate = currentDate.add(const Duration(days: 1));
       }
-      
+
       if (durationDays <= 7 && !crossesIntoNewWeek) {
         // 7 days or less within the same calendar week
         _calendarFormat = CalendarFormat.week;
@@ -802,67 +927,142 @@ class _PlannerPageState extends State<PlannerPage> {
       }
     }
 
-    return TableCalendar(
-      firstDay: _generatedMealPlan!.startDate,
-      lastDay: _generatedMealPlan!.startDate.add(
-        Duration(days: _generatedMealPlan!.durationDays - 1),
-      ),
-      focusedDay: _focusedDay,
-      calendarFormat: _calendarFormat!,
-      availableCalendarFormats: const {
-        CalendarFormat.week: 'Semaine',
-        CalendarFormat.twoWeeks: '2 semaines',
-        CalendarFormat.month: 'Mois',
-      },
-      selectedDayPredicate: (day) => isSameDay(day, _selectedMealDate),
-      onDaySelected: (day, focused) {
-        setState(() {
-          _selectedMealDate = day;
-          _focusedDay = focused;
-        });
-      },
-      onFormatChanged: (format) {
-        setState(() {
-          _calendarFormat = format;
-        });
-      },
-      headerStyle: HeaderStyle(
-        formatButtonVisible: true,
-        formatButtonShowsNext: false,
-        titleCentered: true,
-        formatButtonTextStyle: GoogleFonts.poppins(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: const Color(0xFF6A5AE0),
+    // Calculer la plage min/max entre historique et plan
+    DateTime planStart = _generatedMealPlan!.startDate;
+    DateTime planEnd = planStart.add(
+      Duration(days: _generatedMealPlan!.durationDays - 1),
+    );
+    final historyDates = _mealHistory.keys.toList();
+    DateTime? historyMin = historyDates.isNotEmpty
+        ? historyDates.reduce((a, b) => a.isBefore(b) ? a : b)
+        : null;
+    DateTime? historyMax = historyDates.isNotEmpty
+        ? historyDates.reduce((a, b) => a.isAfter(b) ? a : b)
+        : null;
+    final firstDay = historyMin != null && historyMin.isBefore(planStart)
+        ? historyMin
+        : planStart;
+    final lastDay = historyMax != null && historyMax.isAfter(planEnd)
+        ? historyMax
+        : planEnd;
+
+    return Material(
+      type: MaterialType.transparency,
+      child: TableCalendar(
+        startingDayOfWeek: StartingDayOfWeek.monday,
+        locale: 'fr_FR',
+        firstDay: firstDay,
+        lastDay: lastDay,
+        focusedDay: _focusedDay,
+        calendarFormat: _calendarFormat!,
+        availableCalendarFormats: const {
+          CalendarFormat.week: 'Semaine',
+          CalendarFormat.twoWeeks: '2 semaines',
+          CalendarFormat.month: 'Mois',
+        },
+        selectedDayPredicate: (day) => isSameDay(day, _selectedMealDate),
+        onDaySelected: (day, focused) {
+          setState(() {
+            _selectedMealDate = day;
+            _focusedDay = focused;
+          });
+        },
+        onFormatChanged: (format) {
+          setState(() {
+            _calendarFormat = format;
+          });
+        },
+        headerStyle: HeaderStyle(
+          formatButtonVisible: true,
+          formatButtonShowsNext: false,
+          titleCentered: true,
+          formatButtonTextStyle: GoogleFonts.poppins(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF6A5AE0),
+          ),
+          formatButtonDecoration: BoxDecoration(
+            border: Border.all(color: const Color(0xFF6A5AE0)),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          decoration: const BoxDecoration(color: Colors.transparent),
         ),
-        formatButtonDecoration: BoxDecoration(
-          border: Border.all(color: const Color(0xFF6A5AE0)),
-          borderRadius: BorderRadius.circular(12),
+        daysOfWeekStyle: const DaysOfWeekStyle(
+          decoration: BoxDecoration(color: Colors.transparent),
         ),
-      ),
-      calendarStyle: const CalendarStyle(
-        selectedDecoration: BoxDecoration(
-          color: Color(0xFF6A5AE0),
-          shape: BoxShape.circle,
+        calendarStyle: const CalendarStyle(
+          selectedDecoration: BoxDecoration(
+            color: Color(0xFF6A5AE0),
+            shape: BoxShape.circle,
+          ),
+          todayDecoration: BoxDecoration(
+            color: Colors.blueAccent,
+            shape: BoxShape.circle,
+          ),
+          defaultDecoration: BoxDecoration(shape: BoxShape.circle),
+          weekendDecoration: BoxDecoration(shape: BoxShape.circle),
+          outsideDecoration: BoxDecoration(shape: BoxShape.circle),
         ),
-        todayDecoration: BoxDecoration(
-          color: Colors.blueAccent,
-          shape: BoxShape.circle,
+        calendarBuilders: CalendarBuilders(
+          defaultBuilder: (context, day, focusedDay) {
+            // Si le jour est dans l'historique, on colore le fond avec un rond de même taille que le jour sélectionné
+            final isHistory = _mealHistory.keys.any(
+              (d) =>
+                  d.year == day.year &&
+                  d.month == day.month &&
+                  d.day == day.day,
+            );
+            if (isHistory) {
+              return Center(
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade200,
+                    shape: BoxShape.circle,
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    '${day.day}',
+                    style: GoogleFonts.poppins(
+                      color: Colors.grey[800],
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              );
+            }
+            return null;
+          },
         ),
       ),
     );
   }
 
   Widget _buildMealDetails() {
-    if (_generatedMealPlan == null || _selectedMealDate == null)
-      return const SizedBox();
+    if (_selectedMealDate == null) return const SizedBox();
 
-    final mealsOfDay = _generatedMealPlan!.meals.where((meal) {
-      final d = meal.date;
-      return d.year == _selectedMealDate!.year &&
-          d.month == _selectedMealDate!.month &&
-          d.day == _selectedMealDate!.day;
-    }).toList();
+    // If the selected date is in history, show historical meals
+    final historyMeals = _mealHistory.entries
+        .firstWhere(
+          (entry) =>
+              entry.key.year == _selectedMealDate!.year &&
+              entry.key.month == _selectedMealDate!.month &&
+              entry.key.day == _selectedMealDate!.day,
+          orElse: () => MapEntry(_selectedMealDate!, <Meal>[]),
+        )
+        .value;
+
+    final isPastDay = _selectedMealDate!.isBefore(DateTime.now());
+    final mealsOfDay = isPastDay && historyMeals.isNotEmpty
+        ? historyMeals
+        : (_generatedMealPlan?.meals.where((meal) {
+                final d = meal.date;
+                return d.year == _selectedMealDate!.year &&
+                    d.month == _selectedMealDate!.month &&
+                    d.day == _selectedMealDate!.day;
+              }).toList() ??
+              []);
 
     final lunchMeals = mealsOfDay
         .where((m) => m.type == MealType.lunch)
@@ -876,6 +1076,7 @@ class _PlannerPageState extends State<PlannerPage> {
       final actionColor = Colors.grey.shade400;
 
       return Card(
+        color: Colors.white.withOpacity(0.92),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         elevation: 3,
         clipBehavior: Clip.antiAlias,
@@ -896,7 +1097,10 @@ class _PlannerPageState extends State<PlannerPage> {
                     );
                   },
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 16,
+                    ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
@@ -950,17 +1154,26 @@ class _PlannerPageState extends State<PlannerPage> {
                                             ),
                                           ),
                                         ),
-                                        if (meal.recipeMultiplier > 1 && !meal.isLeftoverMeal)
+                                        if (meal.recipeMultiplier > 1 &&
+                                            !meal.isLeftoverMeal)
                                           Container(
-                                            margin: const EdgeInsets.only(left: 8),
+                                            margin: const EdgeInsets.only(
+                                              left: 8,
+                                            ),
                                             padding: const EdgeInsets.symmetric(
                                               horizontal: 8,
                                               vertical: 4,
                                             ),
                                             decoration: BoxDecoration(
-                                              color: Colors.green.withOpacity(0.2),
-                                              borderRadius: BorderRadius.circular(8),
-                                              border: Border.all(color: Colors.green, width: 1.5),
+                                              color: Colors.green.withOpacity(
+                                                0.2,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              border: Border.all(
+                                                color: Colors.green,
+                                                width: 1.5,
+                                              ),
                                             ),
                                             child: Text(
                                               'x${meal.recipeMultiplier}',
@@ -1007,7 +1220,8 @@ class _PlannerPageState extends State<PlannerPage> {
                                         ],
                                       ),
                                     ],
-                                    if (meal.recipe.addExtraMeal && !meal.isLeftoverMeal) ...[
+                                    if (meal.recipe.addExtraMeal &&
+                                        !meal.isLeftoverMeal) ...[
                                       const SizedBox(height: 6),
                                       Row(
                                         children: [
@@ -1035,10 +1249,18 @@ class _PlannerPageState extends State<PlannerPage> {
                               // Right: Servings badge
                               // Reduced margin since we have a separator now
                               Container(
-                                margin: const EdgeInsets.only(left: 8, right: 16),
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                margin: const EdgeInsets.only(
+                                  left: 8,
+                                  right: 16,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF6A5AE0).withOpacity(0.15),
+                                  color: const Color(
+                                    0xFF6A5AE0,
+                                  ).withOpacity(0.15),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Text(
@@ -1059,21 +1281,51 @@ class _PlannerPageState extends State<PlannerPage> {
                 ),
               ),
               // Vertical Divider
-              Container(
-                width: 2,
-                color: actionColor,
-              ),
+              Container(width: 2, color: actionColor),
               // Swap/Change Meal Button
               InkWell(
-                onTap: () => _showRecipeSelector(mealToUpdate: meal),
+                onTap: () async {
+                  // Check if it's a historical meal (past date, without time)
+                  final now = DateTime.now();
+                  final today = DateTime(now.year, now.month, now.day);
+                  final mealDate = DateTime(
+                    meal.date.year,
+                    meal.date.month,
+                    meal.date.day,
+                  );
+                  final isHistory = mealDate.isBefore(today);
+                  if (isHistory) {
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: Text('Modifier un repas historique'),
+                        content: Text(
+                          "Ce repas fait partie de l'historique. Voulez-vous vraiment modifier la recette ?",
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, false),
+                            child: const Text('Annuler'),
+                          ),
+                          ElevatedButton(
+                            onPressed: () => Navigator.pop(context, true),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.deepPurpleAccent,
+                              foregroundColor: Colors.white,
+                            ),
+                            child: const Text('Oui, modifier'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirmed != true) return;
+                  }
+                  _showRecipeSelector(mealToUpdate: meal);
+                },
                 child: Container(
                   width: 50,
                   alignment: Alignment.center,
-                  child: Icon(
-                    Icons.swap_horiz,
-                    color: actionColor,
-                    size: 28,
-                  ),
+                  child: Icon(Icons.swap_horiz, color: actionColor, size: 28),
                 ),
               ),
             ],
@@ -1084,10 +1336,10 @@ class _PlannerPageState extends State<PlannerPage> {
 
     Widget buildEmptySlot(MealType mealType) {
       return Card(
+        color: Colors.white.withOpacity(0.92),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         elevation: 2,
         margin: const EdgeInsets.symmetric(vertical: 8),
-        color: Colors.grey[50],
         child: InkWell(
           onTap: () {
             if (_selectedMealDate != null) {
@@ -1105,11 +1357,7 @@ class _PlannerPageState extends State<PlannerPage> {
                     color: Colors.grey[200],
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(
-                    Icons.add,
-                    color: Colors.grey[600],
-                    size: 24,
-                  ),
+                  child: Icon(Icons.add, color: Colors.grey[600], size: 24),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -1153,9 +1401,9 @@ class _PlannerPageState extends State<PlannerPage> {
             ...lunchMeals.map(buildMealCard)
           else
             buildEmptySlot(MealType.lunch),
-          
+
           const SizedBox(height: 16),
-          
+
           // SOIR Section
           Text(
             'SOIR',
@@ -1207,7 +1455,7 @@ class _ModernPlannerHeader extends StatelessWidget {
             color: Colors.black.withOpacity(0.05),
             blurRadius: 20,
             offset: const Offset(0, 10),
-          )
+          ),
         ],
       ),
       child: Column(
@@ -1286,17 +1534,20 @@ class ModernSelectorCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                 padding: const EdgeInsets.all(8),
-                 decoration: const BoxDecoration(
-                   color: Colors.white,
-                   shape: BoxShape.circle,
-                 ),
-                 child: Icon(icon, color: const Color(0xFF6A5AE0), size: 20),
+                padding: const EdgeInsets.all(8),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: const Color(0xFF6A5AE0), size: 20),
               ),
               const SizedBox(height: 12),
               Text(
                 title,
-                style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]),
+                style: GoogleFonts.poppins(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ),
               ),
               const SizedBox(height: 4),
               Text(
@@ -1338,12 +1589,12 @@ class ModernGradientButton extends StatelessWidget {
           color: const Color(0xFF6A5AE0),
           borderRadius: BorderRadius.circular(18),
           boxShadow: [
-             BoxShadow(
+            BoxShadow(
               color: const Color(0xFF6A5AE0).withOpacity(0.3),
               blurRadius: 10,
               offset: const Offset(0, 4),
-            )
-          ]
+            ),
+          ],
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,

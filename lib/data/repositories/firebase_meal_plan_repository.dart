@@ -6,11 +6,11 @@ class FirebaseMealPlanRepository {
   final CollectionReference _mealPlans =
       FirebaseFirestore.instance.collection('mealPlans');
 
-  /// Save a new meal plan to Firestore or update an existing one
+  /// Save a new meal plan to Firestore (replaces any existing plan)
   Future<String> saveMealPlan(MealPlan mealPlan) async {
     final data = mealPlan.toFirestore();
 
-    // If the plan already has an ID, update the existing document
+    // If the plan already has an ID, just update it
     if (mealPlan.id.isNotEmpty) {
       await _mealPlans.doc(mealPlan.id).set({
         ...data,
@@ -19,7 +19,13 @@ class FirebaseMealPlanRepository {
       return mealPlan.id;
     }
 
-    // Otherwise, create a new document
+    // For new plans, delete all existing meal plans first
+    final existingPlans = await _mealPlans.get();
+    for (var doc in existingPlans.docs) {
+      await doc.reference.delete();
+    }
+
+    // Create the new plan
     final docRef = _mealPlans.doc();
     await docRef.set({
       ...data,

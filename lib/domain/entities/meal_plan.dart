@@ -60,7 +60,7 @@ class MealPlan {
 
   Map<String, dynamic> toFirestore() {
     return {
-      'startDate': startDate.toUtc().toIso8601String(),
+      'startDate': '${startDate.year}-${startDate.month.toString().padLeft(2, '0')}-${startDate.day.toString().padLeft(2, '0')}',
       'durationDays': durationDays,
       'createdAt': createdAt.toUtc().toIso8601String(),
       'meals': meals
@@ -69,7 +69,7 @@ class MealPlan {
                 'preparationTime': m.recipe.preparationTime,
                 'cookingTime': m.recipe.cookingTime,
                 'recipeName': m.recipe.title,
-                'date': m.date.toUtc().toIso8601String(),
+                'date': '${m.date.year}-${m.date.month.toString().padLeft(2, '0')}-${m.date.day.toString().padLeft(2, '0')}',
                 'type': m.type.toString().split('.').last,
                 'totalServings': m.totalServings,
                 'userServings': m.userServings,

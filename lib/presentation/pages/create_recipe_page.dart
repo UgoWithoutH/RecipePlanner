@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:recipe_planner/domain/entities/category.dart';
+import 'package:recipe_planner/presentation/widgets/ingredient_autocomplete.dart' show IngredientAutocomplete;
 import '../../core/constants/unit.dart' show Unit;
 import '../../domain/entities/ingredient.dart';
 import '../../domain/entities/recipe.dart';
@@ -25,7 +26,7 @@ class CreateRecipePage extends StatefulWidget {
 }
 
 class _CreateRecipePageState extends State<CreateRecipePage> {
-  // Champ pour le switch addExtraMeal
+  // Field for the addExtraMeal switch
   bool _addExtraMeal = false;
   final _formKey = GlobalKey<FormState>();
   bool _isSaving = false;
@@ -54,7 +55,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   List<Category> _categories = [];
   String? _selectedCategoryId;
 
-  // Users & portions
+  // Users & servings
   List<User> _users = [];
   final Map<String, UserRecipeServing> _userServings = {};
 
@@ -386,13 +387,10 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
             children: [
               Autocomplete<Map<String, String>>(
                 optionsBuilder: (TextEditingValue textEditingValue) async {
-                  final query = textEditingValue.text.trim().toLowerCase();
+                  final query = textEditingValue.text.trim();
                   if (query.isEmpty) return <Map<String, String>>[];
-                  // On récupère tous les ingrédients et on filtre côté client (insensible à la casse)
-                  final allResults = await _ingredientRepo.searchIngredients('');
-                  return allResults.where((ingredient) =>
-                    (ingredient['name'] ?? '').toLowerCase().contains(query)
-                  ).toList();
+                  // Use the centralized suggestion logic
+                  return await IngredientAutocomplete.suggestIngredients(query);
                 },
                 displayStringForOption: (option) => option['name']!,
                 fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
@@ -679,8 +677,8 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
               text: _userServings[user.id]?.dinnerServings.toString() ?? '0',
             );
 
-            // Important: update logic needs to be preserved or handling carefully
-            // The previous logic created new UserRecipeServing objects on change. 
+            // Important: update logic needs to be preserved or handled carefully
+            // The previous logic created new UserRecipeServing objects on change.
             // I will keep that logic but inside a nicer UI.
 
             return Container(
@@ -708,7 +706,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                     child: Text(user.name, style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 15)),
                   ),
                   
-                  // Lunch Imput
+                  // Lunch Input
                   _buildServingInput(lunchController, Icons.wb_sunny_rounded, Colors.orange, (v) {
                       final existing = _userServings[user.id];
                       _userServings[user.id] = UserRecipeServing(

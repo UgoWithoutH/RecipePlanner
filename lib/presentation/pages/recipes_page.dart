@@ -83,6 +83,7 @@ class _RecipesPageState extends State<RecipesPage> {
               DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
           isFavorite: data['isFavorite'] ?? false,
           rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
+          addExtraMeal: data['addExtraMeal'] ?? false,
         );
       }),
     );

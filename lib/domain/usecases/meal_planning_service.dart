@@ -2,6 +2,7 @@ import '../entities/recipe.dart';
 import '../entities/user_recipe_serving.dart';
 import '../entities/user.dart';
 import '../entities/meal_plan.dart';
+import 'dart:math';
 
 /// Service for meal planning
 /// 
@@ -31,6 +32,14 @@ class MealPlanningService {
     double recencyPenaltyWeight = 100.0,
     double similarityPenaltyWeight = 30.0,
     double coverageBonusWeight = 2.0,
+    double addExtraMealBonusWeight = 30.0,
+    double endOfPlanCoverageBoost = 1.5,
+    double endOfPlanThresholdRatio = 0.2,
+    bool useMaxPossibleCoverageNormalization = false,
+    double recencyDecayFactor = 0.9,
+    bool useAbsoluteCoverageBonus = false,
+    List<Meal>? recentMeals,
+    List<Meal>? userSelectedMeals,
   }) {
     if (recipes.isEmpty || users.isEmpty) {
       throw Exception('Recipes and users are required');
@@ -39,6 +48,23 @@ class MealPlanningService {
     final numMeals = durationDays * 2; // lunch + dinner per day
     final meals = List<Meal?>.filled(numMeals, null); // Pre-allocate slots
     final pendingLeftovers = <int, Meal>{}; // Track leftovers to insert
+
+    // Initialize recentRecipes and recentRecipeDaysAgo before userSelectedMeals loop
+    // Note: recentRecipes is used for tracking recent selections for diversity,
+    // but recency decay is calculated via recentRecipeDaysAgo for exponential decay
+    var recentRecipeDaysAgo = <String, int>{}; // Utilisé pour la récence (historique + plan en cours)
+
+    // --- INTEGRATION DES REPAS USER-SELECTED (verrouillage des slots) ---
+    _handleUserSelectedMeals(
+      userSelectedMeals: userSelectedMeals,
+      recipes: recipes,
+      meals: meals,
+      pendingLeftovers: pendingLeftovers,
+      recentRecipeDaysAgo: recentRecipeDaysAgo,
+      startDate: startDate,
+      durationDays: durationDays,
+      numMeals: numMeals,
+    );
 
     // Build recipe -> user servings map
     final recipeUserServingsMap = <String, Map<String, (int lunch, int dinner)>>{};
@@ -62,44 +88,84 @@ class MealPlanningService {
     }
 
     final usedRecipes = <String, int>{}; // track usage per recipe
-    final recentRecipes = <String>[]; // sliding window for diversity
-    
+
+
+    // Historique : recettes mangées récemment (toutes passées en paramètre)
+    // Map recipeId -> daysAgo (plus petit daysAgo si plusieurs repas)
+    final now = DateTime.now();
+    if (recentMeals != null && recentMeals.isNotEmpty) {
+      for (final meal in recentMeals) {
+        final daysAgo = now.difference(meal.date).inDays;
+        if (!recentRecipeDaysAgo.containsKey(meal.recipe.id) || daysAgo < recentRecipeDaysAgo[meal.recipe.id]!) {
+          recentRecipeDaysAgo[meal.recipe.id] = daysAgo;
+        }
+      }
+    }
+
     // Track full cycle: all recipes must be used once before reusing any
     // Only necessary when numMeals > recipes (otherwise no reuse needed)
     final requireFullCycle = numMeals > recipes.length;
     final usedInCurrentCycle = <String>{}; // recipes used in current cycle
-    
+
     // Pre-compute ingredient similarity cache for performance
-    final similarityCache = _buildSimilarityCache(recipes);
+    final ingredientWeights = computeIngredientWeights(recipes);
+    final similarityCache = _buildSimilarityCache(recipes, ingredientWeights);
+
+    // --- GESTION DES LEFTOVERS HISTORIQUES (addExtraMeal sur J-1) ---
+    if (recentMeals != null && recentMeals.isNotEmpty) {
+      final expectedDate = startDate.subtract(const Duration(days: 1));
+      // Filtre tous les repas J-1 avec addExtraMeal
+      final leftoversJ1 = recentMeals.where((m) =>
+          m.date.year == expectedDate.year &&
+          m.date.month == expectedDate.month &&
+          m.date.day == expectedDate.day &&
+          m.recipe.addExtraMeal
+      );
+      for (final meal in leftoversJ1) {
+        // Slot : lunch = 0, dinner = 1
+        final slot = (meal.type == MealType.lunch) ? 0 : 1;
+        if (slot < meals.length) {
+          if (meals[slot] != null) {
+            // Collision : slot déjà occupé (userSelected ou autre leftover)
+            print('[MealPlanningService] Collision leftover historique sur slot $slot ($startDate, ${meal.type})');
+            continue;
+          }
+          int recipeMultiplier = 1;
+          if (meal.totalServings > 0 && meal.recipe.servings > 0) {
+            recipeMultiplier = (meal.totalServings / meal.recipe.servings).ceil();
+          }
+          meals[slot] = Meal(
+            recipe: meal.recipe,
+            date: startDate,
+            type: meal.type,
+            totalServings: meal.totalServings,
+            userServings: meal.userServings,
+            recipeMultiplier: recipeMultiplier,
+            isLeftoverMeal: true,
+          );
+          recentRecipeDaysAgo[meal.recipe.id] = 0;
+        }
+      }
+    }
 
     for (int i = 0; i < numMeals; i++) {
-      // Skip if slot already reserved by a leftover
-      if (pendingLeftovers.containsKey(i)) {
-        final leftoverMeal = pendingLeftovers[i]!;
-        meals[i] = leftoverMeal;
-        
-        // Track leftover in recent recipes for diversity (avoid similar ingredients)
-        recentRecipes.add(leftoverMeal.recipe.id);
-        if (recentRecipes.length > 5) recentRecipes.removeAt(0);
-        // Note: usedRecipes is NOT incremented - leftovers are not a new choice
-        
-        continue;
-      }
-
+      // 1. Gestion des leftovers
+      if (_handleLeftover(i, pendingLeftovers, meals)) continue;
+      // 2. Gestion des userSelectedMeals
+      if (_handleUserSelectedSlot(i, meals, usedRecipes, users, recipeUserServingsMap, remainingPortions)) continue;
+      // 3. Génération normale du slot
       final mealDate = startDate.add(Duration(days: i ~/ 2));
       final mealType = i % 2 == 0 ? MealType.lunch : MealType.dinner;
-
-      // Check if all portions are exhausted for this meal type
-      final allPortionsExhausted = remainingPortions.values
-          .every((map) => (map[mealType] ?? 0) == 0);
-
-      // Select best recipe considering remaining portions and diversity
+      final totalRemainingPortions = remainingPortions.values
+          .fold<int>(0, (sum, map) => sum + (map[mealType] ?? 0));
+      if (totalRemainingPortions == 0) {
+        break;
+      }
       final selectedRecipe = _selectBestRecipe(
         availableRecipes: recipes,
         recipeUserServingsMap: recipeUserServingsMap,
         users: users,
         usedRecipes: usedRecipes,
-        recentRecipes: recentRecipes,
         mealType: mealType,
         remainingPortions: remainingPortions,
         similarityCache: similarityCache,
@@ -107,35 +173,39 @@ class MealPlanningService {
         recencyPenaltyWeight: recencyPenaltyWeight,
         similarityPenaltyWeight: similarityPenaltyWeight,
         coverageBonusWeight: coverageBonusWeight,
-        allPortionsExhausted: allPortionsExhausted,
+        addExtraMealBonusWeight: addExtraMealBonusWeight,
+        endOfPlanCoverageBoost: endOfPlanCoverageBoost,
+        endOfPlanThresholdRatio: endOfPlanThresholdRatio,
+        useMaxPossibleCoverageNormalization: useMaxPossibleCoverageNormalization,
         requireFullCycle: requireFullCycle,
         usedInCurrentCycle: usedInCurrentCycle,
+        recentRecipeDaysAgo: recentRecipeDaysAgo,
+        initialTotalPortions: users.length * durationDays * 2,
+        recencyDecayFactor: recencyDecayFactor,
+        useAbsoluteCoverageBonus: useAbsoluteCoverageBonus,
       );
-
-      if (selectedRecipe == null) break;
-
-      // Calculate servings for this meal - ENSURE ALL USERS ARE COVERED
+      if (selectedRecipe == null) {
+        meals[i] = null;
+        continue;
+      }
       final servingsForRecipe = recipeUserServingsMap[selectedRecipe.id] ?? {};
-      final (userServingsForMeal, totalConsumed) = _calculateUserServings(
+      final (userServingsForMeal, totalConsumed) = _consumePortions(
         users: users,
         servingsForRecipe: servingsForRecipe,
         mealType: mealType,
         remainingPortions: remainingPortions,
-        ignorePortions: allPortionsExhausted, // Ignore portions if all exhausted
       );
-
-      // Batch cooking: calculate how many times the recipe must be prepared
-      // Formula: ceil(requiredServings / recipe.servings)
-      // If addExtraMeal = true: requiredServings = totalConsumed × 2 (cook once for 2 meals)
-      // Example: 7 portions needed, recipe makes 4 → multiplier = 2 (8 portions, 1 leftover)
+      if (totalConsumed == 0) {
+        meals[i] = null;
+        continue;
+      }
       int requiredServings = totalConsumed;
       if (selectedRecipe.addExtraMeal) {
-        requiredServings = totalConsumed * 2;  // Double for both meals
+        requiredServings = totalConsumed * 2;
       }
       final recipeMultiplier = requiredServings > 0 
           ? (requiredServings / selectedRecipe.servings).ceil() 
           : 1;
-
       final meal = Meal(
         recipe: selectedRecipe,
         date: mealDate,
@@ -144,39 +214,30 @@ class MealPlanningService {
         userServings: userServingsForMeal,
         recipeMultiplier: recipeMultiplier,
         isLeftoverMeal: false,
+        userSelected: false,
       );
-
       meals[i] = meal;
-
-      // Track usage and maintain recent recipes for diversity
       usedRecipes[selectedRecipe.id] = (usedRecipes[selectedRecipe.id] ?? 0) + 1;
-      recentRecipes.add(selectedRecipe.id);
-      if (recentRecipes.length > 5) recentRecipes.removeAt(0);
-      
-      // Track cycle: mark recipe as used in current cycle (only if cycle needed)
+      // Met à jour la récence pour la recette choisie
+      recentRecipeDaysAgo.updateAll((key, value) => value + 1);
+      recentRecipeDaysAgo[selectedRecipe.id] = 0;
       if (requireFullCycle) {
         usedInCurrentCycle.add(selectedRecipe.id);
-        // Reset cycle when all recipes have been used
         if (usedInCurrentCycle.length == recipes.length) {
           usedInCurrentCycle.clear();
         }
       }
-
-      // Handle addExtraMeal: leftover meal for next day (same meal type)
-      // Cook once (with x2 multiplier), serve twice: today and tomorrow (same meal type)
       if (selectedRecipe.addExtraMeal && i + 2 < numMeals && totalConsumed > 0) {
-        // Next day, same meal type: lunch → lunch (i+2), dinner → dinner (i+2)
         final nextMealDate = mealDate.add(const Duration(days: 1));
-        
-        // Reserve slot i+2 for leftover
         pendingLeftovers[i + 2] = Meal(
           recipe: selectedRecipe,
           date: nextMealDate,
-          type: mealType, // Same meal type (lunch or dinner)
-          totalServings: totalConsumed, // Same total as first meal
-          userServings: userServingsForMeal, // Same users with same servings
-          recipeMultiplier: recipeMultiplier, // Same multiplier (already x2)
-          isLeftoverMeal: true, // Mark as leftover
+          type: mealType,
+          totalServings: totalConsumed,
+          userServings: userServingsForMeal,
+          recipeMultiplier: recipeMultiplier,
+          isLeftoverMeal: true,
+          userSelected: false,
         );
       }
     }
@@ -189,6 +250,130 @@ class MealPlanningService {
       createdAt: DateTime.now(),
     );
   }
+  /// Gère l'injection des userSelectedMeals dans le plan
+  static void _handleUserSelectedMeals({
+    required List<Meal>? userSelectedMeals,
+    required List<Recipe> recipes,
+    required List<Meal?> meals,
+    required Map<int, Meal> pendingLeftovers,
+    required Map<String, int> recentRecipeDaysAgo,
+    required DateTime startDate,
+    required int durationDays,
+    required int numMeals,
+  }) {
+    if (userSelectedMeals == null || userSelectedMeals.isEmpty) return;
+    for (final meal in userSelectedMeals) {
+      if (!meal.userSelected) continue;
+      if (meal.date.isBefore(startDate) || meal.date.isAfter(startDate.add(Duration(days: durationDays - 1)))) continue;
+      final slot = meal.date.difference(startDate).inDays * 2 + (meal.type == MealType.lunch ? 0 : 1);
+      if (slot >= 0 && slot < numMeals) {
+        final exists = recipes.any((r) => r.id == meal.recipe.id);
+        if (exists) {
+          if (meals[slot] != null) {
+            // Collision userSelected sur slot, slot déjà occupé
+            continue;
+          }
+          meals[slot] = meal.copyWith(userSelected: true);
+          if (meal.recipe.addExtraMeal) {
+            final nextDate = meal.date.add(const Duration(days: 1));
+            if (!nextDate.isBefore(startDate) && !nextDate.isAfter(startDate.add(Duration(days: durationDays - 1)))) {
+              final nextSlot = slot + 2;
+              if (nextSlot >= 0 && nextSlot < numMeals) {
+                if (meals[nextSlot] != null || pendingLeftovers.containsKey(nextSlot)) {
+                  // Collision leftover userSelected sur slot, slot déjà occupé
+                } else {
+                  final origUserServings = Map<String, int>.from(meal.userServings);
+                  final origTotalServings = meal.totalServings;
+                  final leftoverUserServings = <String, int>{};
+                  origUserServings.forEach((k, v) {
+                    leftoverUserServings[k] = v;
+                  });
+                  final leftoverTotalServings = origTotalServings;
+                  final leftoverMeal = meal.copyWith(
+                    date: nextDate,
+                    isLeftoverMeal: true,
+                    userSelected: true,
+                    userServings: leftoverUserServings,
+                    totalServings: leftoverTotalServings,
+                  );
+                  pendingLeftovers[nextSlot] = leftoverMeal;
+                  recentRecipeDaysAgo[meal.recipe.id] = 0;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /// Gère la consommation des portions pour un slot userSelected
+  static bool _handleUserSelectedSlot(
+    int i,
+    List<Meal?> meals,
+    Map<String, int> usedRecipes,
+    List<User> users,
+    Map<String, Map<String, (int, int)>> recipeUserServingsMap,
+    Map<String, Map<MealType, int>> remainingPortions,
+  ) {
+    if (meals[i] != null && meals[i]!.userSelected == true) {
+      usedRecipes[meals[i]!.recipe.id] = (usedRecipes[meals[i]!.recipe.id] ?? 0) + 1;
+      final meal = meals[i]!;
+      final servingsForRecipe = recipeUserServingsMap[meal.recipe.id] ?? {};
+      for (final user in users) {
+        final (lunch, dinner) = servingsForRecipe[user.id] ?? (0, 0);
+        final desired = meal.type == MealType.lunch ? lunch : dinner;
+        final remaining = remainingPortions[user.id]![meal.type]!;
+        int servingCount = 0;
+        if (desired > 0 && remaining > 0) {
+          servingCount = desired < remaining ? desired : remaining;
+          remainingPortions[user.id]![meal.type] = remaining - servingCount;
+        }
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /// Gère l'injection d'un leftover dans le slot
+  static bool _handleLeftover(
+    int i,
+    Map<int, Meal> pendingLeftovers,
+    List<Meal?> meals,
+  ) {
+    if (pendingLeftovers.containsKey(i)) {
+      final leftoverMeal = pendingLeftovers[i]!;
+      meals[i] = leftoverMeal;
+      return true;
+    }
+    return false;
+  }
+
+  /// Consomme les portions pour un slot généré normalement
+  static (Map<String, int>, int) _consumePortions({
+    required List<User> users,
+    required Map<String, (int lunch, int dinner)> servingsForRecipe,
+    required MealType mealType,
+    required Map<String, Map<MealType, int>> remainingPortions,
+  }) {
+    final userServingsForMeal = <String, int>{};
+    int totalConsumed = 0;
+    for (final user in users) {
+      final (lunch, dinner) = servingsForRecipe[user.id] ?? (0, 0);
+      final desired = mealType == MealType.lunch ? lunch : dinner;
+      final remaining = remainingPortions[user.id]![mealType]!;
+      int servingCount = 0;
+      if (desired > 0 && remaining > 0) {
+        servingCount = desired < remaining ? desired : remaining;
+        remainingPortions[user.id]![mealType] = remaining - servingCount;
+      }
+      if (servingCount > 0) {
+        userServingsForMeal[user.id] = servingCount;
+        totalConsumed += servingCount;
+      }
+    }
+    return (userServingsForMeal, totalConsumed);
+  }
 
   /// Selects the best recipe for a meal
   /// 
@@ -197,12 +382,21 @@ class MealPlanningService {
   /// 2. Diversity (avoid recently used recipes)
   /// 3. Ingredient similarity
   /// 4. Full cycle rule: can't reuse a recipe until all recipes used once (only if meals > recipes)
+  /// Sélectionne la meilleure recette pour un slot donné
+  ///
+  /// Les pondérations suivantes influencent le score final :
+  /// - usagePenaltyWeight : pénalise la réutilisation fréquente d'une recette
+  /// - recencyPenaltyWeight : pénalise la récence d'utilisation
+  /// - similarityPenaltyWeight : pénalise la similarité d'ingrédients
+  /// - coverageBonusWeight : favorise la couverture des portions
+  /// - addExtraMealBonusWeight : favorise les recettes générant des restes
+  /// - endOfPlanCoverageBoost : booste la couverture en fin de plan
+  /// - cyclePenaltyWeight : pénalise la réutilisation avant d'avoir fait le tour
   static Recipe? _selectBestRecipe({
     required List<Recipe> availableRecipes,
     required Map<String, Map<String, (int, int)>> recipeUserServingsMap,
     required List<User> users,
     required Map<String, int> usedRecipes,
-    required List<String> recentRecipes,
     required MealType mealType,
     required Map<String, Map<MealType, int>> remainingPortions,
     required Map<String, Map<String, double>> similarityCache,
@@ -210,132 +404,150 @@ class MealPlanningService {
     required double recencyPenaltyWeight,
     required double similarityPenaltyWeight,
     required double coverageBonusWeight,
-    bool allPortionsExhausted = false,
+    double addExtraMealBonusWeight = 30.0,
+    double endOfPlanCoverageBoost = 1.5,
+    double endOfPlanThresholdRatio = 0.2,
+    bool useMaxPossibleCoverageNormalization = false,
+    int? initialTotalPortions,
     bool requireFullCycle = false,
     Set<String> usedInCurrentCycle = const {},
+    Map<String, int>? recentRecipeDaysAgo,
+    double cyclePenaltyWeight = 50.0,
+    double recencyDecayFactor = 0.9,
+    bool useAbsoluteCoverageBonus = false,
   }) {
     if (availableRecipes.isEmpty) return null;
-    
-    // Filter recipes based on full cycle rule
-    // Only apply if requireFullCycle AND current cycle not complete
-    List<Recipe> candidateRecipes = availableRecipes;
-    if (requireFullCycle && usedInCurrentCycle.isNotEmpty) {
-      final unusedRecipes = availableRecipes
-          .where((r) => !usedInCurrentCycle.contains(r.id))
-          .toList();
-      // Only filter if there are unused recipes, otherwise allow all (cycle complete)
-      if (unusedRecipes.isNotEmpty) {
-        candidateRecipes = unusedRecipes;
-      }
-    }
-    
-    Recipe? bestRecipe;
+
+    final candidates = <Recipe>[];
     double bestScore = double.infinity;
-    
-    // Calculate normalization factors for scoring
+    const epsilon = 1e-6;
+    // recentRecipes n'est plus utilisé pour la récence
+
     final maxTimesUsed = usedRecipes.values.fold<int>(0, (max, val) => val > max ? val : max);
     final totalRemainingPortions = remainingPortions.values
         .fold<int>(0, (sum, map) => sum + (map[mealType] ?? 0));
-    
-    // Calculate max remaining portions for equity normalization
-    final maxUserRemaining = remainingPortions.values
-        .fold<int>(0, (max, map) {
-          final total = map.values.fold(0, (a, b) => a + b);
-          return total > max ? total : max;
-        });
 
-    for (final recipe in candidateRecipes) {
+    // Optimisation: calculer totalConsumed et maxPossibleCoverage une seule fois par candidate
+    final Map<String, int> candidateTotalConsumed = {};
+    final Map<String, Map<MealType, double>> maxPossibleCoverageMap = {};
+    for (final recipe in availableRecipes) {
       final servingsForRecipe = recipeUserServingsMap[recipe.id] ?? {};
-
-      // Calculate coverage score: favor equity (users most behind) over total coverage
-      double coverageScore = 0;
-      
+      int totalConsumed = 0;
       for (final user in users) {
         final (lunch, dinner) = servingsForRecipe[user.id] ?? (0, 0);
         final desired = mealType == MealType.lunch ? lunch : dinner;
         final remaining = remainingPortions[user.id]![mealType]!;
-
-        if (allPortionsExhausted) {
-          // When portions exhausted, score based on desired servings
-          if (desired > 0) {
-            coverageScore += desired.toDouble();
-          }
-        } else {
-          // Normal mode: score based on remaining portions
-          if (remaining > 0 && desired > 0) {
-            final served = remaining < desired ? remaining : desired;
-            // Equity weight (0-1): users with more remaining portions get higher priority
-            // Formula: userRemaining / maxRemaining → 0 (no portions left) to 1 (most behind)
-            final userTotalRemaining = remainingPortions[user.id]!.values.fold(0, (a, b) => a + b);
-            final equityWeight = maxUserRemaining > 0 
-                ? userTotalRemaining / maxUserRemaining 
-                : 0.0;
-            coverageScore += served * (1.0 + equityWeight); // Apply as multiplier 1→2
-          }
+        if (remaining > 0 && desired > 0) {
+          totalConsumed += remaining < desired ? remaining : desired;
         }
       }
-
-      // All scores normalized to 0-1 range, then weights applied
-      
-      // 1. Coverage score (0-1, higher = better coverage)
-      // Formula: coverageScore / totalRemaining → accounts for equity weights (1-2 multiplier)
-      final normalizedCoverage = totalRemainingPortions > 0
-          ? (coverageScore / (totalRemainingPortions * 2.0)).clamp(0.0, 1.0)
-          : 0.0;
-      final coverageComponent = -normalizedCoverage * coverageBonusWeight;
-
-      // 2. Usage penalty (0-1, higher = more used)
-      final timesUsed = usedRecipes[recipe.id] ?? 0;
-      final normalizedUsage = maxTimesUsed > 0 ? (timesUsed / maxTimesUsed).clamp(0.0, 1.0) : 0.0;
-      final usageComponent = normalizedUsage * usagePenaltyWeight;
-
-      // 3. Recency penalty (0-1, 1 if in recent window)
-      final normalizedRecency = recentRecipes.contains(recipe.id) ? 1.0 : 0.0;
-      final recencyComponent = normalizedRecency * recencyPenaltyWeight;
-
-      // 4. Similarity penalty (0-1, weighted average with temporal decay)
-      // Recent recipes have more weight than older ones
-      double normalizedSimilarity = 0;
-      if (recentRecipes.isNotEmpty) {
-        double weightedSimilarity = 0;
-        double totalWeight = 0;
-        for (int i = 0; i < recentRecipes.length; i++) {
-          final recentId = recentRecipes[i];
-          final similarity = similarityCache[recipe.id]?[recentId] ?? 0.0;
-          // Temporal decay: more recent = higher weight (0.2 to 1.0)
-          final recencyWeight = 0.2 + (0.8 * (i + 1) / recentRecipes.length);
-          weightedSimilarity += similarity * recencyWeight;
-          totalWeight += recencyWeight;
+      candidateTotalConsumed[recipe.id] = totalConsumed;
+      // Pré-calcule maxPossibleCoverage pour chaque type de repas
+      maxPossibleCoverageMap[recipe.id] = {};
+      for (final type in [MealType.lunch, MealType.dinner]) {
+        double maxCoverage = 0.0;
+        for (final user in users) {
+          final (lunch, dinner) = servingsForRecipe[user.id] ?? (0, 0);
+          maxCoverage += (type == MealType.lunch ? lunch : dinner);
         }
-        normalizedSimilarity = totalWeight > 0 
-            ? (weightedSimilarity / totalWeight).clamp(0.0, 1.0) 
-            : 0.0;
-      }
-      final similarityComponent = normalizedSimilarity * similarityPenaltyWeight;
-
-      // 5. AddExtraMeal bonus (proportional to coverage gain)
-      // Formula: -normalizedCoverage × 30 if addExtraMeal = true
-      // Rationale: Recipes with addExtraMeal reduce cooking days by 50%
-      // Coefficient 30 balances with other penalties (usage=20, similarity=30, recency=100)
-      final addExtraMealComponent = recipe.addExtraMeal && normalizedCoverage > 0
-          ? -normalizedCoverage * 30.0
-          : 0.0;
-
-      // Total score: lower is better (all components properly normalized)
-      final totalScore = usageComponent + recencyComponent + similarityComponent + 
-                        coverageComponent + addExtraMealComponent;
-
-      if (totalScore < bestScore) {
-        bestScore = totalScore;
-        bestRecipe = recipe;
+        maxPossibleCoverageMap[recipe.id]![type] = maxCoverage;
       }
     }
 
-    return bestRecipe;
+    for (final recipe in availableRecipes) {
+      final totalConsumed = candidateTotalConsumed[recipe.id]!;
+      if (totalConsumed == 0) {
+        continue;
+      }
+      final servingsForRecipe = recipeUserServingsMap[recipe.id] ?? {};
+      // --- Couverture ---
+      final coverageScore = totalConsumed.toDouble();
+      final maxPossibleCoverage = maxPossibleCoverageMap[recipe.id]?[mealType] ?? 0.0;
+      double normalizedCoverage = maxPossibleCoverage > 0
+          ? (coverageScore / maxPossibleCoverage).clamp(0.0, 1.0)
+          : 0.0;
+      double coverageComponent = -coverageScore * coverageBonusWeight;
+      if (initialTotalPortions != null && initialTotalPortions > 0) {
+        final ratio = totalRemainingPortions / initialTotalPortions;
+        if (ratio < endOfPlanThresholdRatio) {
+          final t = 1.0 - (ratio / endOfPlanThresholdRatio);
+          coverageComponent *= 1.0 + t * (endOfPlanCoverageBoost - 1.0);
+        }
+      }
+      final timesUsed = usedRecipes[recipe.id] ?? 0;
+      final normalizedUsage = maxTimesUsed > 0 ? (timesUsed / maxTimesUsed).clamp(0.0, 1.0) : 0.0;
+      final usageComponent = normalizedUsage * usagePenaltyWeight;
+      double recencyScore = 0.0;
+      final decayFactor = recencyDecayFactor;
+      if (recentRecipeDaysAgo != null && recentRecipeDaysAgo.containsKey(recipe.id)) {
+        final daysAgo = recentRecipeDaysAgo[recipe.id]!;
+        recencyScore = pow(decayFactor, daysAgo).toDouble();
+      }
+      recencyScore = recencyScore.clamp(0.0, 1.0);
+      final recencyComponent = recencyScore * recencyPenaltyWeight;
+      // Nouvelle logique : calculer la similarité d'ingrédients avec toutes les recettes de recentRecipeDaysAgo (historique + plan)
+      double normalizedSimilarity = 0.0;
+      if (recentRecipeDaysAgo != null && recentRecipeDaysAgo.isNotEmpty) {
+        double weightedSimilarity = 0.0;
+        double totalWeight = 0.0;
+        for (final entry in recentRecipeDaysAgo.entries) {
+          if (entry.key == recipe.id) continue; // ne pas comparer à soi-même
+          final similarity = similarityCache[recipe.id]?[entry.key] ?? 0.0;
+          // Poids : plus la recette est récente (daysAgo petit), plus la similarité compte
+          final daysAgo = entry.value;
+          final recencyWeight = 1.0 / (1.0 + daysAgo); // ex: daysAgo=0 => 1.0, daysAgo=1 => 0.5, etc.
+          weightedSimilarity += similarity * recencyWeight;
+          totalWeight += recencyWeight;
+        }
+        normalizedSimilarity = totalWeight > 0 ? (weightedSimilarity / totalWeight) : 0.0;
+        normalizedSimilarity = normalizedSimilarity.clamp(0.0, 1.0);
+      }
+      final similarityComponent = normalizedSimilarity * similarityPenaltyWeight;
+        final addExtraMealComponent = recipe.addExtraMeal && normalizedCoverage > 0
+          ? -normalizedCoverage * addExtraMealBonusWeight
+          : 0.0;
+      double cyclePenalty = 0.0;
+      if (requireFullCycle && usedInCurrentCycle.contains(recipe.id)) {
+        final cycleProgress = usedInCurrentCycle.length.toDouble() / availableRecipes.length;
+        cyclePenalty = cyclePenaltyWeight * cycleProgress.clamp(0.0, 1.0);
+      }
+      final totalScore = usageComponent + recencyComponent + similarityComponent +
+          coverageComponent + addExtraMealComponent + cyclePenalty;
+      if (totalScore < bestScore - epsilon) {
+        bestScore = totalScore;
+        candidates.clear();
+        candidates.add(recipe);
+      } else if ((totalScore - bestScore).abs() < epsilon) {
+        candidates.add(recipe);
+      }
+    }
+
+    // Fallback : si aucune recette ne consomme de portion, retourner null (slot vide)
+    if (candidates.isEmpty) {
+      // Aucun candidat possible pour ce slot (données incohérentes) — slot vide
+      return null;
+    }
+
+    // Tie-break deterministic : moins utilisée, puis par totalConsumed (couverture), puis ID croissant
+    int minUsage = candidates.map((r) => usedRecipes[r.id] ?? 0).reduce(min);
+    final leastUsed = candidates.where((r) => (usedRecipes[r.id] ?? 0) == minUsage).toList();
+    if (leastUsed.length == 1) return leastUsed.first;
+    int maxConsumedTieBreak = 0;
+    for (final recipe in leastUsed) {
+      final totalConsumed = candidateTotalConsumed[recipe.id]!;
+      maxConsumedTieBreak = max(maxConsumedTieBreak, totalConsumed);
+    }
+    final byConsumption = leastUsed.where((r) {
+      final totalConsumed = candidateTotalConsumed[r.id]!;
+      return totalConsumed == maxConsumedTieBreak;
+    }).toList();
+    if (byConsumption.length == 1) return byConsumption.first;
+    byConsumption.sort((a, b) => a.id.compareTo(b.id));
+    return byConsumption.first;
   }
 
   /// Builds a cache of ingredient similarity between all recipe pairs
-  static Map<String, Map<String, double>> _buildSimilarityCache(List<Recipe> recipes) {
+  static Map<String, Map<String, double>> _buildSimilarityCache(List<Recipe> recipes, Map<String, double> ingredientWeights) {
     final cache = <String, Map<String, double>>{};
     
     for (int i = 0; i < recipes.length; i++) {
@@ -343,7 +555,7 @@ class MealPlanningService {
       for (int j = 0; j < recipes.length; j++) {
         if (i != j) {
           cache[recipes[i].id]![recipes[j].id] = 
-              _calculateIngredientSimilarity(recipes[i], recipes[j]);
+              _calculateIngredientSimilarity(recipes[i], recipes[j], ingredientWeights);
         }
       }
     }
@@ -358,7 +570,7 @@ class MealPlanningService {
     required Map<String, (int lunch, int dinner)> servingsForRecipe,
     required MealType mealType,
     required Map<String, Map<MealType, int>> remainingPortions,
-    bool ignorePortions = false, // Ignore portion limits if true
+    bool ignorePortions = false, // ignoré, toujours false
   }) {
     final userServingsForMeal = <String, int>{};
     int totalConsumed = 0;
@@ -368,23 +580,13 @@ class MealPlanningService {
       final desired = mealType == MealType.lunch ? lunch : dinner;
       final remaining = remainingPortions[user.id]![mealType]!;
 
-      int servingCount;
-      // Check if THIS user has exhausted their portions OR if global ignorePortions is true
-      if (ignorePortions || remaining == 0) {
-        // When portions exhausted for this user, serve desired amount (allows recipe reuse)
-        servingCount = desired;
-      } else {
-        // Normal mode: serve minimum of desired and remaining
-        servingCount = (desired > 0 && remaining > 0) 
-            ? (desired < remaining ? desired : remaining) 
-            : 0;
-        
-        // Consume portions only in normal mode
-        if (servingCount > 0) {
-          remainingPortions[user.id]![mealType] = remaining - servingCount;
-        }
+      int servingCount = 0;
+      // Toujours servir le minimum de desired et remaining (jamais plus)
+      if (desired > 0 && remaining > 0) {
+        servingCount = desired < remaining ? desired : remaining;
+        remainingPortions[user.id]![mealType] = remaining - servingCount;
       }
-      
+
       if (servingCount > 0) {
         userServingsForMeal[user.id] = servingCount;
         totalConsumed += servingCount;
@@ -394,33 +596,49 @@ class MealPlanningService {
     return (userServingsForMeal, totalConsumed);
   }
 
-  /// Common base ingredients to exclude from similarity calculation
-  static const _commonIngredients = {
-    'sel', 'salt', 'poivre', 'pepper', 'huile', 'oil', 'eau', 'water',
-    'beurre', 'butter', 'sucre', 'sugar', 'farine', 'flour',
-  };
+  /// Calcule les poids dynamiques des ingrédients selon leur fréquence dans toutes les recettes
+  static Map<String, double> computeIngredientWeights(List<Recipe> recipes) {
+    final freq = <String, int>{};
+    int total = 0;
+    for (final recipe in recipes) {
+      for (final ing in recipe.ingredients) {
+        final name = ing.ingredient.name.toLowerCase();
+        freq[name] = (freq[name] ?? 0) + 1;
+        total++;
+      }
+    }
+    final weights = <String, double>{};
+    for (final entry in freq.entries) {
+      weights[entry.key] = 1.0 - (entry.value / total);
+      if (weights[entry.key]! < 0.0) weights[entry.key] = 0.0;
+    }
+    return weights;
+  }
 
-  /// Calculates ingredient similarity between two recipes (0-1)
-  /// Excludes common base ingredients for more meaningful comparison
-  static double _calculateIngredientSimilarity(Recipe r1, Recipe r2) {
+  /// Calculates ingredient similarity between two recipes (0-1) using dynamic weighting
+  /// Weights each ingredient based on its rarity across all recipes
+  static double _calculateIngredientSimilarity(Recipe r1, Recipe r2, Map<String, double> ingredientWeights) {
     if (r1.ingredients.isEmpty || r2.ingredients.isEmpty) return 0;
 
-    // Filter out common ingredients
-    final ing1Names = r1.ingredients
-        .map((i) => i.ingredient.name.toLowerCase())
-        .where((name) => !_commonIngredients.contains(name))
-        .toSet();
-    final ing2Names = r2.ingredients
-        .map((i) => i.ingredient.name.toLowerCase())
-        .where((name) => !_commonIngredients.contains(name))
-        .toSet();
-
+    final ing1Names = r1.ingredients.map((i) => i.ingredient.name.toLowerCase()).toSet();
+    final ing2Names = r2.ingredients.map((i) => i.ingredient.name.toLowerCase()).toSet();
     if (ing1Names.isEmpty || ing2Names.isEmpty) return 0;
 
-    final intersection = ing1Names.intersection(ing2Names).length;
-    final union = ing1Names.union(ing2Names).length;
+    double getWeight(String name) => ingredientWeights[name] ?? 1.0;
 
-    if (union == 0) return 0;
-    return intersection / union;
+    // Weighted intersection
+    double intersectionWeight = 0.0;
+    for (final name in ing1Names.intersection(ing2Names)) {
+      intersectionWeight += getWeight(name);
+    }
+
+    // Weighted union
+    double unionWeight = 0.0;
+    for (final name in ing1Names.union(ing2Names)) {
+      unionWeight += getWeight(name);
+    }
+
+    if (unionWeight == 0.0) return 0.0;
+    return intersectionWeight / unionWeight;
   }
 }

@@ -91,6 +91,7 @@ class FirebaseMealHistoryRepository {
           userServings: userServingsMap,
           recipeMultiplier: (mealData['recipeMultiplier'] as num?)?.toInt() ?? 1,
           isLeftoverMeal: mealData['isLeftoverMeal'] as bool? ?? false,
+          userSelected: mealData['userSelected'] as bool? ?? false,
         );
       }).toList();
       

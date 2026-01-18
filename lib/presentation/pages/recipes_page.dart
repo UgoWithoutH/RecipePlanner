@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:recipe_planner/presentation/widgets/ingredient_autocomplete.dart' show IngredientAutocomplete;
 
 import '../../core/constants/unit.dart' show Unit;
 import '../../domain/entities/ingredient.dart';
@@ -20,12 +21,30 @@ class RecipesPage extends StatefulWidget {
 }
 
 class _RecipesPageState extends State<RecipesPage> {
+    String _titleFilter = '';
+    Set<String> _selectedIngredientIds = {};
+    List<Map<String, String>> _allIngredients = [];
+    bool _ingredientsLoading = true;
   late Future<List<Recipe>> _recipesFuture;
 
   @override
   void initState() {
     super.initState();
     _recipesFuture = fetchRecipes();
+
+    // Fetch all ingredients for filter
+    _fetchAllIngredients();
+  }
+  Future<void> _fetchAllIngredients() async {
+    setState(() => _ingredientsLoading = true);
+    final snap = await FirebaseFirestore.instance.collection('ingredients').get();
+    setState(() {
+      _allIngredients = snap.docs.map((doc) => {
+        'id': doc.id,
+        'name': doc.get('name') as String,
+      }).toList();
+      _ingredientsLoading = false;
+    });
   }
 
   // =========================
@@ -65,9 +84,13 @@ class _RecipesPageState extends State<RecipesPage> {
           );
         }).toList();
 
-        final id = (data['id'] as String?)?.isNotEmpty == true
-            ? data['id'] as String
-            : doc.id;
+        String id;
+        final rawId = data['id'];
+        if (rawId != null && rawId is String && rawId.isNotEmpty) {
+          id = rawId;
+        } else {
+          id = doc.id;
+        }
 
         return Recipe(
           id: id,
@@ -160,169 +183,231 @@ class _RecipesPageState extends State<RecipesPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-            // HEADER
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Recettes',
-                    style: GoogleFonts.poppins(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  InkWell(
-                    onTap: _openCategoriesPage,
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF6A5AE0).withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(
-                        Icons.category,
-                        color: Color(0xFF6A5AE0),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // LISTE
-            Expanded(
-              child: FutureBuilder<List<Recipe>>(
-                future: _recipesFuture,
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-
-                  final recipes = snapshot.data ?? [];
-
-                  if (recipes.isEmpty) {
-                    return const Center(
-                      child: Text('Aucune recette disponible'),
-                    );
-                  }
-
-                  return ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(20, 10, 20, 100),
-                    separatorBuilder: (_, __) => const SizedBox(height: 20),
-                    itemCount: recipes.length,
-                    itemBuilder: (_, index) {
-                      final recipe = recipes[index];
-
-                      return Container(
-                        decoration: BoxDecoration(
-                          // color moved to Material for InkWell effect
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.05),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
+                // HEADER
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Recettes',
+                        style: GoogleFonts.poppins(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w700,
                         ),
-                        child: Material(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(20),
-                          child: InkWell(
-                            onTap: () => _openRecipeDetail(recipe),
-                            borderRadius: BorderRadius.circular(20),
-                            child: Padding(
-                              padding: const EdgeInsets.all(20),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              child: Text(
-                                                recipe.title,
-                                                style: GoogleFonts.poppins(
-                                                  fontSize: 18,
-                                                  fontWeight: FontWeight.w700,
-                                                  color: const Color(
-                                                    0xFF1A1A1A,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                            if (recipe.isFavorite) ...[
-                                              const SizedBox(width: 8),
-                                              const Icon(
-                                                Icons.favorite_rounded,
-                                                size: 22,
-                                                color: Colors.redAccent,
-                                              ),
-                                            ],
-                                          ],
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          recipe.description,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: GoogleFonts.poppins(
-                                            color: Colors.grey[600],
-                                            fontSize: 14,
-                                            height: 1.5,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 16),
-                                        // Footer stats
-                                        Row(
-                                          children: [
-                                            _buildStatItem(
-                                              Icons.access_time_rounded,
-                                              '${recipe.preparationTime + recipe.cookingTime} min',
-                                              const Color(
-                                                0xFF5C6BC0,
-                                              ), // Soft indigo
-                                            ),
-                                            const SizedBox(width: 24),
-                                            _buildStatItem(
-                                              Icons
-                                                  .pie_chart_rounded, // Icon "part"
-                                              '${recipe.servings} portions',
-                                              const Color(
-                                                0xFFFF8A65,
-                                              ), // Soft deep orange
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  const Icon(
-                                    Icons.arrow_forward_ios_rounded,
-                                    size: 18,
-                                    color: Colors.black26,
-                                  ),
-                                ],
-                              ),
-                            ),
+                      ),
+                      InkWell(
+                        onTap: _openCategoriesPage,
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF6A5AE0).withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.category,
+                            color: Color(0xFF6A5AE0),
                           ),
                         ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // FILTRES
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+                  child: TextField(
+                    decoration: InputDecoration(
+                      hintText: 'Filtrer par titre...',
+                      prefixIcon: const Icon(Icons.search),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                    ),
+                    onChanged: (value) => setState(() => _titleFilter = value),
+                  ),
+                ),
+                if (_ingredientsLoading)
+                  const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else ...[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+                    child: IngredientAutocomplete(
+                      selectedIngredientIds: _selectedIngredientIds,
+                      onIngredientSelected: (ingredient) {
+                        setState(() {
+                          _selectedIngredientIds.add(ingredient['id']!);
+                        });
+                      },
+                      controller: TextEditingController(),
+                    ),
+                  ),
+                  if (_selectedIngredientIds.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: _allIngredients
+                              .where((ing) => _selectedIngredientIds.contains(ing['id']))
+                              .map((ingredient) => Chip(
+                                    label: Text(ingredient['name'] ?? ''),
+                                    onDeleted: () {
+                                      setState(() {
+                                        _selectedIngredientIds.remove(ingredient['id']!);
+                                      });
+                                    },
+                                  ))
+                              .toList(),
+                        ),
+                      ),
+                    ),
+                ],
+
+                // LISTE
+                Expanded(
+                  child: FutureBuilder<List<Recipe>>(
+                    future: _recipesFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+
+                      final recipes = snapshot.data ?? [];
+
+                      // Filtrage par titre et ingrédients
+                      final filteredRecipes = recipes.where((recipe) {
+                        final matchesTitle = _titleFilter.isEmpty || recipe.title.toLowerCase().contains(_titleFilter.toLowerCase());
+                        final matchesIngredients = _selectedIngredientIds.isEmpty || recipe.ingredients.any((ri) => _selectedIngredientIds.contains(ri.ingredient.id));
+                        return matchesTitle && matchesIngredients;
+                      }).toList();
+
+                      if (filteredRecipes.isEmpty) {
+                        return const Center(
+                          child: Text('Aucune recette disponible'),
+                        );
+                      }
+
+                      return ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(20, 10, 20, 100),
+                        separatorBuilder: (_, __) => const SizedBox(height: 20),
+                        itemCount: filteredRecipes.length,
+                        itemBuilder: (_, index) {
+                          final recipe = filteredRecipes[index];
+
+                          return Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(20),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.05),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: Material(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(20),
+                              child: InkWell(
+                                onTap: () => _openRecipeDetail(recipe),
+                                borderRadius: BorderRadius.circular(20),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(20),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.stretch,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    recipe.title,
+                                                    style: GoogleFonts.poppins(
+                                                      fontSize: 18,
+                                                      fontWeight: FontWeight.w700,
+                                                      color: const Color(
+                                                        0xFF1A1A1A,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                                if (recipe.isFavorite) ...[
+                                                  const SizedBox(width: 8),
+                                                  const Icon(
+                                                    Icons.favorite_rounded,
+                                                    size: 22,
+                                                    color: Colors.redAccent,
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Text(
+                                              recipe.description,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: GoogleFonts.poppins(
+                                                color: Colors.grey[600],
+                                                fontSize: 14,
+                                                height: 1.5,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 16),
+                                            // Footer stats
+                                            Row(
+                                              children: [
+                                                _buildStatItem(
+                                                  Icons.access_time_rounded,
+                                                  '${recipe.preparationTime + recipe.cookingTime} min',
+                                                  const Color(
+                                                    0xFF5C6BC0,
+                                                  ), // Soft indigo
+                                                ),
+                                                const SizedBox(width: 24),
+                                                _buildStatItem(
+                                                  Icons
+                                                      .pie_chart_rounded, // "part" icon
+                                                  '${recipe.servings} portions',
+                                                  const Color(
+                                                    0xFFFF8A65,
+                                                  ), // Soft deep orange
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      const Icon(
+                                        Icons.arrow_forward_ios_rounded,
+                                        size: 18,
+                                        color: Colors.black26,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
                       );
                     },
-                  );
-                },
-              ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
         ],
       ),
 

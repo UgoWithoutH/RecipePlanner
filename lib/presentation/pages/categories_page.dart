@@ -40,14 +40,14 @@ class _CategoriesPageState extends State<CategoriesPage> {
     final result = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Ajouter une catégorie'),
+        title: const Text('Add a category'),
         content: TextField(
           controller: controller,
-          decoration: const InputDecoration(labelText: 'Nom de la catégorie'),
+          decoration: const InputDecoration(labelText: 'Category name'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Ajouter')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Add')),
         ],
       ),
     );
@@ -75,11 +75,11 @@ class _CategoriesPageState extends State<CategoriesPage> {
     final result = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Modifier la catégorie'),
+        title: const Text('Edit category'),
         content: TextField(controller: controller),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Enregistrer')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Save')),
         ],
       ),
     );
@@ -105,11 +105,11 @@ class _CategoriesPageState extends State<CategoriesPage> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Supprimer la catégorie'),
-        content: const Text('Voulez-vous vraiment supprimer cette catégorie ?'),
+        title: const Text('Delete category'),
+        content: const Text('Do you really want to delete this category?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Supprimer')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
         ],
       ),
     );
@@ -131,7 +131,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Catégories')),
+      appBar: AppBar(title: const Text('Categories')),
       body: Column(
         children: [
           // Inline loader for add/edit/delete actions
@@ -141,7 +141,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator()) // Full screen on initial load
                 : _categories.isEmpty
-                  ? const Center(child: Text('Aucune catégorie pour l’instant'))
+                  ? const Center(child: Text('No categories yet'))
                   : ListView.builder(
                         padding: const EdgeInsets.all(16),
                         itemCount: _categories.length,

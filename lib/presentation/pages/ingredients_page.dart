@@ -180,7 +180,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
                       ),
                       const SizedBox(width: 16),
                       Text(
-                        'Ingrédients',
+                        'Ingredients',
                         style: GoogleFonts.poppins(
                           fontSize: 28,
                           fontWeight: FontWeight.w700,
@@ -282,7 +282,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
                     const Icon(Icons.add_rounded, color: Colors.white),
                     const SizedBox(width: 8),
                     Text(
-                      'Ajouter',
+                      'Add',
                       style: GoogleFonts.poppins(
                         color: Colors.white,
                         fontWeight: FontWeight.w600,

@@ -386,9 +386,13 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
             children: [
               Autocomplete<Map<String, String>>(
                 optionsBuilder: (TextEditingValue textEditingValue) async {
-                  final query = textEditingValue.text.trim();
+                  final query = textEditingValue.text.trim().toLowerCase();
                   if (query.isEmpty) return <Map<String, String>>[];
-                  return await _ingredientRepo.searchIngredients(query);
+                  // On récupère tous les ingrédients et on filtre côté client (insensible à la casse)
+                  final allResults = await _ingredientRepo.searchIngredients('');
+                  return allResults.where((ingredient) =>
+                    (ingredient['name'] ?? '').toLowerCase().contains(query)
+                  ).toList();
                 },
                 displayStringForOption: (option) => option['name']!,
                 fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
@@ -546,33 +550,68 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                      ),
              TextButton.icon(
                onPressed: () {
-                final controller = TextEditingController();
-                showDialog(
-                  context: context,
-                  builder: (_) => AlertDialog(
-                    title: Text('Ajouter une étape', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-                    content: TextField(
-                      controller: controller, 
-                      style: GoogleFonts.poppins(),
-                      decoration: const InputDecoration(hintText: "Décrivez l'étape..."),
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: Text('Annuler', style: GoogleFonts.poppins(color: Colors.grey)),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          if (controller.text.isNotEmpty) {
-                            setState(() => _instructions.add(controller.text));
-                            Navigator.pop(context);
-                          }
-                        },
-                        child: Text('Ajouter', style: GoogleFonts.poppins(color: const Color(0xFF6A5AE0), fontWeight: FontWeight.bold)),
-                      ),
-                    ],
-                  ),
-                );
+                 final controller = TextEditingController();
+                 showDialog(
+                   context: context,
+                   builder: (_) => AlertDialog(
+                     title: Text('Ajouter une étape', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+                     content: SizedBox(
+                       width: 400,
+                       height: 180,
+                       child: Scrollbar(
+                         thumbVisibility: true,
+                         child: SingleChildScrollView(
+                           child: ConstrainedBox(
+                             constraints: const BoxConstraints(minHeight: 180, maxHeight: 180),
+                             child: TextField(
+                               controller: controller,
+                               style: GoogleFonts.poppins(),
+                               minLines: null,
+                               maxLines: null,
+                               expands: true,
+                               textAlignVertical: TextAlignVertical.top,
+                               decoration: InputDecoration(
+                                 hintText: "Décrivez l'étape...",
+                                 filled: true,
+                                 fillColor: Colors.grey[50],
+                                 contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                                 border: OutlineInputBorder(
+                                   borderRadius: BorderRadius.circular(12),
+                                   borderSide: BorderSide(color: Colors.grey[300]!),
+                                 ),
+                                 enabledBorder: OutlineInputBorder(
+                                   borderRadius: BorderRadius.circular(12),
+                                   borderSide: BorderSide(color: Colors.grey[300]!),
+                                 ),
+                                 focusedBorder: OutlineInputBorder(
+                                   borderRadius: BorderRadius.circular(12),
+                                   borderSide: BorderSide(color: const Color(0xFF6A5AE0)),
+                                 ),
+                               ),
+                               keyboardType: TextInputType.multiline,
+                               textInputAction: TextInputAction.newline,
+                             ),
+                           ),
+                         ),
+                       ),
+                     ),
+                     actions: [
+                       TextButton(
+                         onPressed: () => Navigator.pop(context),
+                         child: Text('Annuler', style: GoogleFonts.poppins(color: Colors.grey)),
+                       ),
+                       TextButton(
+                         onPressed: () {
+                           if (controller.text.isNotEmpty) {
+                             setState(() => _instructions.add(controller.text));
+                             Navigator.pop(context);
+                           }
+                         },
+                         child: Text('Ajouter', style: GoogleFonts.poppins(color: const Color(0xFF6A5AE0), fontWeight: FontWeight.bold)),
+                       ),
+                     ],
+                   ),
+                 );
                },
                icon: const Icon(Icons.add_circle_outline_rounded, size: 18),
                label: Text("Ajouter", style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),

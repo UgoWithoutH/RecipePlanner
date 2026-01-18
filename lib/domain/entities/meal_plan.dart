@@ -10,6 +10,7 @@ class Meal {
       Map<String, int>? userServings,
       int? recipeMultiplier,
       bool? isLeftoverMeal,
+      bool? userSelected,
     }) {
       return Meal(
         recipe: recipe ?? this.recipe,
@@ -19,6 +20,7 @@ class Meal {
         userServings: userServings ?? this.userServings,
         recipeMultiplier: recipeMultiplier ?? this.recipeMultiplier,
         isLeftoverMeal: isLeftoverMeal ?? this.isLeftoverMeal,
+        userSelected: userSelected ?? this.userSelected,
       );
     }
   final Recipe recipe;
@@ -28,6 +30,7 @@ class Meal {
   final Map<String, int> userServings; // userId -> servings count
   final int recipeMultiplier; // how many times the recipe must be prepared (batch cooking)
   final bool isLeftoverMeal; // true if this meal is a leftover from addExtraMeal (second meal)
+  final bool userSelected; // true si choisi manuellement par l'utilisateur
 
   const Meal({
     required this.recipe,
@@ -37,6 +40,7 @@ class Meal {
     required this.userServings,
     this.recipeMultiplier = 1,
     this.isLeftoverMeal = false,
+    this.userSelected = false,
   });
 }
 
@@ -75,6 +79,7 @@ class MealPlan {
                 'userServings': m.userServings,
                 'recipeMultiplier': m.recipeMultiplier,
                 'isLeftoverMeal': m.isLeftoverMeal,
+                'userSelected': m.userSelected,
               })
           .toList(),
     };

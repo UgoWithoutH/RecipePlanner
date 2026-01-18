@@ -8,10 +8,19 @@ import '../../data/repositories/firebase_user_recipe_serving_repository.dart';
 import '../../data/repositories/firebase_category_repository.dart';
 import 'create_recipe_page.dart';
 
+
+
 class RecipeDetailPage extends StatefulWidget {
   final Recipe recipe;
+  final int? ingredientMultiplier;
+  final bool showAddExtraMealBadge;
 
-  const RecipeDetailPage({super.key, required this.recipe});
+  const RecipeDetailPage({
+    super.key,
+    required this.recipe,
+    this.ingredientMultiplier,
+    this.showAddExtraMealBadge = true,
+  });
 
   @override
   State<RecipeDetailPage> createState() => _RecipeDetailPageState();
@@ -19,6 +28,7 @@ class RecipeDetailPage extends StatefulWidget {
 
 class _RecipeDetailPageState extends State<RecipeDetailPage> {
   late Recipe _recipe;
+  int? _ingredientMultiplier;
   bool _isDeleting = false;
 
   List<UserRecipeServing> _userServings = [];
@@ -34,6 +44,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   void initState() {
     super.initState();
     _recipe = widget.recipe;
+    _ingredientMultiplier = widget.ingredientMultiplier;
     _loadUserServings();
     _loadCategories();
   }
@@ -263,7 +274,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                               ),
                             ),
 
-                            if (_recipe.addExtraMeal) ...[
+                            if (_recipe.addExtraMeal && (widget.showAddExtraMealBadge)) ...[
                               const SizedBox(height: 24),
                               Container(
                                 padding: const EdgeInsets.all(16),
@@ -296,13 +307,29 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                             const SizedBox(height: 40),
 
                             // INGREDIENTS
-                            Text(
-                              'Ingrédients',
-                              style: GoogleFonts.poppins(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.black87,
-                              ),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Text(
+                                  'Ingrédients',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                if (_ingredientMultiplier != null && _ingredientMultiplier! > 1) ...[
+                                  const SizedBox(width: 10),
+                                  Text(
+                                    '×${_ingredientMultiplier}',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.deepPurpleAccent,
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
                             const SizedBox(height: 16),
                             ListView.builder(

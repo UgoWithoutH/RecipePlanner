@@ -245,12 +245,16 @@ class _PlannerPageState extends State<PlannerPage> {
       final users = await _userRepo.getUsers();
       final servings = await _loadServings();
 
+      // Récupère tous les repas historiques (toutes les dates)
+      final allHistoryMeals = _mealHistory.values.expand((meals) => meals).toList();
+
       final plan = MealPlanningService.generateMealPlan(
         recipes: recipes,
         servings: servings,
         users: users,
         startDate: _selectedStartDate!,
         durationDays: _selectedDuration!,
+        recentMeals: allHistoryMeals,
       );
 
       setState(() {
@@ -482,10 +486,56 @@ class _PlannerPageState extends State<PlannerPage> {
   }
 
   Future<void> _changeMealRecipe(Meal mealToUpdate, Recipe newRecipe) async {
-    if (_generatedMealPlan == null) return;
-
     setState(() => _isLoading = true);
     try {
+      // Vérifier si le repas appartient à l'historique
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final mealDate = DateTime(mealToUpdate.date.year, mealToUpdate.date.month, mealToUpdate.date.day);
+      final isHistory = mealDate.isBefore(today);
+
+      if (isHistory) {
+        // Modifier le repas dans l'historique
+        final historyMeals = _mealHistory[mealDate] ?? [];
+        final indexToUpdate = historyMeals.indexWhere(
+          (m) =>
+              m.recipe.id == mealToUpdate.recipe.id &&
+              m.date == mealToUpdate.date &&
+              m.type == mealToUpdate.type,
+        );
+        if (indexToUpdate == -1) return;
+
+        // Remplacer le repas par le nouveau
+        historyMeals[indexToUpdate] = Meal(
+          recipe: newRecipe,
+          date: mealToUpdate.date,
+          type: mealToUpdate.type,
+          totalServings: newRecipe.servings,
+          userServings: {},
+          recipeMultiplier: 1,
+          isLeftoverMeal: false,
+          userSelected: true,
+        );
+
+        // Mettre à jour l'historique local
+        _mealHistory[mealDate] = historyMeals;
+
+        // Persister la modification dans Firestore
+        await _historyRepo.addDayToHistory(mealDate, historyMeals);
+
+        setState(() {});
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ Recette historique modifiée', style: GoogleFonts.poppins()),
+          ),
+        );
+        return;
+      }
+
+      // ...logique existante pour le plan généré...
+      if (_generatedMealPlan == null) return;
       final updatedMeals = List<Meal>.from(_generatedMealPlan!.meals);
 
       // Find the index of the meal to update
@@ -554,27 +604,15 @@ class _PlannerPageState extends State<PlannerPage> {
 
       // --- UPDATE CURRENT SLOT ---
 
-      // We are "swapping" the recipe.
-      // Resetting multiplier to 1 and isLeftover to false ensures a clean slate.
-      // (Unless we want to keep logic, but new recipe might not have same servings).
-
       updatedMeals[indexToUpdate] = Meal(
         recipe: newRecipe,
         date: mealToUpdate.date,
         type: mealToUpdate.type,
-        totalServings: newRecipe
-            .servings, // Default to recipe servings or user servings logic?
-        // For simplicity, let's just use the recipe base servings or
-        // if we want to be smart, we'd recalculate based on user count but that's complex here.
-        // Let's keep it simple: just the recipe.
-        // Wait, 'totalServings' in Meal usually comes from aggregation.
-        // Let's assume for now we take the recipe servings or keep the previous total?
-        // Let's Recalculate based on users?
-        // Actually, let's just use newRecipe.servings as a baseline for the display.
-        userServings:
-            {}, // Reset user specific servings override? Or copy? Safe to reset.
+        totalServings: newRecipe.servings,
+        userServings: {},
         recipeMultiplier: 1,
         isLeftoverMeal: false,
+        userSelected: true,
       );
 
       // --- SAVE ---
@@ -609,12 +647,11 @@ class _PlannerPageState extends State<PlannerPage> {
     DateTime date,
     MealType type,
   ) async {
-    if (_generatedMealPlan == null) return;
-
     setState(() => _isLoading = true);
     try {
-      final updatedMeals = List<Meal>.from(_generatedMealPlan!.meals);
-
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final mealDate = DateTime(date.year, date.month, date.day);
       final newMeal = Meal(
         recipe: recipe,
         date: date,
@@ -623,10 +660,27 @@ class _PlannerPageState extends State<PlannerPage> {
         userServings: {},
         recipeMultiplier: 1,
         isLeftoverMeal: false,
+        userSelected: true,
       );
 
-      updatedMeals.add(newMeal);
+      if (mealDate.isBefore(today)) {
+        // Ajout dans l'historique
+        final historyMeals = List<Meal>.from(_mealHistory[mealDate] ?? []);
+        historyMeals.add(newMeal);
+        _mealHistory[mealDate] = historyMeals;
+        await _historyRepo.addDayToHistory(mealDate, historyMeals);
+        setState(() {});
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('✅ Repas historique ajouté', style: GoogleFonts.poppins())),
+        );
+        return;
+      }
 
+      // Ajout dans le plan généré (comportement existant)
+      if (_generatedMealPlan == null) return;
+      final updatedMeals = List<Meal>.from(_generatedMealPlan!.meals);
+      updatedMeals.add(newMeal);
       final updatedPlan = MealPlan(
         id: _generatedMealPlan!.id,
         startDate: _generatedMealPlan!.startDate,
@@ -634,13 +688,10 @@ class _PlannerPageState extends State<PlannerPage> {
         meals: updatedMeals,
         createdAt: _generatedMealPlan!.createdAt,
       );
-
       await _mealPlanRepo.saveMealPlan(updatedPlan);
-
       setState(() {
         _generatedMealPlan = updatedPlan;
       });
-
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('✅ Repas ajouté', style: GoogleFonts.poppins())),
@@ -654,6 +705,7 @@ class _PlannerPageState extends State<PlannerPage> {
     Meal? mealToUpdate,
     DateTime? date,
     MealType? type,
+    bool requireConfirmation = true,
   }) {
     showModalBottomSheet(
       context: context,
@@ -667,7 +719,6 @@ class _PlannerPageState extends State<PlannerPage> {
         ),
         child: RecipeSelector(
           onRecipeSelected: (newRecipe) async {
-            Navigator.pop(context); // Close modal
             // Vérifier si c'est un repas historique (date passée, sans l'heure)
             bool isHistory = false;
             if (mealToUpdate != null) {
@@ -680,7 +731,7 @@ class _PlannerPageState extends State<PlannerPage> {
               );
               isHistory = mealDate.isBefore(today);
             }
-            if (mealToUpdate != null && isHistory) {
+            if (mealToUpdate != null && isHistory && requireConfirmation) {
               final confirmed = await showDialog<bool>(
                 context: context,
                 builder: (context) => AlertDialog(
@@ -705,7 +756,11 @@ class _PlannerPageState extends State<PlannerPage> {
                 ),
               );
               if (confirmed != true) return;
+              Navigator.pop(context); // Close modal après confirmation
+              _changeMealRecipe(mealToUpdate, newRecipe);
+              return;
             }
+            Navigator.pop(context); // Close modal (cas normal)
             if (mealToUpdate != null) {
               _changeMealRecipe(mealToUpdate, newRecipe);
             } else if (date != null && type != null) {
@@ -1089,10 +1144,30 @@ class _PlannerPageState extends State<PlannerPage> {
               Expanded(
                 child: InkWell(
                   onTap: () {
+                    // Calcul du multiplicateur pour addExtraMeal (corrigé)
+                    int? ingredientMultiplier;
+                    if (meal.recipe.addExtraMeal && _generatedMealPlan != null) {
+                      final nextDay = meal.date.add(const Duration(days: 1));
+                      final sameRecipeNextDay = _generatedMealPlan!.meals.any((m) =>
+                        m.recipe.id == meal.recipe.id &&
+                        m.date.year == nextDay.year &&
+                        m.date.month == nextDay.month &&
+                        m.date.day == nextDay.day &&
+                        m.type == meal.type &&
+                        m.isLeftoverMeal
+                      );
+                      if (sameRecipeNextDay) {
+                        ingredientMultiplier = 2;
+                      }
+                    }
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (_) => RecipeDetailPage(recipe: meal.recipe),
+                        builder: (_) => RecipeDetailPage(
+                          recipe: meal.recipe,
+                          ingredientMultiplier: ingredientMultiplier,
+                          showAddExtraMealBadge: false,
+                        ),
                       ),
                     );
                   },
@@ -1285,7 +1360,7 @@ class _PlannerPageState extends State<PlannerPage> {
               // Swap/Change Meal Button
               InkWell(
                 onTap: () async {
-                  // Check if it's a historical meal (past date, without time)
+                  // Vérifier si c'est un repas historique
                   final now = DateTime.now();
                   final today = DateTime(now.year, now.month, now.day);
                   final mealDate = DateTime(
@@ -1320,7 +1395,7 @@ class _PlannerPageState extends State<PlannerPage> {
                     );
                     if (confirmed != true) return;
                   }
-                  _showRecipeSelector(mealToUpdate: meal);
+                  _showRecipeSelector(mealToUpdate: meal, requireConfirmation: false);
                 },
                 child: Container(
                   width: 50,
@@ -1341,8 +1416,42 @@ class _PlannerPageState extends State<PlannerPage> {
         elevation: 2,
         margin: const EdgeInsets.symmetric(vertical: 8),
         child: InkWell(
-          onTap: () {
+          onTap: () async {
             if (_selectedMealDate != null) {
+              final now = DateTime.now();
+              final today = DateTime(now.year, now.month, now.day);
+              final mealDate = DateTime(
+                _selectedMealDate!.year,
+                _selectedMealDate!.month,
+                _selectedMealDate!.day,
+              );
+              final isHistory = mealDate.isBefore(today);
+              if (isHistory) {
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: Text('Ajouter un repas historique'),
+                    content: Text(
+                      "Ce jour fait partie de l'historique. Voulez-vous vraiment ajouter un repas ?",
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Annuler'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.deepPurpleAccent,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: const Text('Oui, ajouter'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed != true) return;
+              }
               _showRecipeSelector(date: _selectedMealDate!, type: mealType);
             }
           },

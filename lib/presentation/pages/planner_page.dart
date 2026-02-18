@@ -35,7 +35,7 @@ class _PlannerPageState extends State<PlannerPage> {
   final FirebaseMealHistoryRepository _historyRepo =
       FirebaseMealHistoryRepository();
 
-  static const int _maxHistoryDays = 3;
+  int _maxHistoryDays = 30; // Default value, recalculated based on recipe count
 
   DateTime? _selectedStartDate;
   int? _selectedDuration;
@@ -57,15 +57,15 @@ class _PlannerPageState extends State<PlannerPage> {
   Future<void> _loadMostRecentMealPlanAndHistory() async {
     setState(() => _isLoading = true);
     try {
+      // Load recipes first to calculate history days
+      final allRecipes = await _loadRecipes();
+      _maxHistoryDays = allRecipes.length; // Dynamic history based on recipe count
+      
       final plans = await _mealPlanRepo.getAllMealPlans();
-      List<Recipe> allRecipes = [];
-      Map<String, Recipe> recipeMap = {};
+      Map<String, Recipe> recipeMap = {for (var recipe in allRecipes) recipe.id: recipe};
       if (plans.isNotEmpty) {
         plans.sort((a, b) => b.startDate.compareTo(a.startDate));
         final loadedPlan = plans.first;
-        // Reload full recipe details from Firestore
-        allRecipes = await _loadRecipes();
-        recipeMap = {for (var recipe in allRecipes) recipe.id: recipe};
         // Replace partial recipes with full ones
         final mealsWithFullRecipes = loadedPlan.meals.map((meal) {
           final fullRecipe = recipeMap[meal.recipe.id];
@@ -108,10 +108,6 @@ class _PlannerPageState extends State<PlannerPage> {
           _generatedMealPlan,
           _maxHistoryDays,
         );
-      } else {
-        // If no plan, still load recipes for history
-        allRecipes = await _loadRecipes();
-        recipeMap = {for (var recipe in allRecipes) recipe.id: recipe};
       }
       // Load history into state
       final rawHistory = await _historyRepo.getHistory();
@@ -242,11 +238,18 @@ class _PlannerPageState extends State<PlannerPage> {
     setState(() => _isLoading = true);
     try {
       final recipes = await _loadRecipes();
+      _maxHistoryDays = recipes.length; // Update history days based on recipe count
+      
       final users = await _userRepo.getUsers();
       final servings = await _loadServings();
 
-      // Retrieve all historical meals (all dates)
-      final allHistoryMeals = _mealHistory.values.expand((meals) => meals).toList();
+      // Filter historical meals to only include the last N days (N = recipe count)
+      final now = DateTime.now();
+      final cutoffDate = now.subtract(Duration(days: _maxHistoryDays));
+      final filteredHistoryMeals = _mealHistory.entries
+          .where((entry) => !entry.key.isBefore(cutoffDate))
+          .expand((entry) => entry.value)
+          .toList();
 
       final plan = MealPlanningService.generateMealPlan(
         recipes: recipes,
@@ -254,7 +257,7 @@ class _PlannerPageState extends State<PlannerPage> {
         users: users,
         startDate: _selectedStartDate!,
         durationDays: _selectedDuration!,
-        recentMeals: allHistoryMeals,
+        recentMeals: filteredHistoryMeals,
       );
 
       setState(() {

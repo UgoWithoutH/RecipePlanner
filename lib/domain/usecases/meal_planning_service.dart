@@ -442,7 +442,7 @@ class MealPlanningService {
         }
       }
       candidateTotalConsumed[recipe.id] = totalConsumed;
-      // Pré-calcule maxPossibleCoverage pour chaque type de repas
+      // Pre-compute maxPossibleCoverage for each meal type
       maxPossibleCoverageMap[recipe.id] = {};
       for (final type in [MealType.lunch, MealType.dinner]) {
         double maxCoverage = 0.0;
@@ -460,7 +460,7 @@ class MealPlanningService {
         continue;
       }
       final servingsForRecipe = recipeUserServingsMap[recipe.id] ?? {};
-      // --- Couverture ---
+      // --- Coverage ---
       final coverageScore = totalConsumed.toDouble();
       final maxPossibleCoverage = maxPossibleCoverageMap[recipe.id]?[mealType] ?? 0.0;
       double normalizedCoverage = maxPossibleCoverage > 0
@@ -485,15 +485,15 @@ class MealPlanningService {
       }
       recencyScore = recencyScore.clamp(0.0, 1.0);
       final recencyComponent = recencyScore * recencyPenaltyWeight;
-      // Nouvelle logique : calculer la similarité d'ingrédients avec toutes les recettes de recentRecipeDaysAgo (historique + plan)
+      // New logic: calculate ingredient similarity with all recipes in recentRecipeDaysAgo (history + plan)
       double normalizedSimilarity = 0.0;
       if (recentRecipeDaysAgo != null && recentRecipeDaysAgo.isNotEmpty) {
         double weightedSimilarity = 0.0;
         double totalWeight = 0.0;
         for (final entry in recentRecipeDaysAgo.entries) {
-          if (entry.key == recipe.id) continue; // ne pas comparer à soi-même
+          if (entry.key == recipe.id) continue; // do not compare to self
           final similarity = similarityCache[recipe.id]?[entry.key] ?? 0.0;
-          // Poids : plus la recette est récente (daysAgo petit), plus la similarité compte
+          // Weight: the more recent the recipe (small daysAgo), the more the similarity counts
           final daysAgo = entry.value;
           final recencyWeight = 1.0 / (1.0 + daysAgo); // ex: daysAgo=0 => 1.0, daysAgo=1 => 0.5, etc.
           weightedSimilarity += similarity * recencyWeight;
@@ -522,13 +522,13 @@ class MealPlanningService {
       }
     }
 
-    // Fallback : si aucune recette ne consomme de portion, retourner null (slot vide)
+    // Fallback: if no recipe consumes any portion, return null (empty slot)
     if (candidates.isEmpty) {
-      // Aucun candidat possible pour ce slot (données incohérentes) — slot vide
+      // No possible candidate for this slot (incoherent data) — empty slot
       return null;
     }
 
-    // Tie-break deterministic : moins utilisée, puis par totalConsumed (couverture), puis ID croissant
+    // Tie-break deterministic: least used, then by totalConsumed (coverage), then by ascending ID
     int minUsage = candidates.map((r) => usedRecipes[r.id] ?? 0).reduce(min);
     final leastUsed = candidates.where((r) => (usedRecipes[r.id] ?? 0) == minUsage).toList();
     if (leastUsed.length == 1) return leastUsed.first;
@@ -570,7 +570,7 @@ class MealPlanningService {
     required Map<String, (int lunch, int dinner)> servingsForRecipe,
     required MealType mealType,
     required Map<String, Map<MealType, int>> remainingPortions,
-    bool ignorePortions = false, // ignoré, toujours false
+    bool ignorePortions = false, // ignored, always false
   }) {
     final userServingsForMeal = <String, int>{};
     int totalConsumed = 0;
@@ -581,7 +581,7 @@ class MealPlanningService {
       final remaining = remainingPortions[user.id]![mealType]!;
 
       int servingCount = 0;
-      // Toujours servir le minimum de desired et remaining (jamais plus)
+      // Always serve the minimum of desired and remaining (never more)
       if (desired > 0 && remaining > 0) {
         servingCount = desired < remaining ? desired : remaining;
         remainingPortions[user.id]![mealType] = remaining - servingCount;
@@ -596,7 +596,7 @@ class MealPlanningService {
     return (userServingsForMeal, totalConsumed);
   }
 
-  /// Calcule les poids dynamiques des ingrédients selon leur fréquence dans toutes les recettes
+  /// Calculates dynamic ingredient weights according to their frequency in all recipes
   static Map<String, double> computeIngredientWeights(List<Recipe> recipes) {
     final freq = <String, int>{};
     int total = 0;

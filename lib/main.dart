@@ -9,6 +9,7 @@ import 'package:recipe_planner/data/services/seed_data_service.dart';
 import 'presentation/pages/recipes_page.dart';
 import 'presentation/pages/planner_page.dart';
 import 'presentation/pages/ingredients_page.dart';
+import 'presentation/pages/shopping_list_page.dart';
 import 'presentation/providers/auth_notifier.dart';
 
 import 'firebase_options.dart';
@@ -132,23 +133,32 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
 
+  static const int _pageCount = 4;
   final List<Widget> _pages = const [
     PlannerPage(),
+    ShoppingListPage(),
     RecipesPage(),
     IngredientsPage(),
   ];
 
   @override
   Widget build(BuildContext context) {
+    // Prevent index out of range
+    final safeIndex = _selectedIndex.clamp(0, _pages.length - 1);
     return Scaffold(
-      body: _pages[_selectedIndex],
+      body: _pages[safeIndex],
       bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
+        type: BottomNavigationBarType.fixed,
+        currentIndex: safeIndex,
         onTap: (index) => setState(() => _selectedIndex = index),
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.calendar_today),
             label: 'Planner',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.shopping_cart),
+            label: 'Liste de courses',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.list),

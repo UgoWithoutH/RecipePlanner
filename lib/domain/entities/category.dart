@@ -7,7 +7,7 @@ class Category {
     required this.name,
   });
 
-  /// Création depuis Firestore
+  /// Creation from Firestore
   factory Category.fromFirestore(
     String id,
     Map<String, dynamic> data,

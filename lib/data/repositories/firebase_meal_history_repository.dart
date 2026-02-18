@@ -11,7 +11,7 @@ class FirebaseMealHistoryRepository {
   Future<void> addDayToHistory(DateTime date, List<Meal> mealsForDay) async {
     if (mealsForDay.isEmpty) return;
 
-    // Normaliser la date en local (enlever l'heure)
+    // Normalize the date locally (remove the time)
     final normalizedDate = DateTime(date.year, date.month, date.day);
     final dateKey = _formatDateKey(normalizedDate);
     final mealsData = mealsForDay.map((m) => {
@@ -19,7 +19,7 @@ class FirebaseMealHistoryRepository {
       'recipeName': m.recipe.title,
       'preparationTime': m.recipe.preparationTime,
       'cookingTime': m.recipe.cookingTime,
-      // Stocker la date comme une string YYYY-MM-DD sans heure
+      // Store the date as a string YYYY-MM-DD without time
       'date': '${m.date.year}-${m.date.month.toString().padLeft(2, '0')}-${m.date.day.toString().padLeft(2, '0')}',
       'type': m.type.toString().split('.').last,
       'totalServings': m.totalServings,
@@ -43,7 +43,7 @@ class FirebaseMealHistoryRepository {
     for (var doc in snapshot.docs) {
       final data = doc.data() as Map<String, dynamic>;
       final parsedDate = DateTime.parse(data['date'] as String);
-      // Normaliser la date en local sans l'heure pour éviter les problèmes de fuseau horaire
+      // Normalize the date locally without time to avoid timezone issues
       final date = DateTime(parsedDate.year, parsedDate.month, parsedDate.day);
       final mealsData = (data['meals'] as List<dynamic>?) ?? [];
       
@@ -75,7 +75,7 @@ class FirebaseMealHistoryRepository {
             userServingsMap[k] = (v as num).toInt();
           });
         }
-        // Stocker la date comme une date sans heure (YYYY-MM-DD)
+        // Store the date as a date without time (YYYY-MM-DD)
         final dateStr = mealData['date'] as String;
         final dateParts = dateStr.split('-');
         final date = DateTime(
@@ -103,11 +103,15 @@ class FirebaseMealHistoryRepository {
 
   /// Remove history days older than the specified number of days
   Future<void> cleanOldHistory(int maxDays) async {
-    final cutoffDate = DateTime.now().subtract(Duration(days: maxDays));
-    final snapshot = await _history.where('date', isLessThan: cutoffDate.toUtc().toIso8601String()).get();
-    
-    for (var doc in snapshot.docs) {
-      await doc.reference.delete();
+    // Retrieve all history days, sorted by ascending date
+    final snapshot = await _history.orderBy('date', descending: false).get();
+    final docs = snapshot.docs;
+    // If there are more than maxDays, delete the oldest ones
+    if (docs.length > maxDays) {
+      final toDelete = docs.take(docs.length - maxDays);
+      for (var doc in toDelete) {
+        await doc.reference.delete();
+      }
     }
   }
 

@@ -14,19 +14,19 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
     _initializeAuth();
   }
 
-  /// Initialise l'authentification au démarrage
+  /// Initializes authentication at startup
   Future<void> _initializeAuth() async {
     final currentUser = _authService.getCurrentUser();
     if (currentUser != null) {
-      // L'utilisateur est déjà authentifié
+      // The user is already authenticated
       state = AsyncValue.data(currentUser);
     } else {
-      // Effectue une authentification anonyme
+      // Perform anonymous authentication
       await signInAnonymously();
     }
   }
 
-  /// Effectue l'authentification anonyme
+  /// Performs anonymous authentication
   Future<void> signInAnonymously() async {
     state = const AsyncValue.loading();
     try {
@@ -37,7 +37,7 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
     }
   }
 
-  /// Déconnecte l'utilisateur
+  /// Signs out the user
   Future<void> signOut() async {
     try {
       await _authService.signOut();
@@ -48,7 +48,7 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
   }
 }
 
-/// Provider qui gère l'état de l'authentification
+/// Provider that manages the authentication state
 final authNotifierProvider =
     StateNotifierProvider<AuthNotifier, AsyncValue<User?>>((ref) {
   final authService = ref.watch(authServiceProvider);

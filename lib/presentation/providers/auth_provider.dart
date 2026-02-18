@@ -6,13 +6,13 @@ final authServiceProvider = Provider<AuthService>((ref) {
   return AuthService();
 });
 
-/// Provider qui émet l'état de l'authentification
+/// Provider that emits the authentication state
 final authStateProvider = StreamProvider<User?>((ref) {
   final authService = ref.watch(authServiceProvider);
   return authService.userStream;
 });
 
-/// Provider pour gérer l'authentification anonyme
+/// Provider to handle anonymous authentication
 final anonymousAuthProvider =
     FutureProvider.family<User?, void>((ref, _) async {
   final authService = ref.watch(authServiceProvider);

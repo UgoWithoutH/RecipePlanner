@@ -10,6 +10,80 @@ class FirebaseRecipeRepository implements RecipeRepository {
     'recipes',
   );
 
+  /// Fetch a single recipe by its ID
+  Future<Recipe?> fetchRecipeById(String id) async {
+    if (id.isEmpty) return null;
+    // Try to find document by stored 'id' field first
+    final query = await _recipes.where('id', isEqualTo: id).limit(1).get();
+    if (query.docs.isNotEmpty) {
+      final doc = query.docs.first;
+      final data = doc.data() as Map<String, dynamic>;
+      final ingredients = (data['ingredients'] as List<dynamic>? ?? []).map((
+        i,
+      ) {
+        return RecipeIngredient(
+          ingredient: Ingredient(id: i['ingredientId'], name: ''),
+          quantity: (i['quantity'] as num).toDouble(),
+          unit: Unit.values.firstWhere(
+            (u) => u.label == i['unit'],
+            orElse: () => Unit.g,
+          ),
+          notes: i['notes'],
+        );
+      }).toList();
+      return Recipe(
+        id: doc.id,
+        title: data['title'] ?? '',
+        description: data['description'] ?? '',
+        preparationTime: (data['preparationTime'] as num?)?.toInt() ?? 0,
+        cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
+        servings: (data['servings'] as num?)?.toInt() ?? 1,
+        category: data['category'] ?? '',
+        ingredients: ingredients,
+        instructions: List<String>.from(data['instructions'] ?? []),
+        createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
+        isFavorite: data['isFavorite'] ?? false,
+        rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
+        addExtraMeal: data['addExtraMeal'] ?? false,
+      );
+    }
+    // Fallback: try by doc id
+    final docRef = _recipes.doc(id);
+    final snapshot = await docRef.get();
+    if (snapshot.exists) {
+      final data = snapshot.data() as Map<String, dynamic>;
+      final ingredients = (data['ingredients'] as List<dynamic>? ?? []).map((
+        i,
+      ) {
+        return RecipeIngredient(
+          ingredient: Ingredient(id: i['ingredientId'], name: ''),
+          quantity: (i['quantity'] as num).toDouble(),
+          unit: Unit.values.firstWhere(
+            (u) => u.label == i['unit'],
+            orElse: () => Unit.g,
+          ),
+          notes: i['notes'],
+        );
+      }).toList();
+      return Recipe(
+        id: snapshot.id,
+        title: data['title'] ?? '',
+        description: data['description'] ?? '',
+        preparationTime: (data['preparationTime'] as num?)?.toInt() ?? 0,
+        cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
+        servings: (data['servings'] as num?)?.toInt() ?? 1,
+        category: data['category'] ?? '',
+        ingredients: ingredients,
+        instructions: List<String>.from(data['instructions'] ?? []),
+        createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
+        isFavorite: data['isFavorite'] ?? false,
+        rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
+        addExtraMeal: data['addExtraMeal'] ?? false,
+      );
+    }
+    return null;
+  }
+
   @override
   /// Create a new recipe and return its Firestore document ID
   Future<String> createRecipe(Recipe recipe) async {
@@ -29,7 +103,10 @@ class FirebaseRecipeRepository implements RecipeRepository {
     final data = _recipeToMap(recipe);
 
     // Find the document by recipe ID
-    final query = await _recipes.where('id', isEqualTo: recipe.id).limit(1).get();
+    final query = await _recipes
+        .where('id', isEqualTo: recipe.id)
+        .limit(1)
+        .get();
 
     if (query.docs.isNotEmpty) {
       await query.docs.first.reference.update(data);
@@ -118,17 +195,18 @@ class FirebaseRecipeRepository implements RecipeRepository {
   /// Fetch all recipes ordered by creation date
   @override
   Future<List<Recipe>> fetchAllRecipes() async {
-    final snapshot = await _recipes.orderBy('createdAt', descending: true).get();
+    final snapshot = await _recipes
+        .orderBy('createdAt', descending: true)
+        .get();
 
     return snapshot.docs.map((doc) {
       final data = doc.data() as Map<String, dynamic>;
 
-      final ingredients = (data['ingredients'] as List<dynamic>? ?? []).map((i) {
+      final ingredients = (data['ingredients'] as List<dynamic>? ?? []).map((
+        i,
+      ) {
         return RecipeIngredient(
-          ingredient: Ingredient(
-            id: i['ingredientId'],
-            name: '',
-          ),
+          ingredient: Ingredient(id: i['ingredientId'], name: ''),
           quantity: (i['quantity'] as num).toDouble(),
           unit: Unit.values.firstWhere(
             (u) => u.label == i['unit'],

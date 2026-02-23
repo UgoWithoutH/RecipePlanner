@@ -14,7 +14,7 @@ import 'presentation/providers/auth_notifier.dart';
 
 import 'firebase_options.dart';
 
-const bool useTestData = true;
+const bool useTestData = false;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

@@ -1,4 +1,5 @@
 import 'recipe.dart';
+import 'recipe_ingredient.dart';
 
 /// Represents a single meal in the plan (lunch or dinner)
 class Meal {
@@ -53,6 +54,7 @@ class MealPlan {
   final int durationDays;
   final List<Meal> meals;
   final DateTime createdAt;
+  final List<RecipeIngredient> pantryItems;
 
   const MealPlan({
     required this.id,
@@ -60,6 +62,7 @@ class MealPlan {
     required this.durationDays,
     required this.meals,
     required this.createdAt,
+    this.pantryItems = const [],
   });
 
   Map<String, dynamic> toFirestore() {
@@ -67,12 +70,22 @@ class MealPlan {
       'startDate': '${startDate.year}-${startDate.month.toString().padLeft(2, '0')}-${startDate.day.toString().padLeft(2, '0')}',
       'durationDays': durationDays,
       'createdAt': createdAt.toUtc().toIso8601String(),
+      'pantryItems': pantryItems.map((item) => {
+        'name': item.ingredient.name,
+        'quantity': item.quantity,
+        'unit': item.unit.name,
+      }).toList(),
       'meals': meals
           .map((m) => {
                 'recipeId': m.recipe.id,
+                'recipeName': m.recipe.title,
+                'recipeDescription': m.recipe.description,
+                'recipeCategory': m.recipe.category,
+                'recipeServings': m.recipe.servings,
+                'recipeRating': m.recipe.rating,
+                'recipeAddExtraMeal': m.recipe.addExtraMeal,
                 'preparationTime': m.recipe.preparationTime,
                 'cookingTime': m.recipe.cookingTime,
-                'recipeName': m.recipe.title,
                 'date': '${m.date.year}-${m.date.month.toString().padLeft(2, '0')}-${m.date.day.toString().padLeft(2, '0')}',
                 'type': m.type.toString().split('.').last,
                 'totalServings': m.totalServings,

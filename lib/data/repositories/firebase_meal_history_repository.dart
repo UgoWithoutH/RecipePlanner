@@ -17,6 +17,11 @@ class FirebaseMealHistoryRepository {
     final mealsData = mealsForDay.map((m) => {
       'recipeId': m.recipe.id,
       'recipeName': m.recipe.title,
+      'recipeDescription': m.recipe.description,
+      'recipeCategory': m.recipe.category,
+      'recipeServings': m.recipe.servings,
+      'recipeRating': m.recipe.rating,
+      'recipeAddExtraMeal': m.recipe.addExtraMeal,
       'preparationTime': m.recipe.preparationTime,
       'cookingTime': m.recipe.cookingTime,
       // Store the date as a string YYYY-MM-DD without time
@@ -54,13 +59,15 @@ class FirebaseMealHistoryRepository {
         final recipe = Recipe(
           id: recipeId,
           title: recipeName,
-          description: '',
+          description: mealData['recipeDescription'] as String? ?? '',
           preparationTime: (mealData['preparationTime'] as num?)?.toInt() ?? 0,
           cookingTime: (mealData['cookingTime'] as num?)?.toInt() ?? 0,
-          servings: 1,
+          servings: (mealData['recipeServings'] as num?)?.toInt() ?? 1,
+          category: mealData['recipeCategory'] as String? ?? '',
+          rating: (mealData['recipeRating'] as num?)?.toDouble() ?? 0.0,
+          addExtraMeal: mealData['recipeAddExtraMeal'] as bool? ?? false,
           ingredients: const [],
           instructions: const [],
-          category: '',
           createdAt: DateTime.now(),
         );
         final typeStr = mealData['type'] as String? ?? 'lunch';

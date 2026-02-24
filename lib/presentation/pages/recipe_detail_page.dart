@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../domain/entities/recipe.dart';
 import '../../domain/entities/user_recipe_serving.dart';
 import '../../domain/entities/category.dart';
+import '../../core/utils/ingredient_name_cache.dart';
+import '../../core/constants/unit.dart';
+import '../../domain/entities/ingredient.dart';
+import '../../domain/entities/recipe_ingredient.dart';
 import '../../data/repositories/firebase_recipe_repository.dart';
 import '../../data/repositories/firebase_user_recipe_serving_repository.dart';
 import '../../data/repositories/firebase_category_repository.dart';
@@ -11,13 +16,15 @@ import 'create_recipe_page.dart';
 
 
 class RecipeDetailPage extends StatefulWidget {
-  final Recipe recipe;
+  final String recipeId;
+  final Recipe? initialRecipe;
   final int? ingredientMultiplier;
   final bool showAddExtraMealBadge;
 
   const RecipeDetailPage({
     super.key,
-    required this.recipe,
+    required this.recipeId,
+    this.initialRecipe,
     this.ingredientMultiplier,
     this.showAddExtraMealBadge = true,
   });
@@ -27,7 +34,7 @@ class RecipeDetailPage extends StatefulWidget {
 }
 
 class _RecipeDetailPageState extends State<RecipeDetailPage> {
-  late Recipe _recipe;
+  Recipe? _recipe;
   int? _ingredientMultiplier;
   bool _isDeleting = false;
 
@@ -40,18 +47,191 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   String? _categoryName;
   final FirebaseCategoryRepository _categoryRepo = FirebaseCategoryRepository();
 
+  bool _isLoadingRecipe = false;
+  bool _fullRecipeLoaded = false;
+
   @override
   void initState() {
     super.initState();
-    _recipe = widget.recipe;
+    _recipe = widget.initialRecipe;
     _ingredientMultiplier = widget.ingredientMultiplier;
-    _loadUserServings();
-    _loadCategories();
+    
+    // Always fetch the full recipe to ensure fresh data and complete details
+    _loadFullRecipe();
+    
+    if (_recipe != null) {
+      _loadUserServings();
+      _loadCategories();
+    }
+  }
+
+  Future<void> _loadFullRecipe() async {
+    if (!mounted) return;
+    setState(() => _isLoadingRecipe = true);
+    try {
+      final firestore = FirebaseFirestore.instance;
+      Map<String, dynamic>? data;
+      String? docId;
+
+      // 1. Direct document fetch by ID (most reliable path)
+      final directDoc =
+          await firestore.collection('recipes').doc(widget.recipeId).get();
+      if (directDoc.exists) {
+        data = directDoc.data() as Map<String, dynamic>;
+        docId = directDoc.id;
+      } 
+      
+      // 2. Fallback: query by stored 'id' field
+      if (data == null) {
+        final query = await firestore
+            .collection('recipes')
+            .where('id', isEqualTo: widget.recipeId)
+            .limit(1)
+            .get();
+        if (query.docs.isNotEmpty) {
+          data = query.docs.first.data() as Map<String, dynamic>;
+          docId = query.docs.first.id;
+        }
+      }
+
+      // 3. Last resort: query by TITLE (exact or capitalized)
+      if (data == null && widget.initialRecipe != null) {
+        // Try exact title first
+        var titleQuery = await firestore
+            .collection('recipes')
+            .where('title', isEqualTo: widget.initialRecipe!.title)
+            .limit(1)
+            .get();
+        
+        // If failed, try capitalizing the first letter (seed data convention)
+        if (titleQuery.docs.isEmpty && widget.initialRecipe!.title.isNotEmpty) {
+           final t = widget.initialRecipe!.title;
+           final capitalized = t[0].toUpperCase() + t.substring(1);
+           if (capitalized != t) {
+              titleQuery = await firestore
+                .collection('recipes')
+                .where('title', isEqualTo: capitalized)
+                .limit(1)
+                .get();
+           }
+        }
+
+        if (titleQuery.docs.isNotEmpty) {
+           data = titleQuery.docs.first.data() as Map<String, dynamic>;
+           docId = titleQuery.docs.first.id; // Override ID with the new one
+           debugPrint('RecipeDetailPage: Found recipe by title overlap: ${data!['title']}');
+        }
+      }
+
+      if (data == null || !mounted) {
+        // Could not load recipe from Firestore
+        debugPrint('RecipeDetailPage: Recipe document not found. Using partial data.');
+        return;
+      }
+
+      // Parse ingredients — use null-safe id extraction to avoid cast errors
+      final ingredientsData = (data['ingredients'] as List<dynamic>?) ?? [];
+      debugPrint('RecipeDetailPage: Found ${ingredientsData.length} ingredients in Firestore');
+
+      final ingredientIds = ingredientsData
+          .map((i) {
+             if (i is Map<String, dynamic>) {
+                return (i['ingredientId'] as String?) ?? '';
+             }
+             return '';
+          })
+          .where((id) => id.isNotEmpty)
+          .toList();
+
+      // Enrich ingredient names via cache
+      final names = ingredientIds.isNotEmpty
+          ? await IngredientNameCache.instance.fetchNamesForIds(ingredientIds)
+          : <String, String>{};
+
+      final enriched = ingredientsData.map((i) {
+        if (i is! Map<String, dynamic>) return null;
+        
+        final id = (i['ingredientId'] as String?) ?? '';
+        return RecipeIngredient(
+          ingredient: Ingredient(
+            id: id,
+            name: names[id] ?? (i['ingredientName'] as String? ?? ''),
+          ),
+          quantity: (i['quantity'] as num?)?.toDouble() ?? 0,
+          unit: Unit.values.firstWhere(
+            (u) => u.label == i['unit'] || u.name == i['unit'],
+            orElse: () => Unit.g,
+          ),
+          notes: i['notes'] as String?,
+        );
+      }).whereType<RecipeIngredient>().toList();
+
+      if (!mounted) return;
+      
+      final currentRecipe = _recipe;
+      
+      setState(() {
+        _fullRecipeLoaded = true;
+        _recipe = Recipe(
+          // Preserve the original id used to find the recipe so that
+          // subsequent saves / fetches keep working correctly.
+          id: docId ?? widget.recipeId,
+          title: data!['title'] as String? ?? currentRecipe?.title ?? '',
+          description: data['description'] as String? ?? currentRecipe?.description ?? '',
+          preparationTime:
+              (data['preparationTime'] as num?)?.toInt() ??
+              currentRecipe?.preparationTime ?? 0,
+          cookingTime:
+              (data['cookingTime'] as num?)?.toInt() ?? currentRecipe?.cookingTime ?? 0,
+          servings:
+              (data['servings'] as num?)?.toInt() ?? currentRecipe?.servings ?? 1,
+          category: data['category'] as String? ?? currentRecipe?.category ?? '',
+          ingredients: enriched,
+          instructions: List<String>.from(data['instructions'] ?? []),
+          createdAt:
+              DateTime.tryParse(data['createdAt'] as String? ?? '') ??
+              currentRecipe?.createdAt ?? DateTime.now(),
+          isFavorite: data['isFavorite'] as bool? ?? currentRecipe?.isFavorite ?? false,
+          rating:
+              (data['rating'] as num?)?.toDouble() ?? currentRecipe?.rating ?? 0.0,
+          addExtraMeal:
+              data['addExtraMeal'] as bool? ?? currentRecipe?.addExtraMeal ?? false,
+        );
+        // Update displayed category name once the full recipe is loaded
+        if (_categories.isNotEmpty && _recipe != null) {
+          final catId = _recipe!.category;
+          final cat = _categories.firstWhere(
+            (c) => c.id == catId,
+            orElse: () => Category(id: '', name: 'Unknown'),
+          );
+          _categoryName = cat.name;
+        }
+      });
+      
+      // Load secondary data if it wasn't loaded before
+      _loadUserServings();
+      _loadCategories();
+      
+    } catch (e, stack) {
+      // Log the real error so it is visible in the debug console
+      debugPrint('RecipeDetailPage._loadFullRecipe error: $e');
+      debugPrint('$stack');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Impossible de charger les détails : $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingRecipe = false);
+    }
   }
 
   Future<void> _loadUserServings() async {
-    if (_recipe.id.isEmpty) return;
-    final servings = await _userServingRepo.fetchServingsForRecipe(_recipe.id);
+    if (_recipe == null || _recipe!.id.isEmpty) return;
+    final servings = await _userServingRepo.fetchServingsForRecipe(_recipe!.id);
     if (!mounted) return;
     setState(() {
       _userServings = servings;
@@ -65,11 +245,13 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
     setState(() {
       _categories = categories;
-      final cat = _categories.firstWhere(
-        (c) => c.id == _recipe.category,
-        orElse: () => Category(id: '', name: 'Unknown'),
-      );
-      _categoryName = cat.name;
+      if (_recipe != null) {
+        final cat = _categories.firstWhere(
+          (c) => c.id == _recipe!.category,
+          orElse: () => Category(id: '', name: 'Unknown'),
+        );
+        _categoryName = cat.name;
+      }
     });
   }
 
@@ -94,13 +276,31 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
     if (confirm != true) return;
 
-    setState(() => _isDeleting = true);
-    await FirebaseRecipeRepository().deleteRecipe(_recipe.id);
+    if (_recipe != null) {
+      setState(() => _isDeleting = true);
+      await FirebaseRecipeRepository().deleteRecipe(_recipe!.id);
+    }
     if (mounted) Navigator.pop(context, true);
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_recipe == null) {
+      return Scaffold(
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.black),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+    final currentRecipe = _recipe!;
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: Stack(
@@ -153,7 +353,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                           context,
                                           MaterialPageRoute(
                                             builder: (_) =>
-                                                CreateRecipePage(recipe: _recipe),
+                                                CreateRecipePage(recipe: currentRecipe),
                                           ),
                                         );
 
@@ -161,6 +361,11 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                       setState(() => _recipe = updatedRecipe);
                                       _loadUserServings();
                                       _loadCategories();
+                                      
+                                      // Force reload of full recipe to get standardized data 
+                                      // and ensure any title/instruction updates are fully reflected locally
+                                       _isLoadingRecipe = true;
+                                       _loadFullRecipe();
                                     }
                                   }, 
                                   color: Colors.blueAccent
@@ -193,7 +398,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                   borderRadius: BorderRadius.circular(20),
                                 ),
                                 child: Text(
-                                  (_categoryName ?? _recipe.category).toUpperCase(),
+                                  (_categoryName ?? currentRecipe.category).toUpperCase(),
                                   style: GoogleFonts.poppins(
                                     fontSize: 11,
                                     fontWeight: FontWeight.w700,
@@ -208,7 +413,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
                             /// TITLE
                             Text(
-                              _recipe.title,
+                              currentRecipe.title,
                               textAlign: TextAlign.center,
                               style: GoogleFonts.poppins(
                                 fontSize: 26,
@@ -222,7 +427,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
                             // Description
                             Text(
-                              _recipe.description,
+                              currentRecipe.description,
                               textAlign: TextAlign.center,
                               style: GoogleFonts.poppins(
                                 fontSize: 14,
@@ -252,21 +457,21 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                 children: [
                                   _buildModernStatItem(
                                     Icons.access_time_rounded,
-                                    '${_recipe.preparationTime} min',
+                                    '${currentRecipe.preparationTime} min',
                                     'Préparation',
                                     const Color(0xFF5C6BC0),
                                   ),
                                   Container(width: 1, height: 40, color: Colors.grey[200]),
                                   _buildModernStatItem(
                                     Icons.local_fire_department_rounded,
-                                    '${_recipe.cookingTime} min',
+                                    '${currentRecipe.cookingTime} min',
                                     'Cuisson',
                                     const Color(0xFFFFA726),
                                   ),
                                   Container(width: 1, height: 40, color: Colors.grey[200]),
                                   _buildModernStatItem(
                                     Icons.pie_chart_rounded,
-                                    '${_recipe.servings}',
+                                    '${currentRecipe.servings}',
                                     'Portions',
                                     const Color(0xFF66BB6A),
                                   ),
@@ -274,7 +479,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                               ),
                             ),
 
-                            if (_recipe.addExtraMeal && (widget.showAddExtraMealBadge)) ...[
+                            if (currentRecipe.addExtraMeal && (widget.showAddExtraMealBadge)) ...[
                               const SizedBox(height: 24),
                               Container(
                                 padding: const EdgeInsets.all(16),
@@ -332,12 +537,27 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                               ],
                             ),
                             const SizedBox(height: 16),
+                            if (_isLoadingRecipe && _recipe!.ingredients.isEmpty)
+                              const Center(child: CircularProgressIndicator())
+                            else if (_recipe!.ingredients.isEmpty)
+                               Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 20),
+                                child: Text(
+                                  "Aucun ingrédient trouvé",
+                                  textAlign: TextAlign.center,
+                                  style: GoogleFonts.poppins(
+                                    color: Colors.grey,
+                                    fontStyle: FontStyle.italic
+                                  ),
+                                ),
+                              )
+                            else
                             ListView.builder(
                               shrinkWrap: true,
                               physics: const NeverScrollableScrollPhysics(),
-                              itemCount: _recipe.ingredients.length,
+                              itemCount: currentRecipe.ingredients.length,
                               itemBuilder: (context, index) {
-                                final item = _recipe.ingredients[index];
+                                final item = currentRecipe.ingredients[index];
                                 return Padding(
                                   padding: const EdgeInsets.only(bottom: 12),
                                   child: Row(
@@ -389,13 +609,16 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                               ),
                             ),
                             const SizedBox(height: 16),
+                            if (_isLoadingRecipe)
+                              const SizedBox.shrink()
+                            else
                             ListView.separated(
                               shrinkWrap: true,
                               physics: const NeverScrollableScrollPhysics(),
-                              itemCount: _recipe.instructions.length,
+                              itemCount: currentRecipe.instructions.length,
                               separatorBuilder: (_, __) => const SizedBox(height: 20),
                               itemBuilder: (context, index) {
-                                final step = _recipe.instructions[index];
+                                final step = currentRecipe.instructions[index];
                                 return _buildInstructionStep(index + 1, step);
                               },
                             ),

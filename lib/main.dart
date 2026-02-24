@@ -29,8 +29,33 @@ Future<void> main() async {
 Future<void> _loadTestDataIfNeeded() async {
   final firestore = FirebaseFirestore.instance;
   final recipesSnapshot = await firestore.collection('recipes').limit(1).get();
-  if (recipesSnapshot.docs.isNotEmpty) return;
+  if (recipesSnapshot.docs.isNotEmpty) {
+    await _purgeAllData(firestore);
+  }
   await seedAllTestData();
+}
+
+Future<void> _purgeAllData(FirebaseFirestore firestore) async {
+  final collections = ['recipes', 'ingredients', 'categories', 'users', 'mealPlans', 'mealPlanHistory', 'shopping_lists'];
+  for (final col in collections) {
+    final snap = await firestore.collection(col).get();
+    for (final doc in snap.docs) {
+      // Delete known subcollections before the document itself
+      if (col == 'recipes') {
+        final subSnap = await doc.reference.collection('userServings').get();
+        for (final sub in subSnap.docs) {
+          await sub.reference.delete();
+        }
+      }
+      if (col == 'users') {
+        final subSnap = await doc.reference.collection('recipeServings').get();
+        for (final sub in subSnap.docs) {
+          await sub.reference.delete();
+        }
+      }
+      await doc.reference.delete();
+    }
+  }
 }
 
 class MyApp extends StatelessWidget {

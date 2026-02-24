@@ -1,6 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../domain/entities/meal_plan.dart';
 import '../../domain/entities/recipe.dart';
+import '../../domain/entities/recipe_ingredient.dart';
+import '../../domain/entities/ingredient.dart';
+import '../../core/constants/unit.dart';
 
 class FirebaseMealPlanRepository {
   final CollectionReference _mealPlans =
@@ -52,13 +55,15 @@ class FirebaseMealPlanRepository {
         final recipe = Recipe(
           id: recipeId,
           title: recipeName,
-          description: '',
+          description: mealData['recipeDescription'] as String? ?? '',
           preparationTime: (mealData['preparationTime'] as num?)?.toInt() ?? 0,
           cookingTime: (mealData['cookingTime'] as num?)?.toInt() ?? 0,
-          servings: 1,
+          servings: (mealData['recipeServings'] as num?)?.toInt() ?? 1,
+          category: mealData['recipeCategory'] as String? ?? '',
+          rating: (mealData['recipeRating'] as num?)?.toDouble() ?? 0.0,
+          addExtraMeal: mealData['recipeAddExtraMeal'] as bool? ?? false,
           ingredients: const [],
           instructions: const [],
-          category: '',
           createdAt: DateTime.now(),
         );
 
@@ -93,6 +98,16 @@ class FirebaseMealPlanRepository {
         startDate: DateTime.parse(data['startDate']),
         durationDays: data['durationDays'],
         createdAt: DateTime.parse(data['createdAt']),
+        pantryItems: ((data['pantryItems'] as List<dynamic>?) ?? []).map((d) {
+          final map = d as Map<String, dynamic>;
+          final unitName = map['unit'] as String? ?? '';
+          final unit = Unit.values.firstWhere((u) => u.name == unitName, orElse: () => Unit.piece);
+          return RecipeIngredient(
+            ingredient: Ingredient(id: '', name: map['name'] ?? ''),
+            quantity: (map['quantity'] as num?)?.toDouble() ?? 0.0,
+            unit: unit,
+          );
+        }).toList(),
         meals: meals,
       );
     }).toList();
@@ -114,13 +129,15 @@ class FirebaseMealPlanRepository {
       final recipe = Recipe(
         id: recipeId,
         title: recipeName,
-        description: '',
+        description: mealData['recipeDescription'] as String? ?? '',
         preparationTime: (mealData['preparationTime'] as num?)?.toInt() ?? 0,
         cookingTime: (mealData['cookingTime'] as num?)?.toInt() ?? 0,
-        servings: 1,
+        servings: (mealData['recipeServings'] as num?)?.toInt() ?? 1,
+        category: mealData['recipeCategory'] as String? ?? '',
+        rating: (mealData['recipeRating'] as num?)?.toDouble() ?? 0.0,
+        addExtraMeal: mealData['recipeAddExtraMeal'] as bool? ?? false,
         ingredients: const [],
         instructions: const [],
-        category: '',
         createdAt: DateTime.now(),
       );
 
@@ -155,6 +172,16 @@ class FirebaseMealPlanRepository {
       startDate: DateTime.parse(data['startDate']),
       durationDays: data['durationDays'],
       createdAt: DateTime.parse(data['createdAt']),
+      pantryItems: ((data['pantryItems'] as List<dynamic>?) ?? []).map((d) {
+        final map = d as Map<String, dynamic>;
+        final unitName = map['unit'] as String? ?? '';
+        final unit = Unit.values.firstWhere((u) => u.name == unitName, orElse: () => Unit.piece);
+        return RecipeIngredient(
+          ingredient: Ingredient(id: '', name: map['name'] ?? ''),
+          quantity: (map['quantity'] as num?)?.toDouble() ?? 0.0,
+          unit: unit,
+        );
+      }).toList(),
       meals: meals,
     );
   }
@@ -162,5 +189,37 @@ class FirebaseMealPlanRepository {
   /// Delete a meal plan
   Future<void> deleteMealPlan(String id) async {
     await _mealPlans.doc(id).delete();
+  }
+
+  /// Update all meal plans that contain this recipe with new details
+  /// Returns the list of updated plans so the caller can perform additional actions (e.g. update shopping list)
+  Future<List<MealPlan>> updatePlansForRecipe(Recipe updatedRecipe) async {
+    final plans = await getAllMealPlans();
+    final updatedPlans = <MealPlan>[];
+
+    for (var plan in plans) {
+      bool isModified = false;
+      final newMeals = plan.meals.map((meal) {
+        if (meal.recipe.id == updatedRecipe.id) {
+          isModified = true;
+          return meal.copyWith(recipe: updatedRecipe);
+        }
+        return meal;
+      }).toList();
+
+      if (isModified) {
+        final updatedPlan = MealPlan(
+          id: plan.id,
+          startDate: plan.startDate,
+          durationDays: plan.durationDays,
+          meals: newMeals,
+          createdAt: plan.createdAt,
+          pantryItems: plan.pantryItems,
+        );
+        await saveMealPlan(updatedPlan);
+        updatedPlans.add(updatedPlan);
+      }
+    }
+    return updatedPlans;
   }
 }

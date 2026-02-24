@@ -3,6 +3,8 @@ import '../entities/user_recipe_serving.dart';
 import '../entities/user.dart';
 import '../entities/meal_plan.dart';
 import 'dart:math';
+import '../entities/recipe_ingredient.dart';
+import '../../core/constants/unit.dart';
 
 /// Service for meal planning
 /// 
@@ -40,6 +42,7 @@ class MealPlanningService {
     bool useAbsoluteCoverageBonus = false,
     List<Meal>? recentMeals,
     List<Meal>? userSelectedMeals,
+    List<RecipeIngredient> pantryItems = const [],
   }) {
     if (recipes.isEmpty || users.isEmpty) {
       throw Exception('Recipes and users are required');
@@ -89,6 +92,24 @@ class MealPlanningService {
 
     final usedRecipes = <String, int>{}; // track usage per recipe
 
+    // Construit la map de suivi des ingrédients du frigo/placard
+    // Clé : nom de l'ingrédient (minuscule), Valeur : (quantité normalisée, unité de base)
+    // Les unités sont normalisées vers l'unité de base de leur famille :
+    //   kg → g, l → ml, c.à.s./tasse → c.à.t.
+    final pantryRemaining = <String, (double, Unit)>{};
+    for (final item in pantryItems) {
+      final name = item.ingredient.name.toLowerCase().trim();
+      if (name.isNotEmpty) {
+        final baseUnitPantry = _baseUnit(item.unit);
+        final normalizedQty = _toNormalized(item.quantity, item.unit);
+        final existing = pantryRemaining[name];
+        if (existing != null && existing.$2 == baseUnitPantry) {
+          pantryRemaining[name] = (existing.$1 + normalizedQty, baseUnitPantry);
+        } else {
+          pantryRemaining[name] = (normalizedQty, baseUnitPantry);
+        }
+      }
+    }
 
     // Historique : recettes mangées récemment (toutes passées en paramètre)
     // Map recipeId -> daysAgo (plus petit daysAgo si plusieurs repas)
@@ -183,6 +204,9 @@ class MealPlanningService {
         initialTotalPortions: users.length * durationDays * 2,
         recencyDecayFactor: recencyDecayFactor,
         useAbsoluteCoverageBonus: useAbsoluteCoverageBonus,
+        pantryRemaining: pantryRemaining,
+        canAddLeftover: i + 2 < numMeals,
+        slotsRemaining: numMeals - i,
       );
       if (selectedRecipe == null) {
         meals[i] = null;
@@ -206,6 +230,12 @@ class MealPlanningService {
       final recipeMultiplier = requiredServings > 0 
           ? (requiredServings / selectedRecipe.servings).ceil() 
           : 1;
+      // Consomme les ingrédients du frigo/placard pour cette recette
+      _consumePantryItems(
+        recipe: selectedRecipe,
+        recipeMultiplier: recipeMultiplier,
+        pantryRemaining: pantryRemaining,
+      );
       final meal = Meal(
         recipe: selectedRecipe,
         date: mealDate,
@@ -248,6 +278,7 @@ class MealPlanningService {
       durationDays: durationDays,
       meals: meals.whereType<Meal>().toList(), // Filter out nulls
       createdAt: DateTime.now(),
+      pantryItems: pantryItems,
     );
   }
   /// Gère l'injection des userSelectedMeals dans le plan
@@ -415,6 +446,10 @@ class MealPlanningService {
     double cyclePenaltyWeight = 50.0,
     double recencyDecayFactor = 0.9,
     bool useAbsoluteCoverageBonus = false,
+    Map<String, (double, Unit)> pantryRemaining = const <String, (double, Unit)>{},
+    double pantryBonusWeight = 70.0,
+    bool canAddLeftover = true,
+    int slotsRemaining = 1,
   }) {
     if (availableRecipes.isEmpty) return null;
 
@@ -503,7 +538,7 @@ class MealPlanningService {
         normalizedSimilarity = normalizedSimilarity.clamp(0.0, 1.0);
       }
       final similarityComponent = normalizedSimilarity * similarityPenaltyWeight;
-        final addExtraMealComponent = recipe.addExtraMeal && normalizedCoverage > 0
+        final addExtraMealComponent = recipe.addExtraMeal && normalizedCoverage > 0 && canAddLeftover
           ? -normalizedCoverage * addExtraMealBonusWeight
           : 0.0;
       double cyclePenalty = 0.0;
@@ -511,8 +546,42 @@ class MealPlanningService {
         final cycleProgress = usedInCurrentCycle.length.toDouble() / availableRecipes.length;
         cyclePenalty = cyclePenaltyWeight * cycleProgress.clamp(0.0, 1.0);
       }
+      // --- Bonus frigo/placard avec urgence dynamique ---
+      // Pour chaque ingrédient en stock correspondant, on calcule combien de fois
+      // la recette doit encore être cuisinée pour épuiser le stock restant.
+      // Plus l'urgence est grande (peu de slots restants vs beaucoup de stock),
+      // plus le bonus est fort — peut surpasser la pénalité de récence.
+      double pantryComponent = 0.0;
+      if (pantryRemaining.isNotEmpty && recipe.ingredients.isNotEmpty) {
+        int matchCount = 0;
+        int maxUsesNeeded = 0;
+        for (final ingredient in recipe.ingredients) {
+          final name = ingredient.ingredient.name.toLowerCase().trim();
+          final pantryEntry = pantryRemaining[name];
+          if (pantryEntry != null) {
+            final (pantryQty, pantryBaseUnit) = pantryEntry;
+            if (pantryBaseUnit == _baseUnit(ingredient.unit) && pantryQty > 0.0) {
+              matchCount++;
+              final normalizedIngQty = _toNormalized(ingredient.quantity, ingredient.unit);
+              if (normalizedIngQty > 0) {
+                final usesNeeded = (pantryQty / normalizedIngQty).ceil();
+                if (usesNeeded > maxUsesNeeded) maxUsesNeeded = usesNeeded;
+              }
+            }
+          }
+        }
+        if (matchCount > 0) {
+          // urgencyFactor : 1.0 (temps suffisant) → 3.0 (dernier moment)
+          double urgencyFactor = 1.0;
+          if (slotsRemaining > 0 && maxUsesNeeded > 0) {
+            final urgency = (maxUsesNeeded / slotsRemaining).clamp(0.0, 2.0);
+            urgencyFactor = 1.0 + urgency * 2.0;
+          }
+          pantryComponent = -matchCount * pantryBonusWeight * urgencyFactor;
+        }
+      }
       final totalScore = usageComponent + recencyComponent + similarityComponent +
-          coverageComponent + addExtraMealComponent + cyclePenalty;
+          coverageComponent + addExtraMealComponent + cyclePenalty + pantryComponent;
       if (totalScore < bestScore - epsilon) {
         bestScore = totalScore;
         candidates.clear();
@@ -544,6 +613,50 @@ class MealPlanningService {
     if (byConsumption.length == 1) return byConsumption.first;
     byConsumption.sort((a, b) => a.id.compareTo(b.id));
     return byConsumption.first;
+  }
+
+  /// Consomme les quantités du frigo/placard pour les ingrédients d'une recette sélectionnée
+  /// Ne consomme que si les unités sont compatibles (même famille)
+  static void _consumePantryItems({
+    required Recipe recipe,
+    required int recipeMultiplier,
+    required Map<String, (double, Unit)> pantryRemaining,
+  }) {
+    if (pantryRemaining.isEmpty) return;
+    for (final ingredient in recipe.ingredients) {
+      final name = ingredient.ingredient.name.toLowerCase().trim();
+      final pantryEntry = pantryRemaining[name];
+      if (pantryEntry != null) {
+        final (pantryQty, pantryBaseUnit) = pantryEntry;
+        if (pantryBaseUnit == _baseUnit(ingredient.unit)) {
+          final consumed = _toNormalized(ingredient.quantity * recipeMultiplier, ingredient.unit);
+          pantryRemaining[name] = (max(0.0, pantryQty - consumed), pantryBaseUnit);
+        }
+      }
+    }
+  }
+
+  /// Retourne l'unité de base de la famille de l'unité donnée
+  /// g/kg → g | ml/l → ml | c.à.s./tasse → c.à.t. | autres → inchangé
+  static Unit _baseUnit(Unit unit) {
+    switch (unit) {
+      case Unit.kg:         return Unit.g;
+      case Unit.l:          return Unit.ml;
+      case Unit.tablespoon: return Unit.teaspoon;
+      case Unit.cup:        return Unit.teaspoon;
+      default:              return unit;
+    }
+  }
+
+  /// Convertit une quantité vers l'unité de base de sa famille
+  static double _toNormalized(double qty, Unit unit) {
+    switch (unit) {
+      case Unit.kg:         return qty * 1000.0; // kg → g
+      case Unit.l:          return qty * 1000.0; // l → ml
+      case Unit.tablespoon: return qty * 3.0;    // c.à.s. → c.à.t.
+      case Unit.cup:        return qty * 48.0;   // tasse → c.à.t. (1 tasse = 16 c.à.s. = 48 c.à.t.)
+      default:              return qty;
+    }
   }
 
   /// Builds a cache of ingredient similarity between all recipe pairs

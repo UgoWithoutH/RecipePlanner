@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:numberpicker/numberpicker.dart';
 
@@ -16,9 +17,13 @@ import '../../domain/entities/recipe.dart';
 import '../../domain/entities/recipe_ingredient.dart';
 import '../../domain/entities/user_recipe_serving.dart';
 import '../../domain/usecases/meal_planning_service.dart';
+import '../../domain/usecases/shopping_list_generator.dart';
+import '../../core/utils/ingredient_name_cache.dart';
+import '../../data/repositories/firebase_recipe_repository.dart';
 
 import 'recipe_detail_page.dart';
 import '../widgets/recipe_selector.dart';
+import '../widgets/pantry_input_dialog.dart';
 
 class PlannerPage extends StatefulWidget {
   const PlannerPage({super.key});
@@ -39,6 +44,9 @@ class _PlannerPageState extends State<PlannerPage> {
 
   DateTime? _selectedStartDate;
   int? _selectedDuration;
+  Set<String> _selectedCategories = {}; // category IDs
+  List<RecipeIngredient> _pantryIngredients = [];
+  Map<String, String> _categoryNamesById = {}; // id → name, for display
   bool _isLoading = false;
 
   MealPlan? _generatedMealPlan;
@@ -48,47 +56,45 @@ class _PlannerPageState extends State<PlannerPage> {
   DateTime? _selectedMealDate;
   CalendarFormat? _calendarFormat;
 
+  /// ID de la recette en cours de chargement avant navigation (null = aucune)
+  String? _loadingRecipeId;
+
+  static const _kPrefKeyCategories = 'selected_category_ids';
+
   @override
   void initState() {
     super.initState();
+    _loadSavedCategories();
     _loadMostRecentMealPlanAndHistory();
+  }
+
+  Future<void> _loadSavedCategories() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getStringList(_kPrefKeyCategories);
+    if (saved != null && saved.isNotEmpty && mounted) {
+      setState(() => _selectedCategories = saved.toSet());
+    }
+  }
+
+  Future<void> _saveCategories(Set<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kPrefKeyCategories, ids.toList());
   }
 
   Future<void> _loadMostRecentMealPlanAndHistory() async {
     setState(() => _isLoading = true);
     try {
-      // Load recipes first to calculate history days
+      // Load recipe count to calculate the history window size
       final allRecipes = await _loadRecipes();
-      _maxHistoryDays = allRecipes.length; // Dynamic history based on recipe count
-      
+      _maxHistoryDays = allRecipes.length;
+
       final plans = await _mealPlanRepo.getAllMealPlans();
-      Map<String, Recipe> recipeMap = {for (var recipe in allRecipes) recipe.id: recipe};
       if (plans.isNotEmpty) {
         plans.sort((a, b) => b.startDate.compareTo(a.startDate));
         final loadedPlan = plans.first;
-        // Replace partial recipes with full ones
-        final mealsWithFullRecipes = loadedPlan.meals.map((meal) {
-          final fullRecipe = recipeMap[meal.recipe.id];
-          if (fullRecipe != null) {
-            return Meal(
-              recipe: fullRecipe,
-              date: meal.date,
-              type: meal.type,
-              totalServings: meal.totalServings,
-              userServings: meal.userServings,
-              recipeMultiplier: meal.recipeMultiplier,
-              isLeftoverMeal: meal.isLeftoverMeal,
-            );
-          }
-          return meal;
-        }).toList();
-        _generatedMealPlan = MealPlan(
-          id: loadedPlan.id,
-          startDate: loadedPlan.startDate,
-          durationDays: loadedPlan.durationDays,
-          meals: mealsWithFullRecipes,
-          createdAt: loadedPlan.createdAt,
-        );
+        // The plan already contains all card-display data (description, category…)
+        // persisted in Firestore — no recipeMap enrichment needed.
+        _generatedMealPlan = loadedPlan;
         // Set today as selected if it is within the plan range
         final today = DateTime.now();
         final planStart = _generatedMealPlan!.startDate;
@@ -109,27 +115,9 @@ class _PlannerPageState extends State<PlannerPage> {
           _maxHistoryDays,
         );
       }
-      // Load history into state
+      // Load history into state (stubs are fine here; detail page lazy-loads)
       final rawHistory = await _historyRepo.getHistory();
-      // Replace partial recipes with full ones in history
-      _mealHistory = rawHistory.map((date, meals) {
-        final updatedMeals = meals.map((meal) {
-          final fullRecipe = recipeMap[meal.recipe.id];
-          if (fullRecipe != null) {
-            return Meal(
-              recipe: fullRecipe,
-              date: meal.date,
-              type: meal.type,
-              totalServings: meal.totalServings,
-              userServings: meal.userServings,
-              recipeMultiplier: meal.recipeMultiplier,
-              isLeftoverMeal: meal.isLeftoverMeal,
-            );
-          }
-          return meal;
-        }).toList();
-        return MapEntry(date, updatedMeals);
-      });
+      _mealHistory = rawHistory;
       setState(() {});
     } finally {
       setState(() => _isLoading = false);
@@ -165,6 +153,121 @@ class _PlannerPageState extends State<PlannerPage> {
     if (picked != null) {
       setState(() => _selectedStartDate = picked);
       if (onDatePicked != null) onDatePicked();
+    }
+  }
+
+  Future<void> _pickCategories({VoidCallback? onUpdated}) async {
+    // Load categories from the categories collection (name + ID)
+    final snapshot = await FirebaseFirestore.instance.collection('categories').get();
+    final allCategories = snapshot.docs
+        .map((doc) => MapEntry(doc.id, (doc.data()['name'] as String? ?? '').trim()))
+        .where((e) => e.value.isNotEmpty)
+        .toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+
+    // Update the local names map
+    final namesById = <String, String>{
+      for (final e in allCategories) e.key: e.value
+    };
+
+    if (!mounted) return;
+
+    final tempSelected = Set<String>.from(_selectedCategories);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setStateDialog) => AlertDialog(
+          title: Text(
+            'Filtrer par catégorie',
+            style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Laisser vide pour inclure toutes les catégories.',
+                  style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]),
+                ),
+                const SizedBox(height: 12),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 320),
+                  child: SingleChildScrollView(
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: allCategories.map((entry) {
+                        final isSelected = tempSelected.contains(entry.key);
+                        return FilterChip(
+                          label: Text(entry.value, style: GoogleFonts.poppins(fontSize: 13)),
+                          selected: isSelected,
+                          selectedColor: const Color(0xFF6A5AE0).withOpacity(0.15),
+                          checkmarkColor: const Color(0xFF6A5AE0),
+                          onSelected: (val) {
+                            setStateDialog(() {
+                              if (val) {
+                                tempSelected.add(entry.key);
+                              } else {
+                                tempSelected.remove(entry.key);
+                              }
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                setStateDialog(() => tempSelected.clear());
+              },
+              child: Text('Tout déselectionner', style: GoogleFonts.poppins(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF6A5AE0),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              child: Text('Valider', style: GoogleFonts.poppins()),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed == true) {
+      setState(() {
+        _selectedCategories = tempSelected;
+        _categoryNamesById = namesById;
+      });
+      await _saveCategories(tempSelected);
+      if (onUpdated != null) onUpdated();
+    }
+  }
+
+  Future<void> _pickPantryItems({VoidCallback? onUpdated}) async {
+    final result = await showDialog<List<RecipeIngredient>>(
+      context: context,
+      builder: (context) => PantryInputDialog(initialItems: _pantryIngredients),
+    );
+
+    if (result != null) {
+      if (!mounted) return;
+      setState(() {
+        _pantryIngredients = result;
+      });
+      if (onUpdated != null) {
+        onUpdated();
+      }
     }
   }
 
@@ -237,13 +340,46 @@ class _PlannerPageState extends State<PlannerPage> {
 
     setState(() => _isLoading = true);
     try {
-      final recipes = await _loadRecipes();
-      _maxHistoryDays = recipes.length; // Update history days based on recipe count
-      
+      final allRecipes = await _loadRecipes();
+      // History duration is always based on the total number of recipes (all categories)
+      _maxHistoryDays = allRecipes.length;
+
+      // Apply category filter for planning only (not for history duration)
+      final recipes = _selectedCategories.isEmpty
+          ? allRecipes
+          : allRecipes.where((r) => _selectedCategories.contains(r.category)).toList();
+
+      if (recipes.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Aucune recette trouvée pour les catégories sélectionnées.'),
+            ),
+          );
+        }
+        return;
+      }
+
       final users = await _userRepo.getUsers();
       final servings = await _loadServings();
 
-      // Filter historical meals to only include the last N days (N = recipe count)
+      // Résoudre les noms d'ingrédients (stockés séparément dans Firestore)
+      // Les recettes ont ingredient.name = '' par défaut après fetchAllRecipes()
+      final allIngredientIds = recipes
+          .expand((r) => r.ingredients.map((i) => i.ingredient.id))
+          .where((id) => id.isNotEmpty)
+          .toSet()
+          .toList();
+      final nameMap = await IngredientNameCache.instance.fetchNamesForIds(allIngredientIds);
+      final recipesWithNames = recipes.map((recipe) {
+        final resolvedIngredients = recipe.ingredients.map((ri) {
+          final name = nameMap[ri.ingredient.id] ?? ri.ingredient.name;
+          return ri.copyWith(ingredient: ri.ingredient.copyWith(name: name));
+        }).toList();
+        return recipe.copyWith(ingredients: resolvedIngredients);
+      }).toList();
+
+      // Filter historical meals to only include the last N days (N = total recipe count)
       final now = DateTime.now();
       final cutoffDate = now.subtract(Duration(days: _maxHistoryDays));
       final filteredHistoryMeals = _mealHistory.entries
@@ -252,12 +388,13 @@ class _PlannerPageState extends State<PlannerPage> {
           .toList();
 
       final plan = MealPlanningService.generateMealPlan(
-        recipes: recipes,
+        recipes: recipesWithNames,
         servings: servings,
         users: users,
         startDate: _selectedStartDate!,
         durationDays: _selectedDuration!,
         recentMeals: filteredHistoryMeals,
+        pantryItems: _pantryIngredients,
       );
 
       setState(() {
@@ -278,6 +415,7 @@ class _PlannerPageState extends State<PlannerPage> {
           durationDays: plan.durationDays,
           meals: plan.meals,
           createdAt: plan.createdAt,
+          pantryItems: plan.pantryItems,
         );
       });
     } finally {
@@ -286,48 +424,47 @@ class _PlannerPageState extends State<PlannerPage> {
   }
 
   Future<List<Recipe>> _loadRecipes() async {
-    final snapshot = await FirebaseFirestore.instance
-        .collection('recipes')
-        .get();
+    return FirebaseRecipeRepository().fetchAllRecipes();
+  }
 
-    return Future.wait(
-      snapshot.docs.map((doc) async {
-        final data = doc.data();
-        final ingredientsData = data['ingredients'] as List<dynamic>? ?? [];
+  /// Navigue vers RecipeDetailPage avec l'ID de la recette.
+  void _openRecipeDetail(Meal meal) {
+    // Calcul du multiplicateur pour les restes
+    int? ingredientMultiplier;
+    // On utilise meal.recipe.addExtraMeal si disponible, sinon on suppose false temporairement
+    // Le détail chargera la vraie valeur, mais pour le multiplicateur ici on fait au mieux.
+    if (meal.recipe.addExtraMeal && _generatedMealPlan != null) {
+        final nextDay = meal.date.add(const Duration(days: 1));
+        // Check if same recipe is used next day as a leftover
+        // Note: This logic depends on the current plan state in memory
+        final sameRecipeNextDay = _generatedMealPlan!.meals.any((m) {
+          final isSameId = m.recipe.id == meal.recipe.id;
+          final isNextDay = m.date.year == nextDay.year && 
+                            m.date.month == nextDay.month && 
+                            m.date.day == nextDay.day;
+          // We assume if it's the same recipe next day, it's a leftover/extra meal
+          return isSameId && isNextDay;
+        });
+        
+        if (sameRecipeNextDay) {
+          ingredientMultiplier = 2;
+        }
+    }
 
-        final ingredients = ingredientsData.map((i) {
-          return RecipeIngredient(
-            ingredient: Ingredient(
-              id: i['ingredientId'] ?? '',
-              name: i['ingredientName'] ?? 'Unknown ingredient',
-            ),
-            quantity: (i['quantity'] as num).toDouble(),
-            unit: Unit.values.firstWhere(
-              (u) => u.label == i['unit'],
-              orElse: () => Unit.g,
-            ),
-            notes: i['notes'],
-          );
-        }).toList();
-
-        return Recipe(
-          id: doc.id,
-          title: data['title'] ?? '',
-          description: data['description'] ?? '',
-          preparationTime: data['preparationTime'] ?? 0,
-          cookingTime: data['cookingTime'] ?? 0,
-          servings: data['servings'] ?? 1,
-          category: data['category'] ?? '',
-          ingredients: ingredients,
-          instructions: List<String>.from(data['instructions'] ?? []),
-          createdAt:
-              DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
-          isFavorite: data['isFavorite'] ?? false,
-          rating: (data['rating'] as num?)?.toDouble() ?? 0,
-          addExtraMeal: data['addExtraMeal'] ?? false,
-        );
-      }),
-    );
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RecipeDetailPage(
+          recipeId: meal.recipe.id,
+          initialRecipe: meal.recipe,
+          ingredientMultiplier: ingredientMultiplier,
+          showAddExtraMealBadge: false,
+        ),
+      ),
+    ).then((_) {
+      // Refresh planner data when returning from detail, as recipe might have been edited
+      _loadMostRecentMealPlanAndHistory();
+    });
   }
 
   Future<List<UserRecipeServing>> _loadServings() async {
@@ -344,10 +481,23 @@ class _PlannerPageState extends State<PlannerPage> {
     setState(() => _isLoading = true);
     try {
       final savedId = await _mealPlanRepo.saveMealPlan(plan);
+      
+      // Update shopping list (pass pantryItems so they are subtracted from the list)
+      final planForShoppingList = MealPlan(
+        id: savedId,
+        startDate: plan.startDate,
+        durationDays: plan.durationDays,
+        meals: plan.meals,
+        createdAt: plan.createdAt,
+        pantryItems: plan.pantryItems,
+      );
+      
+      await ShoppingListGenerator().generateAndSaveShoppingList(planForShoppingList);
+
       if (!mounted) return savedId;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('✅ Plan sauvegardé')));
+      ).showSnackBar(const SnackBar(content: Text('✅ Plan et liste de courses sauvegardés')));
       return savedId;
     } finally {
       setState(() => _isLoading = false);
@@ -472,6 +622,7 @@ class _PlannerPageState extends State<PlannerPage> {
 
       // Save to database
       await _mealPlanRepo.saveMealPlan(updatedPlan);
+      await ShoppingListGenerator().generateAndSaveShoppingList(updatedPlan);
 
       setState(() {
         _generatedMealPlan = updatedPlan;
@@ -629,6 +780,7 @@ class _PlannerPageState extends State<PlannerPage> {
       );
 
       await _mealPlanRepo.saveMealPlan(updatedPlan);
+      await ShoppingListGenerator().generateAndSaveShoppingList(updatedPlan);
 
       setState(() {
         _generatedMealPlan = updatedPlan;
@@ -692,6 +844,7 @@ class _PlannerPageState extends State<PlannerPage> {
         createdAt: _generatedMealPlan!.createdAt,
       );
       await _mealPlanRepo.saveMealPlan(updatedPlan);
+      await ShoppingListGenerator().generateAndSaveShoppingList(updatedPlan);
       setState(() {
         _generatedMealPlan = updatedPlan;
       });
@@ -715,7 +868,7 @@ class _PlannerPageState extends State<PlannerPage> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.85,
+        height: MediaQuery.of(context).size.height * 0.95,
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -825,6 +978,9 @@ class _PlannerPageState extends State<PlannerPage> {
                                 _ModernPlannerHeader(
                                   selectedStartDate: _selectedStartDate,
                                   selectedDuration: _selectedDuration,
+                                  selectedCategories: _selectedCategories,
+                                  categoryNamesById: _categoryNamesById,
+                                  pantryItemsCount: _pantryIngredients.length,
                                   onPickStartDate: () {
                                     _pickStartDate(onDatePicked: () => setModalState(() {}));
                                   },
@@ -832,6 +988,12 @@ class _PlannerPageState extends State<PlannerPage> {
                                     _pickDuration(
                                       onUpdated: () => setModalState(() {}),
                                     );
+                                  },
+                                  onPickCategories: () {
+                                    _pickCategories(onUpdated: () => setModalState(() {}));
+                                  },
+                                  onPickPantry: () {
+                                    _pickPantryItems(onUpdated: () => setModalState(() {}));
                                   },
                                   onLaunchPlanning: () {
                                     Navigator.pop(context);
@@ -924,8 +1086,13 @@ class _PlannerPageState extends State<PlannerPage> {
                           child: _ModernPlannerHeader(
                             selectedStartDate: _selectedStartDate,
                             selectedDuration: _selectedDuration,
+                            selectedCategories: _selectedCategories,
+                            categoryNamesById: _categoryNamesById,
+                            pantryItemsCount: _pantryIngredients.length,
                             onPickStartDate: _pickStartDate,
                             onPickDuration: _pickDuration,
+                            onPickCategories: _pickCategories,
+                            onPickPantry: _pickPantryItems,
                             onLaunchPlanning: _launchPlanning,
                             isLoading: _isLoading,
                           ),
@@ -1146,35 +1313,10 @@ class _PlannerPageState extends State<PlannerPage> {
               // Main content (clickable to open recipe)
               Expanded(
                 child: InkWell(
-                  onTap: () {
-                    // Compute the multiplier for addExtraMeal (fixed)
-                    int? ingredientMultiplier;
-                    if (meal.recipe.addExtraMeal && _generatedMealPlan != null) {
-                      final nextDay = meal.date.add(const Duration(days: 1));
-                      final sameRecipeNextDay = _generatedMealPlan!.meals.any((m) =>
-                        m.recipe.id == meal.recipe.id &&
-                        m.date.year == nextDay.year &&
-                        m.date.month == nextDay.month &&
-                        m.date.day == nextDay.day &&
-                        m.type == meal.type &&
-                        m.isLeftoverMeal
-                      );
-                      if (sameRecipeNextDay) {
-                        ingredientMultiplier = 2;
-                      }
-                    }
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => RecipeDetailPage(
-                          recipe: meal.recipe,
-                          ingredientMultiplier: ingredientMultiplier,
-                          showAddExtraMealBadge: false,
-                        ),
-                      ),
-                    );
-                  },
-                  child: Padding(
+                  onTap: () => _openRecipeDetail(meal),
+                  child: Stack(
+                    children: [
+                    Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
                       vertical: 16,
@@ -1355,6 +1497,20 @@ class _PlannerPageState extends State<PlannerPage> {
                         ),
                       ],
                     ),
+                  ),
+                  if (_loadingRecipeId == meal.recipe.id)
+                    Positioned.fill(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Center(
+                          child: CircularProgressIndicator(),
+                        ),
+                      ),
+                    ),
+                  ], 
                   ),
                 ),
               ),
@@ -1541,16 +1697,26 @@ class _PlannerPageState extends State<PlannerPage> {
 class _ModernPlannerHeader extends StatelessWidget {
   final DateTime? selectedStartDate;
   final int? selectedDuration;
+  final Set<String> selectedCategories;   // category IDs
+  final Map<String, String> categoryNamesById; // id → name
+  final int pantryItemsCount;
   final VoidCallback onPickStartDate;
   final VoidCallback onPickDuration;
+  final VoidCallback onPickCategories;
+  final VoidCallback onPickPantry;
   final VoidCallback onLaunchPlanning;
   final bool isLoading;
 
   const _ModernPlannerHeader({
     required this.selectedStartDate,
     required this.selectedDuration,
+    required this.selectedCategories,
+    required this.categoryNamesById,
+    required this.pantryItemsCount,
     required this.onPickStartDate,
     required this.onPickDuration,
+    required this.onPickCategories,
+    required this.onPickPantry,
     required this.onLaunchPlanning,
     required this.isLoading,
   });
@@ -1602,6 +1768,118 @@ class _ModernPlannerHeader extends StatelessWidget {
                 onTap: onPickDuration,
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          InkWell(
+            onTap: onPickCategories,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F7FA),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: selectedCategories.isNotEmpty
+                      ? const Color(0xFF6A5AE0).withOpacity(0.5)
+                      : Colors.grey.withOpacity(0.15),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.category_rounded, color: Color(0xFF6A5AE0), size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Catégories',
+                          style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[600]),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          selectedCategories.isEmpty
+                              ? 'Toutes'
+                              : selectedCategories
+                                  .map((id) => categoryNamesById[id] ?? id)
+                                  .join(', '),
+                          style: GoogleFonts.poppins(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF2D2D2D),
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded, color: Colors.grey[400]),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          InkWell(
+            onTap: onPickPantry,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F7FA),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: pantryItemsCount > 0
+                      ? const Color(0xFF6A5AE0).withOpacity(0.5)
+                      : Colors.grey.withOpacity(0.15),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.kitchen, color: Color(0xFF6A5AE0), size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Ingrédients disponibles',
+                          style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[600]),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          pantryItemsCount > 0
+                              ? '$pantryItemsCount ingrédients'
+                              : 'Aucun (Optionnel)',
+                          style: GoogleFonts.poppins(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF2D2D2D),
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded, color: Colors.grey[400]),
+                ],
+              ),
+            ),
           ),
           const SizedBox(height: 24),
           ModernGradientButton(

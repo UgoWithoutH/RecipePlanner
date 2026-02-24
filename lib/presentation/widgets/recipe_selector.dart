@@ -21,12 +21,17 @@ class RecipeSelector extends StatefulWidget {
 
 class _RecipeSelectorState extends State<RecipeSelector> {
   final _recipeRepository = FirebaseRecipeRepository();
-  late Future<List<Recipe>> _recipesFuture;
+  // late Future<List<Recipe>> _recipesFuture; // Unused
   String _titleFilter = '';
   Set<String> _selectedIngredientIds = {};
   List<Recipe> _allRecipes = [];
   List<Map<String, String>> _allIngredients = [];
   bool _ingredientsLoading = true;
+
+  // Category filter
+  Set<String> _selectedCategoryIds = {};
+  List<Map<String, String>> _allCategories = [];
+  bool _categoriesLoading = true;
 
   @override
   void initState() {
@@ -37,11 +42,23 @@ class _RecipeSelectorState extends State<RecipeSelector> {
   Future<void> _initData() async {
     final recipes = await _fetchRecipesWithNames();
     final ingredients = await _fetchAllIngredients();
+    final categories = await _fetchCategories();
+    if (!mounted) return;
     setState(() {
       _allRecipes = recipes;
       _allIngredients = ingredients;
+      _allCategories = categories;
       _ingredientsLoading = false;
+      _categoriesLoading = false;
     });
+  }
+
+  Future<List<Map<String, String>>> _fetchCategories() async {
+    final snap = await FirebaseFirestore.instance.collection('categories').get();
+    return snap.docs.map((doc) => {
+      'id': doc.id,
+      'name': doc.get('name') as String,
+    }).toList();
   }
 
   Future<List<Recipe>> _fetchRecipesWithNames() async {
@@ -74,7 +91,8 @@ class _RecipeSelectorState extends State<RecipeSelector> {
     return _allRecipes.where((recipe) {
       final matchesTitle = _titleFilter.isEmpty || recipe.title.toLowerCase().contains(_titleFilter.toLowerCase());
       final matchesIngredients = _selectedIngredientIds.isEmpty || recipe.ingredients.any((ri) => _selectedIngredientIds.contains(ri.ingredient.id));
-      return matchesTitle && matchesIngredients;
+      final matchesCategory = _selectedCategoryIds.isEmpty || _selectedCategoryIds.contains(recipe.category);
+      return matchesTitle && matchesIngredients && matchesCategory;
     }).toList();
   }
 
@@ -109,6 +127,60 @@ class _RecipeSelectorState extends State<RecipeSelector> {
               ),
             ),
           ),
+          
+          if (!_categoriesLoading) ...[
+            SizedBox(
+              height: 40,
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                scrollDirection: Axis.horizontal,
+                itemCount: _allCategories.length + 1,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    final isSelected = _selectedCategoryIds.isEmpty;
+                    return FilterChip(
+                      label: const Text('Tout'),
+                      selected: isSelected,
+                      onSelected: (_) => setState(() => _selectedCategoryIds.clear()),
+                      backgroundColor: Colors.grey[100],
+                      selectedColor: const Color(0xFF6A5AE0),
+                      labelStyle: TextStyle(
+                        color: isSelected ? Colors.white : Colors.black87,
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                      ),
+                      checkmarkColor: Colors.white,
+                    );
+                  }
+                  final category = _allCategories[index - 1];
+                  final catId = category['id']!;
+                  final isSelected = _selectedCategoryIds.contains(catId);
+                  return FilterChip(
+                    label: Text(category['name'] ?? ''),
+                    selected: isSelected,
+                    onSelected: (selected) {
+                      setState(() {
+                        if (selected) {
+                          _selectedCategoryIds.add(catId);
+                        } else {
+                          _selectedCategoryIds.remove(catId);
+                        }
+                      });
+                    },
+                    backgroundColor: Colors.grey[100],
+                    selectedColor: const Color(0xFF6A5AE0),
+                    labelStyle: TextStyle(
+                      color: isSelected ? Colors.white : Colors.black87,
+                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                    ),
+                    checkmarkColor: Colors.white,
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
             child: TextField(

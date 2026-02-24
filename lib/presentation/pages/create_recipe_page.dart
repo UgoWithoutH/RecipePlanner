@@ -15,6 +15,8 @@ import '../../data/repositories/firebase_category_repository.dart';
 import '../../data/repositories/firebase_ingredient_repository.dart';
 import '../../data/repositories/firebase_user_repository.dart';
 import '../../data/repositories/firebase_user_recipe_serving_repository.dart';
+import '../../data/repositories/firebase_meal_plan_repository.dart';
+import '../../domain/usecases/shopping_list_generator.dart';
 
 class CreateRecipePage extends StatefulWidget {
   final Recipe? recipe;
@@ -233,6 +235,15 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
       } else {
         await _recipeRepo.updateRecipe(recipe);
         recipeId = recipe.id;
+
+        // If updating a recipe, propagate changes to existing meal plans
+        // and regenerate their shopping lists.
+        final planRepo = FirebaseMealPlanRepository();
+        final updatedPlans = await planRepo.updatePlansForRecipe(recipe);
+        
+        for (final plan in updatedPlans) {
+           await ShoppingListGenerator().generateAndSaveShoppingList(plan);
+        }
       }
 
       for (var userServing in _userServings.values) {

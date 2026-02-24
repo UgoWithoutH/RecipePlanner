@@ -23,7 +23,8 @@ class FirebaseCategoryRepository {
     await _categories.add({'name': name});
   }
 
-  /// Update category name
+  /// Update category name.
+  /// No propagation needed: recipes reference categories by ID, not by name.
   Future<void> updateCategory(String id, String newName) async {
     await _categories.doc(id).update({'name': newName});
   }

@@ -4,10 +4,44 @@ import '../../domain/entities/recipe.dart';
 import '../../domain/entities/recipe_ingredient.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// Seeds all test data: users, ingredients, recipes, and user servings
+/// Seeds all test data: users, ingredients, recipes, categories and user servings
 Future<void> seedAllTestData() async {
   await seedTestUsersToFirestore();
   await seedAllToFirestore();
+}
+
+/// Populates Firestore with distinct recipe categories and returns a {name: id} map
+Future<Map<String, String>> seedCategoriesToFirestore() async {
+  final firestore = FirebaseFirestore.instance;
+  final categories = [
+    'Viande',
+    'Végétarien',
+    'Pâtes',
+    'Asiatique',
+    'Poisson',
+    'Salade',
+    'Sandwich',
+    'Boisson',
+    'Petit-déjeuner',
+  ];
+
+  final Map<String, String> nameToId = {};
+
+  // Load existing categories to avoid duplicates
+  final existing = await firestore.collection('categories').get();
+  for (final doc in existing.docs) {
+    final name = (doc.data()['name'] as String? ?? '').trim();
+    if (name.isNotEmpty) nameToId[name] = doc.id;
+  }
+
+  for (final name in categories) {
+    if (!nameToId.containsKey(name)) {
+      final ref = await firestore.collection('categories').add({'name': name});
+      nameToId[name] = ref.id;
+    }
+  }
+
+  return nameToId;
 }
 
 /// Populates Firestore with test users
@@ -32,6 +66,7 @@ Future<List<String>> seedTestUsersToFirestore() async {
 /// Populates Firestore with all test ingredients and recipes
 Future<List<Recipe>> seedAllToFirestore() async {
   final firestore = FirebaseFirestore.instance;
+  final categoryIds = await seedCategoriesToFirestore();
   final ingredientIds = await seedIngredientsToFirestore();
   final recipes = buildRecipes(ingredientIds);
   final now = DateTime.now();
@@ -107,11 +142,13 @@ Future<List<Recipe>> seedAllToFirestore() async {
     }
 
     // Add recipe document (without id field)
+    // Store the category ID (not the name) for consistent referencing
+    final categoryId = categoryIds[recipe.category] ?? recipe.category;
     final recipeRef = await firestore.collection('recipes').add({
       'title': recipe.title,
       'description': recipe.description,
       'servings': recipe.servings,
-      'category': recipe.category,
+      'category': categoryId,
       'preparationTime': recipe.preparationTime,
       'cookingTime': recipe.cookingTime,
       'ingredients': recipe.ingredients.map((ri) => {

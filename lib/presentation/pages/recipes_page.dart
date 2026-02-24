@@ -25,6 +25,12 @@ class _RecipesPageState extends State<RecipesPage> {
     Set<String> _selectedIngredientIds = {};
     List<Map<String, String>> _allIngredients = [];
     bool _ingredientsLoading = true;
+    
+    // Category filter state
+    Set<String> _selectedCategoryIds = {};
+    List<Map<String, String>> _allCategories = [];
+    bool _categoriesLoading = true;
+
   late Future<List<Recipe>> _recipesFuture;
 
   @override
@@ -34,7 +40,23 @@ class _RecipesPageState extends State<RecipesPage> {
 
     // Fetch all ingredients for filter
     _fetchAllIngredients();
+    // Fetch all categories for filter
+    _fetchCategories();
   }
+  
+  Future<void> _fetchCategories() async {
+    setState(() => _categoriesLoading = true);
+    final snap = await FirebaseFirestore.instance.collection('categories').get();
+    if (!mounted) return;
+    setState(() {
+      _allCategories = snap.docs.map((doc) => {
+        'id': doc.id,
+        'name': doc.get('name') as String,
+      }).toList();
+      _categoriesLoading = false;
+    });
+  }
+
   Future<void> _fetchAllIngredients() async {
     setState(() => _ingredientsLoading = true);
     final snap = await FirebaseFirestore.instance.collection('ingredients').get();
@@ -128,7 +150,12 @@ class _RecipesPageState extends State<RecipesPage> {
   Future<void> _openRecipeDetail(Recipe recipe) async {
     final result = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => RecipeDetailPage(recipe: recipe)),
+      MaterialPageRoute(
+        builder: (_) => RecipeDetailPage(
+          recipeId: recipe.id,
+          initialRecipe: recipe,
+        ),
+      ),
     );
 
     if (result == true) {
@@ -200,22 +227,98 @@ class _RecipesPageState extends State<RecipesPage> {
                         onTap: _openCategoriesPage,
                         borderRadius: BorderRadius.circular(12),
                         child: Container(
-                          padding: const EdgeInsets.all(8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF6A5AE0).withOpacity(0.2),
+                            color: const Color(0xFF6A5AE0).withOpacity(0.1),
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Icon(
-                            Icons.category,
-                            color: Color(0xFF6A5AE0),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.category_rounded,
+                                size: 18,
+                                color: Color(0xFF6A5AE0),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Catégories',
+                                style: GoogleFonts.poppins(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFF6A5AE0),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
                     ],
                   ),
                 ),
+                
+                // CATEGORY FILTER
+                if (!_categoriesLoading)
+                  SizedBox(
+                    height: 50,
+                    child: ListView.separated(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _allCategories.length + 1,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        if (index == 0) {
+                          // "All" chip
+                          final isSelected = _selectedCategoryIds.isEmpty;
+                          return FilterChip(
+                            label: const Text('Tout'),
+                            selected: isSelected,
+                            onSelected: (bool selected) {
+                              setState(() {
+                                _selectedCategoryIds.clear();
+                              });
+                            },
+                            backgroundColor: Colors.white,
+                            selectedColor: const Color(0xFF6A5AE0),
+                            labelStyle: TextStyle(
+                              color: isSelected ? Colors.white : Colors.black87,
+                              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                            ),
+                            checkmarkColor: Colors.white,
+                          );
+                        }
+                        
+                        final category = _allCategories[index - 1];
+                        final catId = category['id']!;
+                        final isSelected = _selectedCategoryIds.contains(catId);
+                        
+                        return FilterChip(
+                          label: Text(category['name'] ?? ''),
+                          selected: isSelected,
+                          onSelected: (bool selected) {
+                            setState(() {
+                              if (selected) {
+                                _selectedCategoryIds.add(catId);
+                              } else {
+                                _selectedCategoryIds.remove(catId);
+                              }
+                            });
+                          },
+                          backgroundColor: Colors.white,
+                          selectedColor: const Color(0xFF6A5AE0),
+                          labelStyle: TextStyle(
+                            color: isSelected ? Colors.white : Colors.black87,
+                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                          ),
+                          checkmarkColor: Colors.white,
+                        );
+                      },
+                    ),
+                  ),
 
-                // FILTRES
+                // FILTRES TEXTE & INGRÉDIENTS
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
                   child: TextField(
@@ -286,7 +389,8 @@ class _RecipesPageState extends State<RecipesPage> {
                       final filteredRecipes = recipes.where((recipe) {
                         final matchesTitle = _titleFilter.isEmpty || recipe.title.toLowerCase().contains(_titleFilter.toLowerCase());
                         final matchesIngredients = _selectedIngredientIds.isEmpty || recipe.ingredients.any((ri) => _selectedIngredientIds.contains(ri.ingredient.id));
-                        return matchesTitle && matchesIngredients;
+                        final matchesCategory = _selectedCategoryIds.isEmpty || _selectedCategoryIds.contains(recipe.category);
+                        return matchesTitle && matchesIngredients && matchesCategory;
                       }).toList();
 
                       if (filteredRecipes.isEmpty) {

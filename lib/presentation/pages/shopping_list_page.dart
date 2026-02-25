@@ -213,88 +213,10 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
   }
 
   Widget _buildShoppingListItem(ShoppingItem item, int originalIndex) {
-    return GestureDetector(
+    return _ShoppingListItemCard(
+      item: item,
       onTap: () => _toggleItem(originalIndex),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: item.isChecked ? Colors.grey[50] : Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-             color: item.isChecked ? Colors.transparent : Colors.grey.withOpacity(0.1),
-             width: 1
-          ),
-          boxShadow: item.isChecked 
-              ? [] 
-              : [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-        ),
-        child: Row(
-          children: [
-            // Checkbox
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              width: 24,
-              height: 24,
-              decoration: BoxDecoration(
-                color: item.isChecked ? const Color(0xFF6A5AE0) : Colors.transparent,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: item.isChecked ? const Color(0xFF6A5AE0) : Colors.grey[400]!,
-                  width: 2,
-                ),
-              ),
-              child: item.isChecked
-                  ? const Icon(Icons.check, size: 16, color: Colors.white)
-                  : null,
-            ),
-            const SizedBox(width: 16),
-            
-            // Text
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.name,
-                    style: GoogleFonts.poppins(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: item.isChecked ? Colors.grey[400] : const Color(0xFF1A1A1A),
-                      decoration: item.isChecked ? TextDecoration.lineThrough : null,
-                      decorationColor: Colors.grey[400],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // Quantity
-            if (item.quantity > 0)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: item.isChecked ? Colors.transparent : const Color(0xFFF3F4F6),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  '${_formatQuantity(item.quantity)} ${item.unit}',
-                  style: GoogleFonts.poppins(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: item.isChecked ? Colors.grey[400] : const Color(0xFF6A5AE0),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
+      formatQuantity: _formatQuantity,
     );
   }
 
@@ -303,5 +225,114 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
       return qty.toInt().toString();
     }
     return qty.toStringAsFixed(1);
+  }
+}
+
+// ── Press/scale animation wrapper for shopping list items ──
+class _ShoppingListItemCard extends StatefulWidget {
+  final ShoppingItem item;
+  final VoidCallback onTap;
+  final String Function(double) formatQuantity;
+
+  const _ShoppingListItemCard({
+    required this.item,
+    required this.onTap,
+    required this.formatQuantity,
+  });
+
+  @override
+  State<_ShoppingListItemCard> createState() => _ShoppingListItemCardState();
+}
+
+class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+    return GestureDetector(
+      onTap: widget.onTap,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.97 : 1.0,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: item.isChecked ? Colors.grey[50] : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: item.isChecked ? Colors.transparent : Colors.grey.withOpacity(0.1),
+              width: 1,
+            ),
+            boxShadow: item.isChecked
+                ? []
+                : [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(_pressed ? 0.01 : 0.04),
+                      blurRadius: _pressed ? 4 : 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+          ),
+          child: Row(
+            children: [
+              // Checkbox
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: item.isChecked ? const Color(0xFF6A5AE0) : Colors.transparent,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: item.isChecked ? const Color(0xFF6A5AE0) : Colors.grey[400]!,
+                    width: 2,
+                  ),
+                ),
+                child: item.isChecked
+                    ? const Icon(Icons.check, size: 16, color: Colors.white)
+                    : null,
+              ),
+              const SizedBox(width: 16),
+              // Text
+              Expanded(
+                child: Text(
+                  item.name,
+                  style: GoogleFonts.poppins(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: item.isChecked ? Colors.grey[400] : const Color(0xFF1A1A1A),
+                    decoration: item.isChecked ? TextDecoration.lineThrough : null,
+                    decorationColor: Colors.grey[400],
+                  ),
+                ),
+              ),
+              // Quantity
+              if (item.quantity > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: item.isChecked ? Colors.transparent : const Color(0xFFF3F4F6),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '${widget.formatQuantity(item.quantity)} ${item.unit}',
+                    style: GoogleFonts.poppins(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: item.isChecked ? Colors.grey[400] : const Color(0xFF6A5AE0),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

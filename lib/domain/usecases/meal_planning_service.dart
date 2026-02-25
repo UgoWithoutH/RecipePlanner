@@ -43,6 +43,7 @@ class MealPlanningService {
     List<Meal>? recentMeals,
     List<Meal>? userSelectedMeals,
     List<RecipeIngredient> pantryItems = const [],
+    List<String> selectedCategories = const [],
   }) {
     if (recipes.isEmpty || users.isEmpty) {
       throw Exception('Recipes and users are required');
@@ -279,6 +280,7 @@ class MealPlanningService {
       meals: meals.whereType<Meal>().toList(), // Filter out nulls
       createdAt: DateTime.now(),
       pantryItems: pantryItems,
+      selectedCategories: selectedCategories,
     );
   }
   /// Gère l'injection des userSelectedMeals dans le plan

@@ -44,7 +44,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       FirebaseUserRecipeServingRepository();
 
   List<Category> _categories = [];
-  String? _categoryName;
+  List<Category> _currentCategories = [];
   final FirebaseCategoryRepository _categoryRepo = FirebaseCategoryRepository();
 
   bool _isLoadingRecipe = false;
@@ -185,7 +185,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
               (data['cookingTime'] as num?)?.toInt() ?? currentRecipe?.cookingTime ?? 0,
           servings:
               (data['servings'] as num?)?.toInt() ?? currentRecipe?.servings ?? 1,
-          category: data['category'] as String? ?? currentRecipe?.category ?? '',
+          categoryIds: (data['categoryIds'] != null ? List<String>.from(data['categoryIds']) : (data['category'] != null ? [data['category'] as String] : [])),
           ingredients: enriched,
           instructions: List<String>.from(data['instructions'] ?? []),
           createdAt:
@@ -199,12 +199,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
         );
         // Update displayed category name once the full recipe is loaded
         if (_categories.isNotEmpty && _recipe != null) {
-          final catId = _recipe!.category;
-          final cat = _categories.firstWhere(
-            (c) => c.id == catId,
-            orElse: () => Category(id: '', name: 'Unknown'),
-          );
-          _categoryName = cat.name;
+          _currentCategories = _categories.where((c) => _recipe!.categoryIds.contains(c.id)).toList();
         }
       });
       
@@ -219,8 +214,23 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Impossible de charger les détails : $e'),
-            backgroundColor: Colors.red,
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Impossible de charger les détails : $e', 
+                    style: GoogleFonts.poppins(color: Colors.white)
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: const Color(0xFFE53935),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: const EdgeInsets.all(16),
+            elevation: 4,
           ),
         );
       }
@@ -246,11 +256,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     setState(() {
       _categories = categories;
       if (_recipe != null) {
-        final cat = _categories.firstWhere(
-          (c) => c.id == _recipe!.category,
-          orElse: () => Category(id: '', name: 'Unknown'),
-        );
-        _categoryName = cat.name;
+        _currentCategories = _categories.where((c) => _recipe!.categoryIds.contains(c.id)).toList();
       }
     });
   }
@@ -391,22 +397,40 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                             const SizedBox(height: 10),
                             // Category Badge
                             Center(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: Colors.deepPurpleAccent.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Text(
-                                  (_categoryName ?? currentRecipe.category).toUpperCase(),
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.deepPurpleAccent,
-                                    letterSpacing: 1.0,
-                                  ),
-                                ),
-                              ),
+                              child: _currentCategories.isEmpty 
+                                  ? const SizedBox.shrink()
+                                  : Wrap(
+                                      spacing: 8.0,
+                                      runSpacing: 4.0,
+                                      alignment: WrapAlignment.center,
+                                      children: _currentCategories.map((category) {
+                                        final colorVal = category.color;
+                                        final baseColor = Color(colorVal);
+                                        final name = category.name;
+
+                                        final hsl = HSLColor.fromColor(baseColor);
+                                        final startLightness = hsl.lightness;
+                                        final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                                        final textColor = hsl.withLightness(textLightness).toColor();
+
+                                        return Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                          decoration: BoxDecoration(
+                                            color: baseColor.withOpacity(0.15),
+                                            borderRadius: BorderRadius.circular(20),
+                                          ),
+                                          child: Text(
+                                            name.toUpperCase(),
+                                            style: GoogleFonts.poppins(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w700,
+                                              color: textColor,
+                                              letterSpacing: 1.0,
+                                            ),
+                                          ),
+                                        );
+                                      }).toList(),
+                                    ),
                             ),
 
                             const SizedBox(height: 16),

@@ -55,6 +55,7 @@ class MealPlan {
   final List<Meal> meals;
   final DateTime createdAt;
   final List<RecipeIngredient> pantryItems;
+  final List<String> selectedCategories;
 
   const MealPlan({
     required this.id,
@@ -63,6 +64,7 @@ class MealPlan {
     required this.meals,
     required this.createdAt,
     this.pantryItems = const [],
+    this.selectedCategories = const [],
   });
 
   Map<String, dynamic> toFirestore() {
@@ -70,6 +72,7 @@ class MealPlan {
       'startDate': '${startDate.year}-${startDate.month.toString().padLeft(2, '0')}-${startDate.day.toString().padLeft(2, '0')}',
       'durationDays': durationDays,
       'createdAt': createdAt.toUtc().toIso8601String(),
+      'selectedCategories': selectedCategories,
       'pantryItems': pantryItems.map((item) => {
         'name': item.ingredient.name,
         'quantity': item.quantity,
@@ -80,7 +83,8 @@ class MealPlan {
                 'recipeId': m.recipe.id,
                 'recipeName': m.recipe.title,
                 'recipeDescription': m.recipe.description,
-                'recipeCategory': m.recipe.category,
+                'recipeCategory': m.recipe.categoryIds.isNotEmpty ? m.recipe.categoryIds.first: '',
+                'recipeCategoryIds': m.recipe.categoryIds,
                 'recipeServings': m.recipe.servings,
                 'recipeRating': m.recipe.rating,
                 'recipeAddExtraMeal': m.recipe.addExtraMeal,

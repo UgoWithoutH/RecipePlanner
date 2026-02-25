@@ -3,7 +3,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
-import 'package:numberpicker/numberpicker.dart';
 
 import '../../core/constants/unit.dart';
 import '../../data/repositories/firebase_meal_plan_repository.dart';
@@ -42,11 +41,14 @@ class _PlannerPageState extends State<PlannerPage> {
 
   int _maxHistoryDays = 30; // Default value, recalculated based on recipe count
 
-  DateTime? _selectedStartDate;
-  int? _selectedDuration;
+  DateTime? _selectedStartDate = DateTime.now();
+  int? _selectedDuration = 7;
   Set<String> _selectedCategories = {}; // category IDs
   List<RecipeIngredient> _pantryIngredients = [];
-  Map<String, String> _categoryNamesById = {}; // id → name, for display
+  
+  // Stores ID -> {name, color}
+  Map<String, Map<String, dynamic>> _categoryDataById = {};
+  
   bool _isLoading = false;
 
   MealPlan? _generatedMealPlan;
@@ -60,25 +62,61 @@ class _PlannerPageState extends State<PlannerPage> {
   String? _loadingRecipeId;
 
   static const _kPrefKeyCategories = 'selected_category_ids';
+  static const _kPrefKeyDuration = 'planner_duration_days';
 
   @override
   void initState() {
     super.initState();
-    _loadSavedCategories();
+    _loadAllCategories();
+    _loadSavedPreferences();
     _loadMostRecentMealPlanAndHistory();
   }
 
-  Future<void> _loadSavedCategories() async {
+  Future<void> _loadAllCategories() async {
+    final snapshot = await FirebaseFirestore.instance.collection('categories').get();
+    
+    final allCategories = snapshot.docs.map((doc) {
+      final data = doc.data();
+      return {
+        'id': doc.id,
+        'name': (data['name'] as String? ?? '').trim(),
+        'color': data['color'] is int ? data['color'] as int : 0xFF6A5AE0,
+      };
+    }).where((e) => (e['name'] as String).isNotEmpty).toList();
+
+    if (mounted) {
+      setState(() {
+        _categoryDataById = {
+          for (final e in allCategories) e['id'] as String: e
+        };
+      });
+    }
+  }
+
+  Future<void> _loadSavedPreferences() async {
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getStringList(_kPrefKeyCategories);
-    if (saved != null && saved.isNotEmpty && mounted) {
-      setState(() => _selectedCategories = saved.toSet());
+    
+    // Load categories
+    final savedCats = prefs.getStringList(_kPrefKeyCategories);
+    if (savedCats != null && savedCats.isNotEmpty && mounted) {
+      setState(() => _selectedCategories = savedCats.toSet());
+    }
+
+    // Load duration
+    final savedDuration = prefs.getInt(_kPrefKeyDuration);
+    if (savedDuration != null && mounted) {
+      setState(() => _selectedDuration = savedDuration);
     }
   }
 
   Future<void> _saveCategories(Set<String> ids) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(_kPrefKeyCategories, ids.toList());
+  }
+
+  Future<void> _saveDuration(int duration) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kPrefKeyDuration, duration);
   }
 
   Future<void> _loadMostRecentMealPlanAndHistory() async {
@@ -95,6 +133,15 @@ class _PlannerPageState extends State<PlannerPage> {
         // The plan already contains all card-display data (description, category…)
         // persisted in Firestore — no recipeMap enrichment needed.
         _generatedMealPlan = loadedPlan;
+        
+        // Restore context from the plan
+        if (loadedPlan.selectedCategories.isNotEmpty) {
+          _selectedCategories = loadedPlan.selectedCategories.toSet();
+        }
+        if (loadedPlan.pantryItems.isNotEmpty) {
+          _pantryIngredients = List.from(loadedPlan.pantryItems);
+        }
+
         // Set today as selected if it is within the plan range
         final today = DateTime.now();
         final planStart = _generatedMealPlan!.startDate;
@@ -125,130 +172,379 @@ class _PlannerPageState extends State<PlannerPage> {
   }
 
   Future<void> _pickStartDate({VoidCallback? onDatePicked}) async {
-    final picked = await showDatePicker(
+    DateTime tempSelectedDate = _selectedStartDate ?? DateTime.now();
+    DateTime focusedDay = tempSelectedDate;
+
+    await showModalBottomSheet(
       context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-      locale: const Locale('fr'),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: Color(0xFF6A5AE0),
-              onPrimary: Colors.white,
-              onSurface: Colors.black,
-            ),
-            textButtonTheme: TextButtonThemeData(
-              style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFF6A5AE0),
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setStateSheet) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
               ),
-            ),
-          ),
-          child: child!,
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                   Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 20),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Text(
+                    'Sélectionnez une date de début',
+                    style: GoogleFonts.poppins(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF1A1A1A),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    height: 380, // Hauteur fixe pour éviter les sauts lors du changement de mois
+                    child: TableCalendar(
+                      shouldFillViewport: true,
+                      locale: 'fr_FR',
+                      startingDayOfWeek: StartingDayOfWeek.monday,
+                      firstDay: DateTime.now(),
+                      lastDay: DateTime.now().add(const Duration(days: 365)),
+                      focusedDay: focusedDay,
+                      currentDay: DateTime.now(),
+                      headerStyle: HeaderStyle(
+                        formatButtonVisible: false,
+                        titleCentered: true,
+                        titleTextStyle: GoogleFonts.poppins(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        leftChevronIcon:
+                            const Icon(Icons.chevron_left, color: Color(0xFF6A5AE0)),
+                        rightChevronIcon:
+                            const Icon(Icons.chevron_right, color: Color(0xFF6A5AE0)),
+                      ),
+                      calendarStyle: const CalendarStyle(
+                        selectedDecoration: BoxDecoration(
+                          color: Color(0xFF6A5AE0),
+                          shape: BoxShape.circle,
+                        ),
+                        todayDecoration: BoxDecoration(
+                          color: Color(0xFF6A5AE0),
+                          shape: BoxShape.circle,
+                        ), 
+                        todayTextStyle: TextStyle(color: Colors.white),
+                      ),
+                      selectedDayPredicate: (day) =>
+                          isSameDay(tempSelectedDate, day),
+                      onDaySelected: (selectedDay, focused) {
+                        setStateSheet(() {
+                          tempSelectedDate = selectedDay;
+                          focusedDay = focused;
+                        });
+                      },
+                      onPageChanged: (focused) {
+                        setStateSheet(() {
+                          focusedDay = focused;
+                        });
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        setState(() => _selectedStartDate = tempSelectedDate);
+                        if (onDatePicked != null) onDatePicked();
+                        Navigator.pop(context);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6A5AE0),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: Text(
+                        'Valider',
+                        style: GoogleFonts.poppins(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              ),
+            );
+          },
         );
       },
     );
-
-    if (picked != null) {
-      setState(() => _selectedStartDate = picked);
-      if (onDatePicked != null) onDatePicked();
-    }
   }
 
   Future<void> _pickCategories({VoidCallback? onUpdated}) async {
     // Load categories from the categories collection (name + ID)
     final snapshot = await FirebaseFirestore.instance.collection('categories').get();
-    final allCategories = snapshot.docs
-        .map((doc) => MapEntry(doc.id, (doc.data()['name'] as String? ?? '').trim()))
-        .where((e) => e.value.isNotEmpty)
-        .toList()
-      ..sort((a, b) => a.value.compareTo(b.value));
+    
+    final allCategories = snapshot.docs.map((doc) {
+      final data = doc.data();
+      return {
+        'id': doc.id,
+        'name': (data['name'] as String? ?? '').trim(),
+        'color': data['color'] is int ? data['color'] as int : 0xFF6A5AE0,
+      };
+    }).where((e) => (e['name'] as String).isNotEmpty).toList()
+      ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
 
-    // Update the local names map
-    final namesById = <String, String>{
-      for (final e in allCategories) e.key: e.value
+    // Update local data map
+    final dataById = <String, Map<String, dynamic>>{
+      for (final e in allCategories) e['id'] as String: e
     };
 
     if (!mounted) return;
 
-    final tempSelected = Set<String>.from(_selectedCategories);
+    final validCategoryIds = allCategories.map((e) => e['id'] as String).toSet();
+    final tempSelected = Set<String>.from(_selectedCategories.where((id) => validCategoryIds.contains(id)));
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => StatefulBuilder(
-        builder: (context, setStateDialog) => AlertDialog(
-          title: Text(
-            'Filtrer par catégorie',
-            style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-          ),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Laisser vide pour inclure toutes les catégories.',
-                  style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]),
-                ),
-                const SizedBox(height: 12),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 320),
-                  child: SingleChildScrollView(
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: allCategories.map((entry) {
-                        final isSelected = tempSelected.contains(entry.key);
-                        return FilterChip(
-                          label: Text(entry.value, style: GoogleFonts.poppins(fontSize: 13)),
-                          selected: isSelected,
-                          selectedColor: const Color(0xFF6A5AE0).withOpacity(0.15),
-                          checkmarkColor: const Color(0xFF6A5AE0),
-                          onSelected: (val) {
-                            setStateDialog(() {
-                              if (val) {
-                                tempSelected.add(entry.key);
-                              } else {
-                                tempSelected.remove(entry.key);
-                              }
-                            });
-                          },
-                        );
-                      }).toList(),
+        builder: (context, setStateDialog) {
+          final isAllSelected = tempSelected.length == validCategoryIds.length;
+          final isNoneSelected = tempSelected.isEmpty;
+
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 500, maxHeight: 700),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.15),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  // --- Header ---
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6A5AE0).withOpacity(0.05),
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: const BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.category_rounded, color: Color(0xFF6A5AE0), size: 24),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Filtrer par catégorie',
+                                style: GoogleFonts.poppins(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                  color: const Color(0xFF1A1A1A),
+                                ),
+                              ),
+                              Text(
+                                'Sélectionnez vos préférences',
+                                style: GoogleFonts.poppins(
+                                  fontSize: 12,
+                                  color: Colors.grey[600],
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          icon: Icon(Icons.close_rounded, color: Colors.grey[400]),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                setStateDialog(() => tempSelected.clear());
-              },
-              child: Text('Tout déselectionner', style: GoogleFonts.poppins(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF6A5AE0),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+
+                  // --- Quick Actions ---
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: isNoneSelected ? null : () => setStateDialog(() => tempSelected.clear()),
+                            icon: const Icon(Icons.clear_all_rounded, size: 18),
+                            label: const Text('Tout décocher'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.grey[700],
+                              side: BorderSide(color: Colors.grey.shade300),
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: isAllSelected ? null : () => setStateDialog(() => tempSelected.addAll(validCategoryIds)),
+                            icon: const Icon(Icons.select_all_rounded, size: 18),
+                            label: const Text('Tout cocher'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF6A5AE0),
+                              side: const BorderSide(color: Color(0xFF6A5AE0)),
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const Divider(height: 1),
+
+                  // --- Scrollable Content ---
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(24),
+                      child: Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: allCategories.map((entry) {
+                          final id = entry['id'] as String;
+                          final name = entry['name'] as String;
+                          final colorVal = entry['color'] as int;
+                          final baseColor = Color(colorVal);
+
+                          final isSelected = tempSelected.contains(id);
+                          
+                          // Improve contrast for text
+                          final hsl = HSLColor.fromColor(baseColor);
+                          final startLightness = hsl.lightness;
+                          final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                          final textColor = hsl.withLightness(textLightness).toColor();
+
+                          return InkWell(
+                            onTap: () {
+                              setStateDialog(() {
+                                if (isSelected) {
+                                  tempSelected.remove(id);
+                                } else {
+                                  tempSelected.add(id);
+                                }
+                              });
+                            },
+                            borderRadius: BorderRadius.circular(20),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: isSelected 
+                                    ? baseColor.withOpacity(0.35) 
+                                    : baseColor.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: isSelected 
+                                      ? baseColor.withOpacity(0.5) 
+                                      : Colors.transparent,
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    name,
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: textColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+
+                  // --- Bottom Validation Bar ---
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      border: Border(top: BorderSide(color: Colors.grey.shade100)),
+                      borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
+                    ),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF6A5AE0),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        child: Text(
+                          tempSelected.isEmpty 
+                              ? 'Aucun filtre (Tout voir)' 
+                              : isAllSelected
+                                  ? 'Toutes'
+                                  : 'Valider (${tempSelected.length})',
+                          style: GoogleFonts.poppins(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              child: Text('Valider', style: GoogleFonts.poppins()),
             ),
-          ],
-        ),
+          );
+        }
       ),
     );
 
     if (confirmed == true) {
-      setState(() {
-        _selectedCategories = tempSelected;
-        _categoryNamesById = namesById;
-      });
+      if (mounted) {
+        setState(() {
+          _selectedCategories = tempSelected;
+          _categoryDataById.addAll(dataById);
+        });
+      }
       await _saveCategories(tempSelected);
       if (onUpdated != null) onUpdated();
     }
@@ -274,65 +570,180 @@ class _PlannerPageState extends State<PlannerPage> {
   void _pickDuration({VoidCallback? onUpdated}) {
     int tempDuration = _selectedDuration ?? 7;
 
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setStateDialog) => AlertDialog(
-          title: const Text('Sélectionner la durée (jours)'),
-          content: SizedBox(
-            width: 200,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                NumberPicker(
-                  value: tempDuration,
-                  minValue: 1,
-                  maxValue: 365,
-                  infiniteLoop: true,
-                  onChanged: (value) {
-                    setStateDialog(() {
-                      tempDuration = value;
-                    });
-                  },
-                  selectedTextStyle: GoogleFonts.poppins(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.deepPurpleAccent,
-                  ),
-                  textStyle: GoogleFonts.poppins(
-                    fontSize: 18,
-                    color: Colors.grey[600],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    setState(() => _selectedDuration = tempDuration);
-                    if (onUpdated != null) onUpdated();
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.deepPurpleAccent,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setStateSheet) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 20),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
-                  child: const Text('Valider'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+                  Text(
+                    'Durée du planning',
+                    style: GoogleFonts.poppins(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF1A1A1A),
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                  
+                  // Display value
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(
+                        tempDuration.toString(),
+                        style: GoogleFonts.poppins(
+                          fontSize: 48,
+                          fontWeight: FontWeight.bold,
+                          color: const Color(0xFF6A5AE0),
+                          height: 1,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        tempDuration > 1 ? 'jours' : 'jour',
+                        style: GoogleFonts.poppins(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                  
+                  const SizedBox(height: 32),
+                  
+                  // Slider
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      activeTrackColor: const Color(0xFF6A5AE0),
+                      inactiveTrackColor: Colors.grey[200],
+                      thumbColor: const Color(0xFF6A5AE0),
+                      overlayColor: const Color(0xFF6A5AE0).withOpacity(0.2),
+                      trackHeight: 6,
+                    ),
+                    child: Slider(
+                      value: tempDuration.toDouble(),
+                      min: 1,
+                      max: 30,
+                      divisions: 29,
+                      onChanged: (val) {
+                        setStateSheet(() => tempDuration = val.round());
+                      },
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 24),
+                  
+                  // Quick presets
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [3, 5, 7, 10, 14].map((days) {
+                       final isSelected = tempDuration == days;
+                       return InkWell(
+                         onTap: () => setStateSheet(() => tempDuration = days),
+                         borderRadius: BorderRadius.circular(12),
+                         child: AnimatedContainer(
+                           duration: const Duration(milliseconds: 200),
+                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                           decoration: BoxDecoration(
+                             color: isSelected ? const Color(0xFF6A5AE0) : Colors.grey[100],
+                             borderRadius: BorderRadius.circular(12),
+                             border: Border.all(
+                               color: isSelected ? const Color(0xFF6A5AE0) : Colors.transparent
+                             ),
+                           ),
+                           child: Text(
+                             '$days j',
+                             style: GoogleFonts.poppins(
+                               fontWeight: FontWeight.w600,
+                               color: isSelected ? Colors.white : Colors.grey[700],
+                             ),
+                           ),
+                         ),
+                       );
+                    }).toList(),
+                  ),
+
+                  const SizedBox(height: 32),
+                  
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                         setState(() => _selectedDuration = tempDuration);
+                         _saveDuration(tempDuration);
+                         if (onUpdated != null) onUpdated();
+                         Navigator.pop(context);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6A5AE0),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: Text(
+                        'Valider',
+                        style: GoogleFonts.poppins(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
   Future<void> _launchPlanning() async {
     if (_selectedStartDate == null || _selectedDuration == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Veuillez sélectionner une date et une durée'),
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.info_outline_rounded, color: Colors.white),
+              const SizedBox(width: 12),
+              Text(
+                'Veuillez sélectionner une date et une durée',
+                style: GoogleFonts.poppins(color: Colors.white),
+              ),
+            ],
+          ),
+          backgroundColor: const Color(0xFF6A5AE0),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.all(16),
+          elevation: 4,
         ),
       );
       return;
@@ -345,15 +756,34 @@ class _PlannerPageState extends State<PlannerPage> {
       _maxHistoryDays = allRecipes.length;
 
       // Apply category filter for planning only (not for history duration)
-      final recipes = _selectedCategories.isEmpty
+      // Only consider categories that exist in our loaded map (ignores deleted categories)
+      final validSelectedCategories = _selectedCategories.where((id) => _categoryDataById.containsKey(id)).toSet();
+
+      final recipes = validSelectedCategories.isEmpty
           ? allRecipes
-          : allRecipes.where((r) => _selectedCategories.contains(r.category)).toList();
+          : allRecipes.where((r) => r.categoryIds.any((c) => validSelectedCategories.contains(c))).toList();
 
       if (recipes.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Aucune recette trouvée pour les catégories sélectionnées.'),
+             SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.warning_amber_rounded, color: Colors.white),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Aucune recette trouvée pour les catégories sélectionnées.',
+                      style: GoogleFonts.poppins(color: Colors.white),
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: const Color(0xFF6A5AE0).withOpacity(0.9), // Slightly different or same? Let's use same theme color.
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              margin: const EdgeInsets.all(16),
+              elevation: 4,
             ),
           );
         }
@@ -395,6 +825,7 @@ class _PlannerPageState extends State<PlannerPage> {
         durationDays: _selectedDuration!,
         recentMeals: filteredHistoryMeals,
         pantryItems: _pantryIngredients,
+        selectedCategories: _selectedCategories.toList(),
       );
 
       setState(() {
@@ -416,6 +847,7 @@ class _PlannerPageState extends State<PlannerPage> {
           meals: plan.meals,
           createdAt: plan.createdAt,
           pantryItems: plan.pantryItems,
+          selectedCategories: plan.selectedCategories,
         );
       });
     } finally {
@@ -490,14 +922,13 @@ class _PlannerPageState extends State<PlannerPage> {
         meals: plan.meals,
         createdAt: plan.createdAt,
         pantryItems: plan.pantryItems,
+        selectedCategories: plan.selectedCategories,
       );
       
       await ShoppingListGenerator().generateAndSaveShoppingList(planForShoppingList);
 
       if (!mounted) return savedId;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('✅ Plan et liste de courses sauvegardés')));
+      // Removed the saved snackbar confirmation
       return savedId;
     } finally {
       setState(() => _isLoading = false);
@@ -586,7 +1017,7 @@ class _PlannerPageState extends State<PlannerPage> {
             preparationTime: firstMeal.recipe.preparationTime,
             cookingTime: firstMeal.recipe.cookingTime,
             servings: firstMeal.recipe.servings,
-            category: firstMeal.recipe.category,
+            categoryIds: firstMeal.recipe.categoryIds,
             ingredients: firstMeal.recipe.ingredients,
             instructions: firstMeal.recipe.instructions,
             createdAt: firstMeal.recipe.createdAt,
@@ -618,6 +1049,8 @@ class _PlannerPageState extends State<PlannerPage> {
         durationDays: _generatedMealPlan!.durationDays,
         meals: updatedMeals,
         createdAt: _generatedMealPlan!.createdAt,
+        pantryItems: _generatedMealPlan!.pantryItems,
+        selectedCategories: _generatedMealPlan!.selectedCategories,
       );
 
       // Save to database
@@ -631,7 +1064,18 @@ class _PlannerPageState extends State<PlannerPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('✅ Repas supprimé', style: GoogleFonts.poppins()),
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_outline_rounded, color: Colors.white),
+              const SizedBox(width: 12),
+              Expanded(child: Text('Repas supprimé', style: GoogleFonts.poppins(color: Colors.white))),
+            ],
+          ),
+          backgroundColor: const Color(0xFF4CAF50),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.all(16),
+          elevation: 4,
         ),
       );
     } finally {
@@ -682,7 +1126,18 @@ class _PlannerPageState extends State<PlannerPage> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('✅ Recette historique modifiée', style: GoogleFonts.poppins()),
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_outline_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(child: Text('Recette historique modifiée', style: GoogleFonts.poppins(color: Colors.white))),
+              ],
+            ),
+            backgroundColor: const Color(0xFF4CAF50),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: const EdgeInsets.all(16),
+            elevation: 4,
           ),
         );
         return;
@@ -735,7 +1190,7 @@ class _PlannerPageState extends State<PlannerPage> {
             preparationTime: firstMeal.recipe.preparationTime,
             cookingTime: firstMeal.recipe.cookingTime,
             servings: firstMeal.recipe.servings,
-            category: firstMeal.recipe.category,
+            categoryIds: firstMeal.recipe.categoryIds,
             ingredients: firstMeal.recipe.ingredients,
             instructions: firstMeal.recipe.instructions,
             createdAt: firstMeal.recipe.createdAt,
@@ -777,6 +1232,8 @@ class _PlannerPageState extends State<PlannerPage> {
         durationDays: _generatedMealPlan!.durationDays,
         meals: updatedMeals,
         createdAt: _generatedMealPlan!.createdAt,
+        pantryItems: _generatedMealPlan!.pantryItems,
+        selectedCategories: _generatedMealPlan!.selectedCategories,
       );
 
       await _mealPlanRepo.saveMealPlan(updatedPlan);
@@ -789,7 +1246,18 @@ class _PlannerPageState extends State<PlannerPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('✅ Recette modifiée', style: GoogleFonts.poppins()),
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_outline_rounded, color: Colors.white),
+              const SizedBox(width: 12),
+              Expanded(child: Text('Recette modifiée', style: GoogleFonts.poppins(color: Colors.white))),
+            ],
+          ),
+          backgroundColor: const Color(0xFF4CAF50),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.all(16),
+          elevation: 4,
         ),
       );
     } finally {
@@ -827,7 +1295,20 @@ class _PlannerPageState extends State<PlannerPage> {
         setState(() {});
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('✅ Repas historique ajouté', style: GoogleFonts.poppins())),
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_outline_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(child: Text('Repas historique ajouté', style: GoogleFonts.poppins(color: Colors.white))),
+              ],
+            ),
+            backgroundColor: const Color(0xFF4CAF50),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: const EdgeInsets.all(16),
+            elevation: 4,
+          ),
         );
         return;
       }
@@ -842,6 +1323,8 @@ class _PlannerPageState extends State<PlannerPage> {
         durationDays: _generatedMealPlan!.durationDays,
         meals: updatedMeals,
         createdAt: _generatedMealPlan!.createdAt,
+        pantryItems: _generatedMealPlan!.pantryItems,
+        selectedCategories: _generatedMealPlan!.selectedCategories,
       );
       await _mealPlanRepo.saveMealPlan(updatedPlan);
       await ShoppingListGenerator().generateAndSaveShoppingList(updatedPlan);
@@ -850,7 +1333,20 @@ class _PlannerPageState extends State<PlannerPage> {
       });
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('✅ Repas ajouté', style: GoogleFonts.poppins())),
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_outline_rounded, color: Colors.white),
+              const SizedBox(width: 12),
+              Expanded(child: Text('Repas ajouté', style: GoogleFonts.poppins(color: Colors.white))),
+            ],
+          ),
+          backgroundColor: const Color(0xFF4CAF50),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.all(16),
+          elevation: 4,
+        ),
       );
     } finally {
       setState(() => _isLoading = false);
@@ -862,18 +1358,69 @@ class _PlannerPageState extends State<PlannerPage> {
     DateTime? date,
     MealType? type,
     bool requireConfirmation = true,
-  }) {
+  }) async {
+    // Pre-load recipe count to compute a snug initial sheet height
+    final snap = await FirebaseFirestore.instance.collection('recipes').get();
+    if (!mounted) return;
+    final recipeCount = snap.docs.length;
+
+    // header ≈ 305 px (outer title + RecipeSelector header + filters), each item ≈ 82 px
+    const double headerPx = 305;
+    const double itemPx = 82;
+    const double minFraction = 0.50;
+    const double maxFraction = 0.95;
+    final screenH = MediaQuery.of(context).size.height;
+    final contentH = headerPx + recipeCount * itemPx + 24;
+    final initial = (contentH / screenH).clamp(minFraction, maxFraction);
+
+    if (!mounted) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.95,
+      builder: (context) => Stack(
+        children: [
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            behavior: HitTestBehavior.opaque,
+            child: const SizedBox.expand(),
+          ),
+          DraggableScrollableSheet(
+            initialChildSize: initial,
+            minChildSize: 0.3,
+            maxChildSize: maxFraction,
+            builder: (_, scrollController) => Container(
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        child: RecipeSelector(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Choisir une recette',
+                      style: GoogleFonts.poppins(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF1A1A1A),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, color: Colors.black45),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: RecipeSelector(
+                scrollController: scrollController,
           onRecipeSelected: (newRecipe) async {
             // Check if it's a historical meal (past date, without time)
             bool isHistory = false;
@@ -924,7 +1471,13 @@ class _PlannerPageState extends State<PlannerPage> {
             }
           },
         ),
+            ),
+          ],
+        ),
       ),
+          ), // DraggableScrollableSheet
+        ], // Stack children
+      ), // Stack
     );
   }
 
@@ -966,21 +1519,33 @@ class _PlannerPageState extends State<PlannerPage> {
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Container(
-                                  width: 40,
-                                  height: 4,
-                                  decoration: BoxDecoration(
-                                    color: Colors.grey[300],
-                                    borderRadius: BorderRadius.circular(2),
-                                  ),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Center(
+                                        child: Container(
+                                          width: 40,
+                                          height: 4,
+                                          decoration: BoxDecoration(
+                                            color: Colors.grey[300],
+                                            borderRadius: BorderRadius.circular(2),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.close_rounded, color: Colors.black45),
+                                      onPressed: () => Navigator.pop(builderContext),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(height: 20),
+                                const SizedBox(height: 8),
                                 _ModernPlannerHeader(
                                   selectedStartDate: _selectedStartDate,
                                   selectedDuration: _selectedDuration,
                                   selectedCategories: _selectedCategories,
-                                  categoryNamesById: _categoryNamesById,
-                                  pantryItemsCount: _pantryIngredients.length,
+                                  categoryDataById: _categoryDataById,
+                                  pantryIngredients: _pantryIngredients,
                                   onPickStartDate: () {
                                     _pickStartDate(onDatePicked: () => setModalState(() {}));
                                   },
@@ -1087,12 +1652,20 @@ class _PlannerPageState extends State<PlannerPage> {
                             selectedStartDate: _selectedStartDate,
                             selectedDuration: _selectedDuration,
                             selectedCategories: _selectedCategories,
-                            categoryNamesById: _categoryNamesById,
-                            pantryItemsCount: _pantryIngredients.length,
-                            onPickStartDate: _pickStartDate,
-                            onPickDuration: _pickDuration,
-                            onPickCategories: _pickCategories,
-                            onPickPantry: _pickPantryItems,
+                            categoryDataById: _categoryDataById,
+                            pantryIngredients: _pantryIngredients,
+                            onPickStartDate: () {
+                              _pickStartDate(onDatePicked: () => setState(() {}));
+                            },
+                            onPickDuration: () {
+                              _pickDuration(onUpdated: () => setState(() {}));
+                            },
+                            onPickCategories: () {
+                              _pickCategories(onUpdated: () => setState(() {}));
+                            },
+                            onPickPantry: () {
+                              _pickPantryItems(onUpdated: () => setState(() {}));
+                            },
                             onLaunchPlanning: _launchPlanning,
                             isLoading: _isLoading,
                           ),
@@ -1100,6 +1673,9 @@ class _PlannerPageState extends State<PlannerPage> {
                         const SizedBox(height: 40),
                       ],
                       if (_generatedMealPlan != null) ...[
+                        const SizedBox(height: 16),
+                        _buildPlanMetadata(),
+                        const SizedBox(height: 12),
                         _buildModernCalendar(),
                         const SizedBox(height: 24),
                         _buildMealDetails(),
@@ -1118,6 +1694,193 @@ class _PlannerPageState extends State<PlannerPage> {
         ],
       ),
     );
+  }
+
+  Widget _buildPlanMetadata() {
+    if (_generatedMealPlan == null) return const SizedBox();
+
+    // Use _selectedCategories if populated, otherwise use what's in the plan directly
+    final categoryIds = _selectedCategories.isNotEmpty 
+        ? _selectedCategories
+        : _generatedMealPlan!.selectedCategories;
+
+    final categories = categoryIds.map((id) => _categoryDataById[id]).where((c) => c != null).toList();
+    
+    // Use _pantryIngredients if populated, or from plan
+    final pantryItems = _pantryIngredients.isNotEmpty 
+        ? _pantryIngredients 
+        : _generatedMealPlan!.pantryItems;
+
+    if (categories.isEmpty && pantryItems.isEmpty) return const SizedBox();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      margin: const EdgeInsets.only(bottom: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(
+          dividerColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+          hoverColor: Colors.transparent,
+          focusColor: Colors.transparent,
+        ),
+        child: ExpansionTile(
+              title: Text(
+                'Paramètres du plan',
+                style: GoogleFonts.poppins(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF1A1A1A),
+                ),
+              ),
+              subtitle: Text(
+                'Voir les catégories et ingrédients utilisés',
+                style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]),
+              ),
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.tune_rounded, size: 16, color: Color(0xFF6A5AE0)),
+              ),
+              shape: const Border(), 
+              collapsedShape: const Border(),
+              childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              tilePadding: EdgeInsets.zero,
+              children: [
+          
+              if (categories.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Catégories filtrées :',
+                  style: GoogleFonts.poppins(
+                    fontSize: 12, 
+                    fontWeight: FontWeight.w500,
+                    color: Colors.grey[600]
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: categories.map((cat) {
+                    final name = cat!['name'] as String;
+                    final colorVal = cat['color'] as int;
+                    final baseColor = Color(colorVal);
+
+                    // Use the new HSL contrast logic we standardized earlier
+                    final hsl = HSLColor.fromColor(baseColor);
+                    final startLightness = hsl.lightness;
+                    final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                    final textColor = hsl.withLightness(textLightness).toColor();
+
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: baseColor.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        name,
+                        style: GoogleFonts.poppins(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: textColor,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+            
+            if (pantryItems.isNotEmpty) ...[
+               Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Ingrédients du frigo pris en compte :',
+                  style: GoogleFonts.poppins(
+                    fontSize: 12, 
+                    fontWeight: FontWeight.w500,
+                    color: Colors.grey[600]
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ...pantryItems.take(5).map((item) {
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.green.withOpacity(0.2)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.kitchen, size: 14, color: Colors.green),
+                            const SizedBox(width: 6),
+                            Text(
+                              '${item.quantity % 1 == 0 ? item.quantity.toInt() : item.quantity} ${item.unit.label} ${item.ingredient.name}',
+                              style: GoogleFonts.poppins(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.green[800],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                    if (pantryItems.length > 5)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '+ ${pantryItems.length - 5} autres',
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+        ],
+      ),
+    ));
   }
 
   Widget _buildModernCalendar() {
@@ -1171,7 +1934,34 @@ class _PlannerPageState extends State<PlannerPage> {
         ? historyMax
         : planEnd;
 
-    return Material(
+    return GestureDetector(
+      onHorizontalDragEnd: (details) {
+        if (details.primaryVelocity == null) return;
+        
+        DateTime? newDate;
+        if (details.primaryVelocity! < 0) {
+          // Swipe Left -> Next Day
+          newDate = _selectedMealDate!.add(const Duration(days: 1));
+        } else if (details.primaryVelocity! > 0) {
+          // Swipe Right -> Previous Day
+          newDate = _selectedMealDate!.subtract(const Duration(days: 1));
+        }
+        
+        if (newDate != null) {
+          // Verify bounds (start of day comparison)
+          final newDateDay = DateTime(newDate.year, newDate.month, newDate.day);
+          final firstDayStart = DateTime(firstDay.year, firstDay.month, firstDay.day);
+          final lastDayStart = DateTime(lastDay.year, lastDay.month, lastDay.day);
+
+          if (!newDateDay.isBefore(firstDayStart) && !newDateDay.isAfter(lastDayStart)) {
+            setState(() {
+              _selectedMealDate = newDate;
+              _focusedDay = newDate!;
+            });
+          }
+        }
+      },
+      child: Material(
       type: MaterialType.transparency,
       child: TableCalendar(
         startingDayOfWeek: StartingDayOfWeek.monday,
@@ -1180,6 +1970,7 @@ class _PlannerPageState extends State<PlannerPage> {
         lastDay: lastDay,
         focusedDay: _focusedDay,
         calendarFormat: _calendarFormat!,
+        availableGestures: AvailableGestures.none, // Disable internal gestures to use custom swipe
         availableCalendarFormats: const {
           CalendarFormat.week: 'Semaine',
           CalendarFormat.twoWeeks: '2 semaines',
@@ -1227,6 +2018,13 @@ class _PlannerPageState extends State<PlannerPage> {
           defaultDecoration: BoxDecoration(shape: BoxShape.circle),
           weekendDecoration: BoxDecoration(shape: BoxShape.circle),
           outsideDecoration: BoxDecoration(shape: BoxShape.circle),
+          // Force all text to be black/dark and bold for better visibility
+          defaultTextStyle: TextStyle(color: Color(0xFF1A1A1A), fontWeight: FontWeight.bold, fontSize: 15),
+          weekendTextStyle: TextStyle(color: Color(0xFF1A1A1A), fontWeight: FontWeight.bold, fontSize: 15),
+          outsideTextStyle: TextStyle(color: Color(0xFF1A1A1A), fontWeight: FontWeight.bold, fontSize: 15),
+          selectedTextStyle: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+          todayTextStyle: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+          disabledTextStyle: TextStyle(color: Colors.grey), // Keep truly disabled days grey
         ),
         calendarBuilders: CalendarBuilders(
           defaultBuilder: (context, day, focusedDay) {
@@ -1261,7 +2059,8 @@ class _PlannerPageState extends State<PlannerPage> {
           },
         ),
       ),
-    );
+      ), // Close Material
+    ); // Close GestureDetector
   }
 
   Widget _buildMealDetails() {
@@ -1650,7 +2449,54 @@ class _PlannerPageState extends State<PlannerPage> {
       );
     }
 
-    return Padding(
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragEnd: (details) {
+        if (details.primaryVelocity == null) return;
+        
+        // Calculate bounds (same as in calendar) to prevent out of bounds error
+        DateTime planStart = _generatedMealPlan?.startDate ?? DateTime.now();
+        DateTime planEnd = planStart.add(
+          Duration(days: (_generatedMealPlan?.durationDays ?? 1) - 1),
+        );
+        final historyDates = _mealHistory.keys.toList();
+        DateTime? historyMin = historyDates.isNotEmpty
+            ? historyDates.reduce((a, b) => a.isBefore(b) ? a : b)
+            : null;
+        DateTime? historyMax = historyDates.isNotEmpty
+            ? historyDates.reduce((a, b) => a.isAfter(b) ? a : b)
+            : null;
+        final firstDay = historyMin != null && historyMin.isBefore(planStart)
+            ? historyMin
+            : planStart;
+        final lastDay = historyMax != null && historyMax.isAfter(planEnd)
+            ? historyMax
+            : planEnd;
+
+        DateTime? newDate;
+        if (details.primaryVelocity! < 0) {
+          // Swipe Left -> Next Day
+          newDate = _selectedMealDate!.add(const Duration(days: 1));
+        } else if (details.primaryVelocity! > 0) {
+          // Swipe Right -> Previous Day
+          newDate = _selectedMealDate!.subtract(const Duration(days: 1));
+        }
+
+        if (newDate != null) {
+          // Verify bounds (start of day comparison)
+          final newDateDay = DateTime(newDate.year, newDate.month, newDate.day);
+          final firstDayStart = DateTime(firstDay.year, firstDay.month, firstDay.day);
+          final lastDayStart = DateTime(lastDay.year, lastDay.month, lastDay.day);
+
+          if (!newDateDay.isBefore(firstDayStart) && !newDateDay.isAfter(lastDayStart)) {
+             setState(() {
+               _selectedMealDate = newDate;
+               _focusedDay = newDate!;
+             });
+          }
+        }
+      },
+      child: Padding(
       padding: const EdgeInsets.only(bottom: 90),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1688,7 +2534,8 @@ class _PlannerPageState extends State<PlannerPage> {
             buildEmptySlot(MealType.dinner),
         ],
       ),
-    );
+    ), // Close Padding
+    ); // Close GestureDetector
   }
 }
 
@@ -1697,9 +2544,14 @@ class _PlannerPageState extends State<PlannerPage> {
 class _ModernPlannerHeader extends StatelessWidget {
   final DateTime? selectedStartDate;
   final int? selectedDuration;
-  final Set<String> selectedCategories;   // category IDs
-  final Map<String, String> categoryNamesById; // id → name
-  final int pantryItemsCount;
+  final Set<String> selectedCategories;
+  
+  // ID -> {id, name, color}
+  final Map<String, Map<String, dynamic>> categoryDataById;
+  
+  // Use explicit list instead of count
+  final List<RecipeIngredient> pantryIngredients;
+
   final VoidCallback onPickStartDate;
   final VoidCallback onPickDuration;
   final VoidCallback onPickCategories;
@@ -1711,8 +2563,8 @@ class _ModernPlannerHeader extends StatelessWidget {
     required this.selectedStartDate,
     required this.selectedDuration,
     required this.selectedCategories,
-    required this.categoryNamesById,
-    required this.pantryItemsCount,
+    required this.categoryDataById,
+    required this.pantryIngredients, // Changed
     required this.onPickStartDate,
     required this.onPickDuration,
     required this.onPickCategories,
@@ -1804,19 +2656,63 @@ class _ModernPlannerHeader extends StatelessWidget {
                           'Catégories',
                           style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[600]),
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          selectedCategories.isEmpty
-                              ? 'Toutes'
-                              : selectedCategories
-                                  .map((id) => categoryNamesById[id] ?? id)
-                                  .join(', '),
-                          style: GoogleFonts.poppins(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF2D2D2D),
-                          ),
-                          overflow: TextOverflow.ellipsis,
+                        const SizedBox(height: 4),
+                        Builder(
+                          builder: (context) {
+                            final validCategories = selectedCategories.where((id) {
+                                final cat = categoryDataById[id];
+                                return cat != null;
+                            }).toList();
+
+                            // If empty (no filter) or equal to total known categories (all selected)
+                            if (validCategories.isEmpty || (categoryDataById.isNotEmpty && validCategories.length == categoryDataById.length)) {
+                              return Text(
+                                'Toutes',
+                                style: GoogleFonts.poppins(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFF2D2D2D),
+                                ),
+                              );
+                            }
+
+                            return Wrap(
+                              spacing: 6,
+                              runSpacing: 4,
+                              children: validCategories.map((id) {
+                                final cat = categoryDataById[id];
+                                final name = cat?['name'] as String? ?? 'Unknown';
+                                final colorVal = cat?['color'] as int? ?? 0xFF6A5AE0;
+                                final color = Color(colorVal);
+
+                                // Contrast logic
+                                final hsl = HSLColor.fromColor(color);
+                                final textLightness =
+                                    hsl.lightness > 0.4 ? 0.4 : hsl.lightness;
+                                final textColor =
+                                    hsl.withLightness(textLightness).toColor();
+
+                                return Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: color.withOpacity(0.35),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    name,
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: textColor,
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            );
+                          }
                         ),
                       ],
                     ),
@@ -1837,7 +2733,7 @@ class _ModernPlannerHeader extends StatelessWidget {
                 color: const Color(0xFFF5F7FA),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: pantryItemsCount > 0
+                  color: pantryIngredients.isNotEmpty
                       ? const Color(0xFF6A5AE0).withOpacity(0.5)
                       : Colors.grey.withOpacity(0.15),
                 ),
@@ -1861,18 +2757,39 @@ class _ModernPlannerHeader extends StatelessWidget {
                           'Ingrédients disponibles',
                           style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[600]),
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          pantryItemsCount > 0
-                              ? '$pantryItemsCount ingrédients'
-                              : 'Aucun (Optionnel)',
-                          style: GoogleFonts.poppins(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF2D2D2D),
+                        const SizedBox(height: 4),
+                        if (pantryIngredients.isEmpty)
+                          Text(
+                            'Aucun (Optionnel)',
+                            style: GoogleFonts.poppins(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF2D2D2D),
+                            ),
+                          )
+                        else
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            children: pantryIngredients.map((item) {
+                              return Container(
+                                padding: const EdgeInsets.symmetric( horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.green.withOpacity(0.2)),
+                                ),
+                                child: Text(
+                                  '${item.quantity % 1 == 0 ? item.quantity.toInt() : item.quantity} ${item.unit.label} ${item.ingredient.name}',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.green[800],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
                           ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
                       ],
                     ),
                   ),

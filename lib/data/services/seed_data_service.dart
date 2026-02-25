@@ -13,31 +13,41 @@ Future<void> seedAllTestData() async {
 /// Populates Firestore with distinct recipe categories and returns a {name: id} map
 Future<Map<String, String>> seedCategoriesToFirestore() async {
   final firestore = FirebaseFirestore.instance;
-  final categories = [
-    'Viande',
-    'Végétarien',
-    'Pâtes',
-    'Asiatique',
-    'Poisson',
-    'Salade',
-    'Sandwich',
-    'Boisson',
-    'Petit-déjeuner',
-  ];
+  // Map category name to color
+  final categories = {
+    'Viande': 0xFFE57373, // Red
+    'Végétarien': 0xFF81C784, // Green
+    'Pâtes': 0xFFFFD54F, // Amber
+    'Asiatique': 0xFFFF8A65, // Deep Orange
+    'Poisson': 0xFF4FC3F7, // Light Blue
+    'Salade': 0xFFAED581, // Light Green
+    'Sandwich': 0xFFA1887F, // Brown
+    'Boisson': 0xFF4DB6AC, // Teal
+    'Petit-déjeuner': 0xFFFFB74D, // Orange
+  };
 
   final Map<String, String> nameToId = {};
 
-  // Load existing categories to avoid duplicates
+  // Load existing categories
   final existing = await firestore.collection('categories').get();
   for (final doc in existing.docs) {
     final name = (doc.data()['name'] as String? ?? '').trim();
     if (name.isNotEmpty) nameToId[name] = doc.id;
   }
 
-  for (final name in categories) {
+  for (final entry in categories.entries) {
+    final name = entry.key;
+    final color = entry.value;
+
     if (!nameToId.containsKey(name)) {
-      final ref = await firestore.collection('categories').add({'name': name});
+      final ref = await firestore.collection('categories').add({
+        'name': name,
+        'color': color,
+      });
       nameToId[name] = ref.id;
+    } else {
+      // Update color for existing categories to ensure they have one
+      await firestore.collection('categories').doc(nameToId[name]).update({'color': color});
     }
   }
 
@@ -139,16 +149,24 @@ Future<List<Recipe>> seedAllToFirestore() async {
           {'userId': 'userB', 'portion': 2, 'date': now.toIso8601String()},
         ];
         break;
+      default:
+        userServings = [
+          {'userId': 'userA', 'portion': 2, 'date': now.toIso8601String()},
+          {'userId': 'userB', 'portion': 2, 'date': now.toIso8601String()},
+        ];
+        break;
     }
 
     // Add recipe document (without id field)
     // Store the category ID (not the name) for consistent referencing
-    final categoryId = categoryIds[recipe.category] ?? recipe.category;
+    final firstCat = recipe.categoryIds.isNotEmpty ? recipe.categoryIds.first : '';
+    final categoryId = categoryIds[firstCat] ?? firstCat;
     final recipeRef = await firestore.collection('recipes').add({
       'title': recipe.title,
       'description': recipe.description,
       'servings': recipe.servings,
       'category': categoryId,
+      'categoryIds': [categoryId],
       'preparationTime': recipe.preparationTime,
       'cookingTime': recipe.cookingTime,
       'ingredients': recipe.ingredients.map((ri) => {
@@ -275,6 +293,7 @@ List<Recipe> buildRecipes(Map<String, String> ingredients) {
         ('Oeuf', ingredients['Oeuf']!, 2, Unit.piece, null),
         ('Lardons', ingredients['Lardons']!, 150, Unit.g, null),
         ('Parmesan', ingredients['Parmesan']!, 40, Unit.g, null),
+        ('Sel', ingredients['Sel']!, 1, Unit.pinch, null),
         ('Poivre', ingredients['Poivre']!, 1, Unit.pinch, null),
       ],
       instructions: [
@@ -298,6 +317,7 @@ List<Recipe> buildRecipes(Map<String, String> ingredients) {
         ('Pâte de curry vert', ingredients['Pâte de curry vert']!, 2, Unit.tablespoon, null),
         ('Poivron', ingredients['Poivron']!, 1, Unit.piece, null),
         ('Riz', ingredients['Riz']!, 300, Unit.g, null),
+        ('Sel', ingredients['Sel']!, 1, Unit.pinch, null),
       ],
       instructions: [
         'Cuire le riz',
@@ -385,6 +405,7 @@ List<Recipe> buildRecipes(Map<String, String> ingredients) {
         ('Maïs', ingredients['Maïs']!, 50, Unit.g, null),
         ('Pain', ingredients['Pain']!, 2, Unit.piece, null),
         ('Tomate', ingredients['Tomate']!, 1, Unit.piece, null),
+        ('Sel', ingredients['Sel']!, 1, Unit.pinch, null),
       ],
       instructions: [
         'Étaler les ingrédients sur le pain',
@@ -402,6 +423,7 @@ List<Recipe> buildRecipes(Map<String, String> ingredients) {
         ('Banane', ingredients['Banane']!, 1, Unit.piece, null),
         ('Pomme', ingredients['Pomme']!, 1, Unit.piece, null),
         ('Lait de coco', ingredients['Lait de coco']!, 100, Unit.ml, null),
+        ('Sel', ingredients['Sel']!, 1, Unit.pinch, 'une pincée pour rehausser les saveurs'),
       ],
       instructions: [
         'Mixer tous les fruits avec le lait de coco',
@@ -426,6 +448,177 @@ List<Recipe> buildRecipes(Map<String, String> ingredients) {
         'Ajouter les légumes hachés',
         'Cuire à la poêle',
       ],
+    ),
+
+    // ── Recettes de test pour la hauteur dynamique (toutes avec Sel) ──
+    _createRecipe(
+      title: 'Gratin dauphinois',
+      description: 'Gratin de pommes de terre crémeux',
+      servings: 4,
+      category: 'Végétarien',
+      preparationTime: 15,
+      cookingTime: 60,
+      ingredients: [
+        ('Pomme de terre', ingredients['Pomme de terre']!, 800, Unit.g, null),
+        ('Lait de coco', ingredients['Lait de coco']!, 300, Unit.ml, null),
+        ('Fromage râpé', ingredients['Fromage râpé']!, 80, Unit.g, null),
+        ('Ail', ingredients['Ail']!, 2, Unit.piece, null),
+        ('Sel', ingredients['Sel']!, 2, Unit.pinch, null),
+        ('Poivre', ingredients['Poivre']!, 1, Unit.pinch, null),
+      ],
+      instructions: ['Couper les pommes de terre', 'Disposer en couches', 'Verser la crème', 'Gratiner au four'],
+    ),
+    _createRecipe(
+      title: 'Riz cantonais',
+      description: 'Riz sauté aux légumes et œufs',
+      servings: 4,
+      category: 'Asiatique',
+      preparationTime: 10,
+      cookingTime: 15,
+      ingredients: [
+        ('Riz', ingredients['Riz']!, 300, Unit.g, null),
+        ('Oeuf', ingredients['Oeuf']!, 2, Unit.piece, null),
+        ('Carotte', ingredients['Carotte']!, 100, Unit.g, null),
+        ('Maïs', ingredients['Maïs']!, 80, Unit.g, null),
+        ("Huile d'olive", ingredients["Huile d'olive"]!, 2, Unit.tablespoon, null),
+        ('Sel', ingredients['Sel']!, 1, Unit.pinch, null),
+      ],
+      instructions: ['Cuire le riz', 'Sauter les légumes', 'Ajouter les œufs', 'Mélanger le tout'],
+    ),
+    _createRecipe(
+      title: 'Poêlée de crevettes',
+      description: "Crevettes sautées à l'ail",
+      servings: 2,
+      category: 'Poisson',
+      preparationTime: 5,
+      cookingTime: 8,
+      ingredients: [
+        ('Crevettes', ingredients['Crevettes']!, 300, Unit.g, null),
+        ('Ail', ingredients['Ail']!, 3, Unit.piece, null),
+        ("Huile d'olive", ingredients["Huile d'olive"]!, 2, Unit.tablespoon, null),
+        ('Citron', ingredients['Citron']!, 1, Unit.piece, null),
+        ('Sel', ingredients['Sel']!, 1, Unit.pinch, null),
+        ('Poivre', ingredients['Poivre']!, 1, Unit.pinch, null),
+      ],
+      instructions: ["Faire chauffer l'huile", "Sauter les crevettes avec l'ail", 'Presser le citron'],
+    ),
+    _createRecipe(
+      title: 'Soupe de tomates',
+      description: 'Soupe de tomates fraîches au basilic',
+      servings: 4,
+      category: 'Végétarien',
+      preparationTime: 10,
+      cookingTime: 20,
+      ingredients: [
+        ('Tomate', ingredients['Tomate']!, 600, Unit.g, null),
+        ('Oignon', ingredients['Oignon']!, 1, Unit.piece, null),
+        ('Ail', ingredients['Ail']!, 2, Unit.piece, null),
+        ('Basilic', ingredients['Basilic']!, 5, Unit.g, null),
+        ('Sel', ingredients['Sel']!, 2, Unit.pinch, null),
+        ('Poivre', ingredients['Poivre']!, 1, Unit.pinch, null),
+      ],
+      instructions: ['Faire revenir oignon et ail', 'Ajouter les tomates', 'Cuire 20 min', 'Mixer et assaisonner'],
+    ),
+    _createRecipe(
+      title: 'Poulet rôti',
+      description: 'Poulet rôti classique aux herbes',
+      servings: 4,
+      category: 'Viande',
+      preparationTime: 10,
+      cookingTime: 90,
+      ingredients: [
+        ('Poulet', ingredients['Poulet']!, 1200, Unit.g, null),
+        ('Ail', ingredients['Ail']!, 4, Unit.piece, null),
+        ("Huile d'olive", ingredients["Huile d'olive"]!, 3, Unit.tablespoon, null),
+        ('Citron', ingredients['Citron']!, 1, Unit.piece, null),
+        ('Sel', ingredients['Sel']!, 3, Unit.pinch, null),
+        ('Poivre', ingredients['Poivre']!, 2, Unit.pinch, null),
+      ],
+      instructions: ['Préchauffer le four', 'Badigeonner le poulet', 'Enfourner 1h30'],
+    ),
+    _createRecipe(
+      title: 'Taboulé',
+      description: 'Salade de semoule fraîche',
+      servings: 4,
+      category: 'Salade',
+      preparationTime: 15,
+      cookingTime: 0,
+      ingredients: [
+        ('Tomate', ingredients['Tomate']!, 2, Unit.piece, null),
+        ('Concombre', ingredients['Concombre']!, 1, Unit.piece, null),
+        ('Citron', ingredients['Citron']!, 1, Unit.piece, null),
+        ("Huile d'olive", ingredients["Huile d'olive"]!, 3, Unit.tablespoon, null),
+        ('Sel', ingredients['Sel']!, 1, Unit.pinch, null),
+      ],
+      instructions: ['Préparer la semoule', 'Couper les légumes', 'Mélanger et assaisonner'],
+    ),
+    _createRecipe(
+      title: 'Boeuf haché sauce tomate',
+      description: 'Sauce bolognaise maison',
+      servings: 4,
+      category: 'Viande',
+      preparationTime: 10,
+      cookingTime: 45,
+      ingredients: [
+        ('Boeuf', ingredients['Boeuf']!, 500, Unit.g, null),
+        ('Tomate', ingredients['Tomate']!, 400, Unit.g, null),
+        ('Oignon', ingredients['Oignon']!, 1, Unit.piece, null),
+        ('Ail', ingredients['Ail']!, 3, Unit.piece, null),
+        ('Sel', ingredients['Sel']!, 2, Unit.pinch, null),
+        ('Poivre', ingredients['Poivre']!, 1, Unit.pinch, null),
+      ],
+      instructions: ['Faire revenir la viande', 'Ajouter la sauce tomate', 'Laisser mijoter 45 min'],
+    ),
+    _createRecipe(
+      title: 'Quiche lorraine',
+      description: 'Quiche aux lardons et fromage',
+      servings: 6,
+      category: 'Petit-déjeuner',
+      preparationTime: 15,
+      cookingTime: 35,
+      ingredients: [
+        ('Oeuf', ingredients['Oeuf']!, 3, Unit.piece, null),
+        ('Lardons', ingredients['Lardons']!, 200, Unit.g, null),
+        ('Fromage râpé', ingredients['Fromage râpé']!, 100, Unit.g, null),
+        ('Lait de coco', ingredients['Lait de coco']!, 200, Unit.ml, null),
+        ('Sel', ingredients['Sel']!, 1, Unit.pinch, null),
+        ('Poivre', ingredients['Poivre']!, 1, Unit.pinch, null),
+      ],
+      instructions: ['Préparer la garniture', 'Verser dans le moule', 'Cuire 35 min'],
+    ),
+    _createRecipe(
+      title: 'Pâtes bolognaise',
+      description: 'Spaghetti à la sauce bolognaise',
+      servings: 4,
+      category: 'Pâtes',
+      preparationTime: 10,
+      cookingTime: 30,
+      ingredients: [
+        ('Spaghetti', ingredients['Spaghetti']!, 400, Unit.g, null),
+        ('Boeuf', ingredients['Boeuf']!, 400, Unit.g, null),
+        ('Tomate', ingredients['Tomate']!, 300, Unit.g, null),
+        ('Oignon', ingredients['Oignon']!, 1, Unit.piece, null),
+        ('Sel', ingredients['Sel']!, 2, Unit.pinch, null),
+        ('Poivre', ingredients['Poivre']!, 1, Unit.pinch, null),
+      ],
+      instructions: ['Cuire les pâtes', 'Préparer la bolognaise', 'Assembler et servir'],
+    ),
+    _createRecipe(
+      title: 'Poêlée de légumes',
+      description: 'Légumes sautés colorés',
+      servings: 2,
+      category: 'Végétarien',
+      preparationTime: 10,
+      cookingTime: 15,
+      ingredients: [
+        ('Poivron', ingredients['Poivron']!, 1, Unit.piece, null),
+        ('Courgette', ingredients['Courgette']!, 150, Unit.g, null),
+        ('Champignon', ingredients['Champignon']!, 100, Unit.g, null),
+        ("Huile d'olive", ingredients["Huile d'olive"]!, 2, Unit.tablespoon, null),
+        ('Sel', ingredients['Sel']!, 1, Unit.pinch, null),
+        ('Poivre', ingredients['Poivre']!, 1, Unit.pinch, null),
+      ],
+      instructions: ['Couper les légumes', 'Faire sauter à feu vif', 'Assaisonner'],
     ),
   ];
 }
@@ -468,7 +661,7 @@ Recipe _createRecipe({
     title: title.toLowerCase(),
     description: description,
     servings: servings,
-    category: category,
+    categoryIds: [category],
     preparationTime: preparationTime,
     cookingTime: cookingTime,
     ingredients: ingredients

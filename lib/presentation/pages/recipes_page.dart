@@ -28,7 +28,7 @@ class _RecipesPageState extends State<RecipesPage> {
     
     // Category filter state
     Set<String> _selectedCategoryIds = {};
-    List<Map<String, String>> _allCategories = [];
+    List<Map<String, dynamic>> _allCategories = [];
     bool _categoriesLoading = true;
 
   late Future<List<Recipe>> _recipesFuture;
@@ -49,9 +49,13 @@ class _RecipesPageState extends State<RecipesPage> {
     final snap = await FirebaseFirestore.instance.collection('categories').get();
     if (!mounted) return;
     setState(() {
-      _allCategories = snap.docs.map((doc) => {
-        'id': doc.id,
-        'name': doc.get('name') as String,
+      _allCategories = snap.docs.map((doc) {
+        final data = doc.data();
+        return <String, dynamic>{
+          'id': doc.id,
+          'name': data['name'] as String,
+          'color': data.containsKey('color') ? data['color'] as int : 0xFF6A5AE0,
+        };
       }).toList();
       _categoriesLoading = false;
     });
@@ -75,7 +79,7 @@ class _RecipesPageState extends State<RecipesPage> {
   Future<List<Recipe>> fetchRecipes() async {
     final snapshot = await FirebaseFirestore.instance
         .collection('recipes')
-        .orderBy('createdAt', descending: true)
+        .orderBy('title')
         .get();
 
     return Future.wait(
@@ -121,7 +125,10 @@ class _RecipesPageState extends State<RecipesPage> {
           preparationTime: (data['preparationTime'] as num?)?.toInt() ?? 0,
           cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
           servings: (data['servings'] as num?)?.toInt() ?? 1,
-          category: data['category'] ?? '',
+          categoryIds: (data['categoryIds'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
+              ((data['category'] as String?)?.isNotEmpty == true
+                  ? [data['category'] as String]
+                  : []),
           ingredients: ingredients,
           instructions: List<String>.from(data['instructions'] ?? []),
           createdAt:
@@ -148,7 +155,7 @@ class _RecipesPageState extends State<RecipesPage> {
   // NAVIGATION
   // =========================
   Future<void> _openRecipeDetail(Recipe recipe) async {
-    final result = await Navigator.push(
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => RecipeDetailPage(
@@ -158,16 +165,17 @@ class _RecipesPageState extends State<RecipesPage> {
       ),
     );
 
-    if (result == true) {
-      _refreshRecipes();
-    }
+    // Always refresh when coming back, to ensure changes are reflected
+    _refreshRecipes();
   }
 
-  void _openCategoriesPage() {
-    Navigator.push(
+  Future<void> _openCategoriesPage() async {
+    await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const CategoriesPage()),
     );
+    // Refresh categories after managing them
+    _fetchCategories();
   }
 
   Future<void> _createNewRecipe() async {
@@ -270,23 +278,36 @@ class _RecipesPageState extends State<RecipesPage> {
                       separatorBuilder: (_, __) => const SizedBox(width: 8),
                       itemBuilder: (context, index) {
                         if (index == 0) {
-                          // "All" chip
+                          // "Tout" filter
                           final isSelected = _selectedCategoryIds.isEmpty;
+                          final baseColor = const Color(0xFF6A5AE0);
+                          
+                          // Consistent text color
+                          final hsl = HSLColor.fromColor(baseColor);
+                          final startLightness = hsl.lightness;
+                          final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                          final textColor = hsl.withLightness(textLightness).toColor();
+
                           return FilterChip(
-                            label: const Text('Tout'),
+                            label: Text(
+                              'Toutes',
+                              style: TextStyle(
+                                fontSize: 13, 
+                                fontWeight: FontWeight.w600,
+                                color: textColor
+                              ),
+                            ),
                             selected: isSelected,
                             onSelected: (bool selected) {
                               setState(() {
                                 _selectedCategoryIds.clear();
                               });
                             },
-                            backgroundColor: Colors.white,
-                            selectedColor: const Color(0xFF6A5AE0),
-                            labelStyle: TextStyle(
-                              color: isSelected ? Colors.white : Colors.black87,
-                              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                            ),
-                            checkmarkColor: Colors.white,
+                            backgroundColor: baseColor.withOpacity(0.15),
+                            selectedColor: baseColor.withOpacity(0.35),
+                            checkmarkColor: textColor,
+                            side: BorderSide.none,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                           );
                         }
                         
@@ -294,8 +315,24 @@ class _RecipesPageState extends State<RecipesPage> {
                         final catId = category['id']!;
                         final isSelected = _selectedCategoryIds.contains(catId);
                         
+                        final colorVal = category['color'] as int? ?? 0xFF6A5AE0;
+                        final categoryColor = Color(colorVal);
+
+                        // Contrast logic matching the display badges
+                        final hsl = HSLColor.fromColor(categoryColor);
+                        final startLightness = hsl.lightness;
+                        final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                        final textColor = hsl.withLightness(textLightness).toColor();
+
                         return FilterChip(
-                          label: Text(category['name'] ?? ''),
+                          label: Text(
+                            category['name'] ?? '',
+                            style: GoogleFonts.poppins(
+                              fontSize: 13, 
+                              fontWeight: FontWeight.w600,
+                              color: textColor
+                            )
+                          ),
                           selected: isSelected,
                           onSelected: (bool selected) {
                             setState(() {
@@ -306,13 +343,12 @@ class _RecipesPageState extends State<RecipesPage> {
                               }
                             });
                           },
-                          backgroundColor: Colors.white,
-                          selectedColor: const Color(0xFF6A5AE0),
-                          labelStyle: TextStyle(
-                            color: isSelected ? Colors.white : Colors.black87,
-                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                          ),
-                          checkmarkColor: Colors.white,
+                          // Unselected: 0.15 opacity. Selected: 0.35 opacity (darker but still light enough for text)
+                          backgroundColor: categoryColor.withOpacity(0.15),
+                          selectedColor: categoryColor.withOpacity(0.35),
+                          checkmarkColor: textColor,
+                          side: BorderSide.none, 
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                         );
                       },
                     ),
@@ -389,7 +425,7 @@ class _RecipesPageState extends State<RecipesPage> {
                       final filteredRecipes = recipes.where((recipe) {
                         final matchesTitle = _titleFilter.isEmpty || recipe.title.toLowerCase().contains(_titleFilter.toLowerCase());
                         final matchesIngredients = _selectedIngredientIds.isEmpty || recipe.ingredients.any((ri) => _selectedIngredientIds.contains(ri.ingredient.id));
-                        final matchesCategory = _selectedCategoryIds.isEmpty || _selectedCategoryIds.contains(recipe.category);
+                        final matchesCategory = _selectedCategoryIds.isEmpty || recipe.categoryIds.any((cId) => _selectedCategoryIds.contains(cId));
                         return matchesTitle && matchesIngredients && matchesCategory;
                       }).toList();
 
@@ -432,28 +468,63 @@ class _RecipesPageState extends State<RecipesPage> {
                                           crossAxisAlignment:
                                               CrossAxisAlignment.stretch,
                                           children: [
-                                            Row(
+                                            Wrap(
+                                              crossAxisAlignment: WrapCrossAlignment.center,
+                                              spacing: 8,
+                                              runSpacing: 4,
                                               children: [
-                                                Expanded(
-                                                  child: Text(
-                                                    recipe.title,
-                                                    style: GoogleFonts.poppins(
-                                                      fontSize: 18,
-                                                      fontWeight: FontWeight.w700,
-                                                      color: const Color(
-                                                        0xFF1A1A1A,
-                                                      ),
-                                                    ),
+                                                Text(
+                                                  recipe.title,
+                                                  style: GoogleFonts.poppins(
+                                                    fontSize: 18,
+                                                    fontWeight: FontWeight.w700,
+                                                    color: const Color(0xFF1A1A1A),
                                                   ),
                                                 ),
-                                                if (recipe.isFavorite) ...[
-                                                  const SizedBox(width: 8),
+                                                ...recipe.categoryIds.map((id) {
+                                                  // Find category safely
+                                                  final catMap = _allCategories.firstWhere(
+                                                    (c) => c['id'] == id,
+                                                    orElse: () => <String, dynamic>{}, // Fallback empty map
+                                                  );
+
+                                                  // If not found or invalid
+                                                  if (catMap.isEmpty || !catMap.containsKey('name')) {
+                                                    return const SizedBox.shrink(); 
+                                                  }
+
+                                                  final name = catMap['name'] as String;
+                                                  final colorVal = catMap['color'] as int? ?? 0xFF6A5AE0;
+                                                  final baseColor = Color(colorVal);
+
+                                                  // Contrast logic
+                                                  final hsl = HSLColor.fromColor(baseColor);
+                                                  final startLightness = hsl.lightness;
+                                                  final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                                                  final textColor = hsl.withLightness(textLightness).toColor();
+
+                                                  return Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                    decoration: BoxDecoration(
+                                                      color: baseColor.withOpacity(0.15),
+                                                      borderRadius: BorderRadius.circular(20),
+                                                    ),
+                                                    child: Text(
+                                                      name,
+                                                      style: GoogleFonts.poppins(
+                                                        fontSize: 11,
+                                                        fontWeight: FontWeight.w700,
+                                                        color: textColor,
+                                                      ),
+                                                    ),
+                                                  );
+                                                }),
+                                                if (recipe.isFavorite)
                                                   const Icon(
                                                     Icons.favorite_rounded,
                                                     size: 22,
                                                     color: Colors.redAccent,
                                                   ),
-                                                ],
                                               ],
                                             ),
                                             const SizedBox(height: 8),
@@ -519,43 +590,39 @@ class _RecipesPageState extends State<RecipesPage> {
       floatingActionButton: Padding(
         padding: const EdgeInsets.only(bottom: 16, right: 16),
         child: Material(
-          borderRadius: BorderRadius.circular(24),
           elevation: 6,
-          child: Ink(
-            decoration: BoxDecoration(
-              color: const Color(0xFF6A5AE0),
-              borderRadius: BorderRadius.circular(24),
-               boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF6A5AE0).withOpacity(0.4),
-                  blurRadius: 12,
-                  offset: const Offset(0, 6),
-                )
-              ],
-            ),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(24),
-              onTap: _createNewRecipe,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 14,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.add, color: Colors.white),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Nouvelle recette',
-                      style: GoogleFonts.poppins(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 16,
-                      ),
+          borderRadius: BorderRadius.circular(24),
+          color: Colors.transparent, // Fix for square background
+          child: InkWell(
+            onTap: _createNewRecipe,
+            borderRadius: BorderRadius.circular(24),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF6A5AE0),
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF6A5AE0).withOpacity(0.4),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  )
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.add, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Nouvelle recette',
+                    style: GoogleFonts.poppins(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 16,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),

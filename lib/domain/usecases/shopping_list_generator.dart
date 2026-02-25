@@ -98,28 +98,50 @@ class ShoppingListGenerator {
               name: name,
               quantity: qty * ratio,
               unit: unit,
-              category: categoryid, // We'll resolve category name if needed, but entity has ID often
+              typeId: null, // Will be resolved later
               isChecked: false,
             );
           }
         }
       }
 
-      // Resolve names via Cache if needed
-      final idsToResolve = shoppingListMap.entries
-          .where((e) =>
-              e.key.isNotEmpty &&
-              (e.value.name == 'Inconnu' || e.value.name.isEmpty))
-          .map((e) => e.key)
+      // Resolve names and types via Firestore
+      final idsToResolve = shoppingListMap.keys
+          .where((k) => k.isNotEmpty)
           .toList();
 
       if (idsToResolve.isNotEmpty) {
-        final names =
-            await IngredientNameCache.instance.fetchNamesForIds(idsToResolve);
-        for (final id in names.keys) {
-          if (shoppingListMap.containsKey(id)) {
-            final oldItem = shoppingListMap[id]!;
-            shoppingListMap[id] = oldItem.copyWith(name: names[id]!);
+        // Chunk requests
+        final chunks = <List<String>>[];
+        for (var i = 0; i < idsToResolve.length; i += 10) {
+          chunks.add(idsToResolve.sublist(
+              i, i + 10 > idsToResolve.length ? idsToResolve.length : i + 10));
+        }
+
+        for (final chunk in chunks) {
+          try {
+            final query = await firestore
+                .collection('ingredients')
+                .where(FieldPath.documentId, whereIn: chunk)
+                .get();
+
+            for (final doc in query.docs) {
+              final id = doc.id;
+              final data = doc.data();
+              final name = data['name'] as String? ?? 'Inconnu';
+              final typeId = data['typeId'] as String?;
+
+              if (shoppingListMap.containsKey(id)) {
+                final oldItem = shoppingListMap[id]!;
+                // Update name (if it was placeholder) and typeId
+                shoppingListMap[id] = oldItem.copyWith(
+                  name: oldItem.name == 'Inconnu' ? name : oldItem.name,
+                  typeId: typeId,
+                );
+              }
+            }
+          } catch (e) {
+            debugPrint('Error resolving ingredients: $e');
           }
         }
       }

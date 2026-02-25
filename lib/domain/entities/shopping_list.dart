@@ -4,14 +4,14 @@ class ShoppingItem {
   final String name;
   final double quantity;
   final String unit;
-  final String category;
+  final String? typeId; // Changed from category
   final bool isChecked;
 
   const ShoppingItem({
     required this.name,
     required this.quantity,
     required this.unit,
-    required this.category,
+    this.typeId,
     this.isChecked = false,
   });
 
@@ -19,14 +19,14 @@ class ShoppingItem {
     String? name,
     double? quantity,
     String? unit,
-    String? category,
+    String? typeId,
     bool? isChecked,
   }) {
     return ShoppingItem(
       name: name ?? this.name,
       quantity: quantity ?? this.quantity,
       unit: unit ?? this.unit,
-      category: category ?? this.category,
+      typeId: typeId ?? this.typeId,
       isChecked: isChecked ?? this.isChecked,
     );
   }
@@ -36,7 +36,7 @@ class ShoppingItem {
       'name': name,
       'quantity': quantity,
       'unit': unit,
-      'category': category,
+      'typeId': typeId,
       'isChecked': isChecked,
     };
   }
@@ -46,7 +46,7 @@ class ShoppingItem {
       name: map['name'] ?? '',
       quantity: (map['quantity'] as num?)?.toDouble() ?? 0.0,
       unit: map['unit'] ?? '',
-      category: map['category'] ?? '',
+      typeId: map['typeId'] as String? ?? map['category'] as String?, // Fallback for old data
       isChecked: map['isChecked'] ?? false,
     );
   }

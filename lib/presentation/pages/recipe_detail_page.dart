@@ -12,6 +12,8 @@ import '../../data/repositories/firebase_recipe_repository.dart';
 import '../../data/repositories/firebase_user_recipe_serving_repository.dart';
 import '../../data/repositories/firebase_category_repository.dart';
 import 'create_recipe_page.dart';
+import '../../domain/entities/ingredient_type.dart';
+import '../../data/repositories/firebase_ingredient_type_repository.dart';
 
 
 
@@ -50,18 +52,29 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   bool _isLoadingRecipe = false;
   bool _fullRecipeLoaded = false;
 
+  List<IngredientType> _ingredientTypes = [];
+  final FirebaseIngredientTypeRepository _ingredientTypeRepo = FirebaseIngredientTypeRepository();
+
   @override
   void initState() {
     super.initState();
     _recipe = widget.initialRecipe;
     _ingredientMultiplier = widget.ingredientMultiplier;
-    
+    _loadIngredientTypes();
     // Always fetch the full recipe to ensure fresh data and complete details
     _loadFullRecipe();
-    
     if (_recipe != null) {
       _loadUserServings();
       _loadCategories();
+    }
+  }
+
+  Future<void> _loadIngredientTypes() async {
+    final types = await _ingredientTypeRepo.getTypes();
+    if (mounted) {
+      setState(() {
+        _ingredientTypes = types;
+      });
     }
   }
 
@@ -148,14 +161,31 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
           ? await IngredientNameCache.instance.fetchNamesForIds(ingredientIds)
           : <String, String>{};
 
+      // Fetch all ingredient docs to get typeId
+      Map<String, String?> ingredientIdToTypeId = {};
+      if (ingredientIds.isNotEmpty) {
+        final snap = await FirebaseFirestore.instance
+            .collection('ingredients')
+            .where(FieldPath.documentId, whereIn: ingredientIds)
+            .get();
+        for (final doc in snap.docs) {
+          final data = doc.data();
+          ingredientIdToTypeId[doc.id] = data.containsKey('typeId') ? data['typeId'] as String? : null;
+        }
+      }
+
       final enriched = ingredientsData.map((i) {
         if (i is! Map<String, dynamic>) return null;
-        
         final id = (i['ingredientId'] as String?) ?? '';
+        // Prend le typeId Firestore si présent, sinon va le chercher dans la collection ingredients
+        final typeId = i.containsKey('typeId') && i['typeId'] != null
+            ? i['typeId'] as String?
+            : ingredientIdToTypeId[id];
         return RecipeIngredient(
           ingredient: Ingredient(
             id: id,
             name: names[id] ?? (i['ingredientName'] as String? ?? ''),
+            typeId: typeId,
           ),
           quantity: (i['quantity'] as num?)?.toDouble() ?? 0,
           unit: Unit.values.firstWhere(
@@ -598,13 +628,50 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                       ),
                                       const SizedBox(width: 16),
                                       Expanded(
-                                        child: Text(
-                                          item.ingredient.name,
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w500,
-                                            color: Colors.black87,
-                                          ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          crossAxisAlignment: CrossAxisAlignment.center,
+                                          children: [
+                                            Text(
+                                              item.ingredient.name,
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w500,
+                                                color: Colors.black87,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            if (item.ingredient.typeId != null)
+                                              Builder(
+                                                builder: (context) {
+                                                  final type = _ingredientTypes.firstWhere(
+                                                    (t) => t.id == item.ingredient.typeId,
+                                                    orElse: () => IngredientType(id: '', name: '', color: 0xFF6A5AE0),
+                                                  );
+                                                  if (type.id.isEmpty) return const SizedBox.shrink();
+                                                  final baseColor = Color(type.color);
+                                                  final hsl = HSLColor.fromColor(baseColor);
+                                                  final startLightness = hsl.lightness;
+                                                  final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                                                  final textColor = hsl.withLightness(textLightness).toColor();
+                                                  return Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                    decoration: BoxDecoration(
+                                                      color: baseColor.withOpacity(0.15),
+                                                      borderRadius: BorderRadius.circular(20),
+                                                    ),
+                                                    child: Text(
+                                                      type.name,
+                                                      style: GoogleFonts.poppins(
+                                                        fontSize: 11,
+                                                        fontWeight: FontWeight.w700,
+                                                        color: textColor,
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                              ),
+                                          ],
                                         ),
                                       ),
                                       Text(

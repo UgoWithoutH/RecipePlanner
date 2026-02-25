@@ -7,6 +7,10 @@ import '../../domain/entities/recipe.dart';
 import '../../core/constants/unit.dart' show Unit;
 import '../../domain/entities/ingredient.dart';
 import '../../domain/entities/recipe_ingredient.dart';
+import 'ingredient_types_page.dart';
+import '../../domain/entities/ingredient_type.dart';
+import '../../data/repositories/firebase_ingredient_type_repository.dart';
+import '../../data/repositories/firebase_shopping_list_repository.dart';
 
 class IngredientsPage extends StatefulWidget {
   const IngredientsPage({super.key});
@@ -17,92 +21,247 @@ class IngredientsPage extends StatefulWidget {
 
 class _IngredientsPageState extends State<IngredientsPage> {
   List<Map<String, dynamic>> _ingredients = [];
+  List<IngredientType> _types = [];
   bool _isLoading = true;
   String _filter = '';
+  List<String> _selectedTypeIds = [];
+  final _typeRepo = FirebaseIngredientTypeRepository();
+  final _shoppingListRepo = FirebaseShoppingListRepository();
 
   @override
   void initState() {
     super.initState();
-    _loadIngredients();
+    _loadData();
   }
 
-  Future<void> _loadIngredients() async {
-    final snap = await FirebaseFirestore.instance
+  Future<void> _loadData() async {
+    setState(() => _isLoading = true);
+    
+    // Load types first or parallel
+    final typesFuture = _typeRepo.getTypes();
+    final ingredientsFuture = FirebaseFirestore.instance
         .collection('ingredients')
         .orderBy('name')
         .get();
 
+    final results = await Future.wait([typesFuture, ingredientsFuture]);
+    final typesList = results[0] as List<IngredientType>;
+    final snap = results[1] as QuerySnapshot;
+
     if (!mounted) return;
     setState(() {
+      _types = typesList;
       _ingredients = snap.docs
           .map((doc) => {
                 'id': doc.id,
                 'name': doc.get('name'),
+                'typeId': doc.data().toString().contains('typeId') ? doc.get('typeId') : null,
               })
           .toList();
       _isLoading = false;
     });
   }
 
+  Future<void> _loadIngredients() async {
+    // Helper to just reload ingredients (and types to be safe)
+    await _loadData();
+  }
+
   Future<void> _addIngredient() async {
     final controller = TextEditingController();
+    String? selectedTypeId;
+
     final result = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Ajouter un ingrédient'),
-        content: TextField(
-          controller: controller,
-          decoration:
-              const InputDecoration(labelText: 'Nom de l\'ingrédient'),
+      builder: (_) => StatefulBuilder(
+        builder: (context, setStateDialog) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: Text('Ajouter un ingrédient',
+              style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: controller,
+                style: GoogleFonts.poppins(),
+                decoration: InputDecoration(
+                  labelText: 'Nom de l\'ingrédient',
+                  labelStyle: GoogleFonts.poppins(),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text('Type',
+                  style: GoogleFonts.poppins(
+                      fontWeight: FontWeight.w600, fontSize: 14)),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                value: selectedTypeId,
+                decoration: InputDecoration(
+                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                   contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                ),
+                dropdownColor: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                items: [
+                   DropdownMenuItem<String>(
+                    value: null,
+                    child: Text('Aucun type', style: GoogleFonts.poppins(color: Colors.grey[600])),
+                  ),
+                  ..._types.map((type) {
+                  return DropdownMenuItem(
+                    value: type.id,
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 14,
+                          height: 14,
+                          decoration: BoxDecoration(
+                              color: Color(type.color), shape: BoxShape.circle),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(type.name, style: GoogleFonts.poppins()),
+                      ],
+                    ),
+                  );
+                })],
+                onChanged: (val) => setStateDialog(() => selectedTypeId = val),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text('Annuler',
+                    style: GoogleFonts.poppins(color: Colors.grey))),
+            TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text('Ajouter',
+                    style: GoogleFonts.poppins(
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF6A5AE0)))),
+          ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Annuler')),
-          TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Ajouter')),
-        ],
       ),
     );
 
     if (result == true && controller.text.trim().isNotEmpty) {
       final name = controller.text.trim();
+      final data = <String, dynamic>{'name': name};
+      if (selectedTypeId != null) {
+        data['typeId'] = selectedTypeId;
+      }
+
       final docRef = await FirebaseFirestore.instance
           .collection('ingredients')
-          .add({'name': name});
+          .add(data);
 
       IngredientNameCache.instance.setName(docRef.id, name);
       _loadIngredients();
     }
   }
 
-  Future<void> _editIngredientName(String id, String oldName) async {
+  Future<void> _editIngredient(String id, String oldName, String? oldTypeId) async {
     final controller = TextEditingController(text: oldName);
+    String? selectedTypeId = oldTypeId;
+
     final result = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Modifier l\'ingrédient'),
-        content: TextField(controller: controller),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Annuler')),
-          TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Enregistrer')),
-        ],
+      builder: (_) => StatefulBuilder(
+        builder: (context, setStateDialog) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: Text(
+            'Modifier l\'ingrédient',
+            style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: controller,
+                style: GoogleFonts.poppins(),
+                decoration: InputDecoration(
+                  labelText: 'Nom',
+                  labelStyle: GoogleFonts.poppins(),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text('Type',
+                  style: GoogleFonts.poppins(
+                      fontWeight: FontWeight.w600, fontSize: 14)),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                value: _types.any((t) => t.id == selectedTypeId)
+                    ? selectedTypeId
+                    : null,
+                decoration: InputDecoration(
+                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                   contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                ),
+                dropdownColor: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                items: [
+                   DropdownMenuItem<String>(
+                    value: null,
+                    child: Text('Aucun type', style: GoogleFonts.poppins(color: Colors.grey[600])),
+                  ),
+                  ..._types.map((type) {
+                    return DropdownMenuItem(
+                      value: type.id,
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 14,
+                            height: 14,
+                            decoration: BoxDecoration(
+                                color: Color(type.color), shape: BoxShape.circle),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(type.name, style: GoogleFonts.poppins()),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+                onChanged: (val) => setStateDialog(() => selectedTypeId = val),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text('Annuler',
+                    style: GoogleFonts.poppins(color: Colors.grey))),
+            TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text('Enregistrer',
+                    style: GoogleFonts.poppins(
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF6A5AE0)))),
+          ],
+        ),
       ),
     );
 
     if (result == true && controller.text.trim().isNotEmpty) {
       final newName = controller.text.trim();
+      final updates = <String, dynamic>{'name': newName};
+      updates['typeId'] = selectedTypeId; // Can be null to remove type
+
       await FirebaseFirestore.instance
           .collection('ingredients')
           .doc(id)
-          .update({'name': newName});
+          .update(updates);
 
       IngredientNameCache.instance.setName(id, newName);
+
+      // Update all shopping list items with this ingredient's name
+      // (Assumes shopping list items use the ingredient name as key)
+      await _shoppingListRepo.updateShoppingItemsTypeForIngredient(newName, selectedTypeId);
+
       _loadIngredients();
     }
   }
@@ -252,6 +411,45 @@ class _IngredientsPageState extends State<IngredientsPage> {
                           color: const Color(0xFF1A1A1A),
                         ),
                       ),
+                      const Spacer(),
+                      InkWell(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const IngredientTypesPage()),
+                          ).then((_) => _loadIngredients());
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.category_rounded,
+                                size: 18,
+                                color: Color(0xFF6A5AE0),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Types',
+                                style: GoogleFonts.poppins(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFF6A5AE0),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -271,19 +469,100 @@ class _IngredientsPageState extends State<IngredientsPage> {
                   ),
                 ),
 
+                // Type Filter
+                if (!_isLoading && _types.isNotEmpty)
+                  Container(
+                    height: 40,
+                    margin: const EdgeInsets.only(bottom: 8),
+                    child: ListView.separated(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _types.length + 1,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        if (index == 0) {
+                          // "Tout" filter
+                          final isSelected = _selectedTypeIds.isEmpty;
+                          final baseColor = const Color(0xFF6A5AE0);
+                          final hsl = HSLColor.fromColor(baseColor);
+                          final textColor = hsl.withLightness((hsl.lightness > 0.4 ? 0.4 : hsl.lightness)).toColor();
+
+                          return FilterChip(
+                            label: Text(
+                              'Tous',
+                              style: GoogleFonts.poppins(
+                                fontSize: 13, 
+                                fontWeight: FontWeight.w600,
+                                color: textColor,
+                              ),
+                            ),
+                            selected: isSelected,
+                            onSelected: (bool selected) {
+                              setState(() {
+                                _selectedTypeIds.clear();
+                              });
+                            },
+                            backgroundColor: baseColor.withOpacity(0.15),
+                            selectedColor: baseColor.withOpacity(0.35),
+                            checkmarkColor: textColor,
+                            side: BorderSide.none,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                          );
+                        }
+                        
+                        final type = _types[index - 1];
+                        final isSelected = _selectedTypeIds.contains(type.id);
+                        
+                        final colorVal = type.color;
+                        final baseColor = Color(colorVal);
+                        final hsl = HSLColor.fromColor(baseColor);
+                        final startLightness = hsl.lightness;
+                        final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                        final textColor = hsl.withLightness(textLightness).toColor();
+                        return FilterChip(
+                          label: Text(
+                            type.name,
+                            style: GoogleFonts.poppins(
+                              fontSize: 13, 
+                              fontWeight: FontWeight.w600,
+                              color: textColor
+                            ),
+                          ),
+                          selected: isSelected,
+                          onSelected: (bool selected) {
+                            setState(() {
+                              if (selected) {
+                                _selectedTypeIds.add(type.id);
+                              } else {
+                                _selectedTypeIds.remove(type.id);
+                              }
+                            });
+                          },
+                          backgroundColor: baseColor.withOpacity(0.15),
+                          selectedColor: baseColor.withOpacity(0.35),
+                          checkmarkColor: textColor,
+                          side: BorderSide.none,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        );
+                      },
+                    ),
+                  ),
+
                 // List
                 Expanded(
                   child: _isLoading
                       ? const Center(child: CircularProgressIndicator())
                       : Builder(builder: (_) {
-                          final filtered = _filter.isEmpty
+                          var filtered = _filter.isEmpty
                               ? _ingredients
                               : _ingredients
                                   .where((ing) => (ing['name'] as String)
                                       .toLowerCase()
                                       .contains(_filter.toLowerCase()))
                                   .toList();
-
+                          if (_selectedTypeIds.isNotEmpty) {
+                            filtered = filtered.where((ing) => ing['typeId'] != null && _selectedTypeIds.contains(ing['typeId'])).toList();
+                          }
                           if (filtered.isEmpty) {
                             return Center(
                               child: Text(
@@ -301,6 +580,12 @@ class _IngredientsPageState extends State<IngredientsPage> {
                               final ing = filtered[index];
                               final name = ing['name'] as String;
                               final id = ing['id'] as String;
+                              final typeId = ing['typeId'] as String?;
+                              
+                              final type = _types.cast<IngredientType?>().firstWhere(
+                                (t) => t?.id == typeId, 
+                                orElse: () => null
+                              );
 
                               return Container(
                                 decoration: BoxDecoration(
@@ -324,18 +609,50 @@ class _IngredientsPageState extends State<IngredientsPage> {
                                       child: Row(
                                         children: [
                                           Expanded(
-                                            child: Text(
-                                              name,
-                                              style: GoogleFonts.poppins(
-                                                fontWeight: FontWeight.w600,
-                                                fontSize: 16,
-                                                color: const Color(0xFF2D2D2D),
-                                              ),
+                                            child: Wrap(
+                                              crossAxisAlignment: WrapCrossAlignment.center,
+                                              spacing: 8,
+                                              children: [
+                                                Text(
+                                                  name,
+                                                  style: GoogleFonts.poppins(
+                                                    fontWeight: FontWeight.w600,
+                                                    fontSize: 16,
+                                                    color: const Color(0xFF2D2D2D),
+                                                  ),
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                                if (type != null)
+                                                  Builder(
+                                                    builder: (context) {
+                                                      final baseColor = Color(type.color);
+                                                      final hsl = HSLColor.fromColor(baseColor);
+                                                      final startLightness = hsl.lightness;
+                                                      final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                                                      final textColor = hsl.withLightness(textLightness).toColor();
+                                                      return Container(
+                                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                        decoration: BoxDecoration(
+                                                          color: baseColor.withOpacity(0.15),
+                                                          borderRadius: BorderRadius.circular(20),
+                                                        ),
+                                                        child: Text(
+                                                          type.name,
+                                                          style: GoogleFonts.poppins(
+                                                            fontSize: 11,
+                                                            fontWeight: FontWeight.w700,
+                                                            color: textColor,
+                                                          ),
+                                                        ),
+                                                      );
+                                                    },
+                                                  ),
+                                              ],
                                             ),
                                           ),
                                           IconButton(
                                             icon: const Icon(Icons.edit_rounded, color: Colors.blueAccent),
-                                            onPressed: () => _editIngredientName(id, name),
+                                            onPressed: () => _editIngredient(id, name, typeId),
                                           ),
                                           IconButton(
                                             icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),

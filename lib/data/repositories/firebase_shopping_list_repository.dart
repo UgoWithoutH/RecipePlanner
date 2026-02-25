@@ -44,4 +44,25 @@ class FirebaseShoppingListRepository {
     
     // Actually, let's expose updateShoppingList which takes the whole list.
   }
+
+  /// Update typeId for all shopping list items referencing a given ingredient name
+  Future<void> updateShoppingItemsTypeForIngredient(String ingredientName, String? newTypeId) async {
+    final snapshot = await _collection.get();
+    for (final doc in snapshot.docs) {
+      final data = doc.data() as Map<String, dynamic>;
+      final list = ShoppingList.fromMap(doc.id, data);
+      bool updated = false;
+      final updatedItems = list.items.map((item) {
+        if (item.name.trim().toLowerCase() == ingredientName.trim().toLowerCase()) {
+          updated = true;
+          return item.copyWith(typeId: newTypeId);
+        }
+        return item;
+      }).toList();
+      if (updated) {
+        final updatedList = list.copyWith(items: updatedItems);
+        await saveShoppingList(updatedList);
+      }
+    }
+  }
 }

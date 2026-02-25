@@ -54,6 +54,43 @@ Future<Map<String, String>> seedCategoriesToFirestore() async {
   return nameToId;
 }
 
+/// Populates Firestore with ingredient types and returns a {name: id} map
+Future<Map<String, String>> seedIngredientTypesToFirestore() async {
+  final firestore = FirebaseFirestore.instance;
+  final types = {
+    'Viande': 0xFFE57373,
+    'Légume': 0xFF81C784,
+    'Féculent': 0xFFFFD54F,
+    'Poisson': 0xFF4FC3F7,
+    'Produit laitier': 0xFFB39DDB,
+    'Condiment': 0xFFA1887F,
+    'Fruit': 0xFFFFB74D,
+    'Oeuf': 0xFF90CAF9,
+    'Herbe': 0xFF66BB6A,
+    'Autre': 0xFFB0BEC5,
+  };
+  final Map<String, String> nameToId = {};
+  final existing = await firestore.collection('ingredient_types').get();
+  for (final doc in existing.docs) {
+    final name = (doc.data()['name'] as String? ?? '').trim();
+    if (name.isNotEmpty) nameToId[name] = doc.id;
+  }
+  for (final entry in types.entries) {
+    final name = entry.key;
+    final color = entry.value;
+    if (!nameToId.containsKey(name)) {
+      final ref = await firestore.collection('ingredient_types').add({
+        'name': name,
+        'color': color,
+      });
+      nameToId[name] = ref.id;
+    } else {
+      await firestore.collection('ingredient_types').doc(nameToId[name]).update({'color': color});
+    }
+  }
+  return nameToId;
+}
+
 /// Populates Firestore with test users
 Future<List<String>> seedTestUsersToFirestore() async {
   final firestore = FirebaseFirestore.instance;
@@ -633,10 +670,50 @@ Future<Map<String, String>> seedIngredientsToFirestore() async {
     'Maïs','Pomme','Banane',
   ];
   final firestore = FirebaseFirestore.instance;
+  final typeIds = await seedIngredientTypesToFirestore();
   final Map<String, String> ids = {};
+  // Mapping ingredient to type
+  final Map<String, String> ingredientType = {
+    'Boeuf': 'Viande',
+    'Poulet': 'Viande',
+    'Lardons': 'Viande',
+    'Saumon': 'Poisson',
+    'Thon': 'Poisson',
+    'Crevettes': 'Poisson',
+    'Pomme de terre': 'Féculent',
+    'Riz': 'Féculent',
+    'Spaghetti': 'Féculent',
+    'Pain': 'Féculent',
+    'Lentilles': 'Féculent',
+    'Carotte': 'Légume',
+    'Oignon': 'Légume',
+    'Ail': 'Légume',
+    'Poivron': 'Légume',
+    'Courgette': 'Légume',
+    'Champignon': 'Légume',
+    'Salade': 'Légume',
+    'Concombre': 'Légume',
+    'Maïs': 'Légume',
+    'Tomate': 'Légume',
+    'Basilic': 'Herbe',
+    'Citron': 'Fruit',
+    'Pomme': 'Fruit',
+    'Banane': 'Fruit',
+    'Oeuf': 'Oeuf',
+    'Parmesan': 'Produit laitier',
+    'Fromage râpé': 'Produit laitier',
+    'Lait de coco': 'Produit laitier',
+    'Pâte de curry vert': 'Condiment',
+    "Huile d'olive": 'Condiment',
+    'Sel': 'Condiment',
+    'Poivre': 'Condiment',
+  };
   for (final name in ingredientNames) {
+    final typeName = ingredientType[name] ?? 'Autre';
+    final typeId = typeIds[typeName];
     final doc = await firestore.collection('ingredients').add({
       'name': name,
+      'typeId': typeId,
       'createdAt': DateTime.now().toIso8601String(),
     });
     ids[name] = doc.id;

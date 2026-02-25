@@ -6,6 +6,8 @@ import '../../data/repositories/firebase_shopping_list_repository.dart';
 import '../../domain/entities/meal_plan.dart';
 import '../../domain/entities/shopping_list.dart';
 import '../../domain/usecases/shopping_list_generator.dart';
+import '../../data/repositories/firebase_ingredient_type_repository.dart';
+import '../../domain/entities/ingredient_type.dart';
 
 class ShoppingListPage extends StatefulWidget {
   const ShoppingListPage({super.key});
@@ -19,6 +21,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
   ShoppingList? _currentShoppingList;
   bool _isLoading = true;
   List<ShoppingItem> _items = [];
+  List<IngredientType> _types = [];
 
   @override
   void initState() {
@@ -30,6 +33,10 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
     setState(() => _isLoading = true);
     
     try {
+      // 0. Load types in parallel or before
+      final typeRepo = FirebaseIngredientTypeRepository();
+      _types = await typeRepo.getTypes();
+
       // 1. Load the latest meal plan
       final planRepo = FirebaseMealPlanRepository();
       final plans = await planRepo.getAllMealPlans();
@@ -38,6 +45,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
         if (mounted) setState(() => _isLoading = false);
         return;
       }
+
 
       // Sort by date descending to get the latest
       plans.sort((a, b) => b.startDate.compareTo(a.startDate));
@@ -86,14 +94,60 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Sort items: Unchecked first, then Checked
-    // Within those groups, alphabetical
-    final displayItems = List<ShoppingItem>.from(_items);
-    displayItems.sort((a, b) {
-      if (a.isChecked != b.isChecked) {
-        return a.isChecked ? 1 : -1; // Unchecked first (false < true)
-      }
-      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_items.isEmpty) {
+      return Scaffold(
+        backgroundColor: Colors.white,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.remove_shopping_cart_outlined, size: 60, color: Colors.grey[300]),
+              const SizedBox(height: 16),
+              Text(
+                "Votre liste est vide",
+                style: GoogleFonts.poppins(
+                  fontSize: 16,
+                  color: Colors.grey[500],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Group items logic
+    final uncheckedItems = _items.where((i) => !i.isChecked).toList();
+    final checkedItems = _items.where((i) => i.isChecked).toList();
+
+    // Sort unchecked items by name for consistency
+    uncheckedItems.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+    // Group unchecked by typeId
+    final Map<String?, List<ShoppingItem>> groupedUnchecked = {};
+    for (final item in uncheckedItems) {
+      final key = item.typeId;
+      groupedUnchecked.putIfAbsent(key, () => []).add(item);
+    }
+
+    // Sort groups ? Maybe prioritize Types that exist in _types
+    // Order: Types in _types order, then 'Other' (null)
+    final sortedKeys = groupedUnchecked.keys.toList();
+    sortedKeys.sort((a, b) {
+      if (a == null) return 1; // Null last
+      if (b == null) return -1;
+      final typeA = _types.indexWhere((t) => t.id == a);
+      final typeB = _types.indexWhere((t) => t.id == b);
+      if (typeA == -1 && typeB == -1) return 0;
+      if (typeA == -1) return 1;
+      if (typeB == -1) return -1;
+      return typeA.compareTo(typeB);
     });
 
     return Scaffold(
@@ -140,7 +194,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                           ),
                           Text(
                             _mealPlan != null 
-                              ? '${_items.length} articles à acheter'
+                              ? '${uncheckedItems.length} articles à acheter'
                               : 'Aucun plan actif',
                             style: GoogleFonts.poppins(
                               fontSize: 14,
@@ -171,38 +225,116 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                   ),
                 ),
 
-                // List
+                // List content
                 Expanded(
-                  child: _isLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _items.isEmpty
-                          ? Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
+                  child: ListView(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                    children: [
+                      // Empty state for "All done" but items exist
+                      if (groupedUnchecked.isEmpty && checkedItems.isNotEmpty)
+                         Padding(
+                           padding: const EdgeInsets.symmetric(vertical: 40),
+                           child: Center(
+                             child: Column(
+                               children: [
+                                 Icon(Icons.check_circle_outline_rounded, size: 60, color: Colors.green[300]),
+                                 const SizedBox(height: 16),
+                                 Text("Tout est prêt !", style: GoogleFonts.poppins(fontSize: 18, color: Colors.green[700])),
+                               ],
+                             ),
+                           ),
+                         ),
+
+                      ...sortedKeys.map((typeId) {
+                        final itemsInGroup = groupedUnchecked[typeId]!;
+                        // Find Type info
+                        String headerTitle = 'Autre';
+                        Color headerColor = Colors.grey;
+                        
+                        if (typeId != null) {
+                           final type = _types.cast<IngredientType?>().firstWhere(
+                             (t) => t?.id == typeId, 
+                             orElse: () => null
+                           );
+                           if (type != null) {
+                             headerTitle = type.name;
+                             headerColor = Color(type.color);
+                           }
+                        }
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(top: 16, bottom: 8),
+                              child: Row(
                                 children: [
-                                  Icon(Icons.remove_shopping_cart_outlined, size: 60, color: Colors.grey[300]),
-                                  const SizedBox(height: 16),
+                                  if (typeId != null) ...[
+                                    // Modern arrow shape for type color (flèche vers la droite)
+                                    CustomPaint(
+                                      size: const Size(18, 18),
+                                      painter: _ArrowTypePainterRight(headerColor),
+                                    ),
+                                    const SizedBox(width: 8),
+                                  ],
                                   Text(
-                                    "Votre liste est vide",
+                                    headerTitle,
                                     style: GoogleFonts.poppins(
                                       fontSize: 16,
-                                      color: Colors.grey[500],
+                                      fontWeight: FontWeight.w600,
+                                      color: const Color(0xFF1A1A1A),
                                     ),
                                   ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    '(${itemsInGroup.length})',
+                                     style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey),
+                                  )
                                 ],
                               ),
-                            )
-                          : ListView.separated(
-                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-                              itemCount: displayItems.length,
-                              separatorBuilder: (_, __) => const SizedBox(height: 12),
-                              itemBuilder: (context, index) {
-                                final item = displayItems[index];
-                                // Use key to find original index or just pass the item logic
-                                final originalIndex = _items.indexOf(item);
-                                return _buildShoppingListItem(item, originalIndex);
-                              },
                             ),
+                            ...itemsInGroup.map((item) {
+                               final originalIndex = _items.indexOf(item);
+                               return Padding(
+                                 padding: const EdgeInsets.only(bottom: 12),
+                                 child: _buildShoppingListItem(item, originalIndex),
+                               );
+                            }),
+                          ],
+                        );
+                      }),
+                      
+                      // Checked Items (Completed)
+                      if (checkedItems.isNotEmpty) ...[
+                        const SizedBox(height: 24),
+                        Row(
+                          children: [
+                            const Expanded(child: Divider()),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              child: Text(
+                                'Déjà pris',
+                                style: GoogleFonts.poppins(
+                                  color: Colors.grey[500],
+                                  fontWeight: FontWeight.w500
+                                ),
+                              ),
+                            ),
+                            const Expanded(child: Divider()),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        ...checkedItems.map((item) {
+                           final originalIndex = _items.indexOf(item);
+                           return Padding(
+                             padding: const EdgeInsets.only(bottom: 12),
+                             child: _buildShoppingListItem(item, originalIndex),
+                           );
+                        }),
+                        const SizedBox(height: 40), // Bottom padding
+                      ]
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -335,4 +467,27 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
       ),
     );
   }
+}
+
+// En dehors de la classe _ShoppingListPageState, ajouter ce painter :
+
+class _ArrowTypePainterRight extends CustomPainter {
+  final Color color;
+  _ArrowTypePainterRight(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color.withOpacity(0.85)
+      ..style = PaintingStyle.fill;
+    final path = Path();
+    path.moveTo(0, 0);
+    path.lineTo(size.width, size.height / 2);
+    path.lineTo(0, size.height);
+    path.close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

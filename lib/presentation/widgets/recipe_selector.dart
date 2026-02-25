@@ -9,10 +9,12 @@ import '../../core/utils/ingredient_name_cache.dart';
 
 class RecipeSelector extends StatefulWidget {
   final Function(Recipe) onRecipeSelected;
+  final ScrollController? scrollController;
 
   const RecipeSelector({
     super.key,
     required this.onRecipeSelected,
+    this.scrollController,
   });
 
   @override
@@ -30,7 +32,7 @@ class _RecipeSelectorState extends State<RecipeSelector> {
 
   // Category filter
   Set<String> _selectedCategoryIds = {};
-  List<Map<String, String>> _allCategories = [];
+  List<Map<String, dynamic>> _allCategories = [];
   bool _categoriesLoading = true;
 
   @override
@@ -53,11 +55,12 @@ class _RecipeSelectorState extends State<RecipeSelector> {
     });
   }
 
-  Future<List<Map<String, String>>> _fetchCategories() async {
+  Future<List<Map<String, dynamic>>> _fetchCategories() async {
     final snap = await FirebaseFirestore.instance.collection('categories').get();
     return snap.docs.map((doc) => {
       'id': doc.id,
       'name': doc.get('name') as String,
+      'color': doc.data().containsKey('color') ? doc.get('color') as int : 0xFF6A5AE0,
     }).toList();
   }
 
@@ -91,7 +94,7 @@ class _RecipeSelectorState extends State<RecipeSelector> {
     return _allRecipes.where((recipe) {
       final matchesTitle = _titleFilter.isEmpty || recipe.title.toLowerCase().contains(_titleFilter.toLowerCase());
       final matchesIngredients = _selectedIngredientIds.isEmpty || recipe.ingredients.any((ri) => _selectedIngredientIds.contains(ri.ingredient.id));
-      final matchesCategory = _selectedCategoryIds.isEmpty || _selectedCategoryIds.contains(recipe.category);
+      final matchesCategory = _selectedCategoryIds.isEmpty || recipe.categoryIds.any((c) => _selectedCategoryIds.contains(c));
       return matchesTitle && matchesIngredients && matchesCategory;
     }).toList();
   }
@@ -139,24 +142,52 @@ class _RecipeSelectorState extends State<RecipeSelector> {
                 itemBuilder: (context, index) {
                   if (index == 0) {
                     final isSelected = _selectedCategoryIds.isEmpty;
+                    final baseColor = const Color(0xFF6A5AE0);
+                    
+                    final hsl = HSLColor.fromColor(baseColor);
+                    final startLightness = hsl.lightness;
+                    final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                    final textColor = hsl.withLightness(textLightness).toColor();
+
                     return FilterChip(
-                      label: const Text('Tout'),
+                      label: Text(
+                        'Toutes',
+                        style: GoogleFonts.poppins(
+                          fontSize: 13, 
+                          fontWeight: FontWeight.w600,
+                          color: textColor
+                        )
+                      ),
                       selected: isSelected,
                       onSelected: (_) => setState(() => _selectedCategoryIds.clear()),
-                      backgroundColor: Colors.grey[100],
-                      selectedColor: const Color(0xFF6A5AE0),
-                      labelStyle: TextStyle(
-                        color: isSelected ? Colors.white : Colors.black87,
-                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                      ),
-                      checkmarkColor: Colors.white,
+                      backgroundColor: baseColor.withOpacity(0.15),
+                      selectedColor: baseColor.withOpacity(0.35),
+                      checkmarkColor: textColor,
+                      side: BorderSide.none,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                     );
                   }
                   final category = _allCategories[index - 1];
-                  final catId = category['id']!;
+                  final catId = category['id'] as String;
+                  final catName = category['name'] as String;
+                  final catColorVal = category['color'] as int;
                   final isSelected = _selectedCategoryIds.contains(catId);
+                  final categoryColor = Color(catColorVal);
+                  
+                  final hsl = HSLColor.fromColor(categoryColor);
+                  final startLightness = hsl.lightness;
+                  final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                  final textColor = hsl.withLightness(textLightness).toColor();
+
                   return FilterChip(
-                    label: Text(category['name'] ?? ''),
+                    label: Text(
+                      catName, 
+                      style: GoogleFonts.poppins(
+                        fontSize: 13, 
+                        fontWeight: FontWeight.w600,
+                        color: textColor
+                      )
+                    ),
                     selected: isSelected,
                     onSelected: (selected) {
                       setState(() {
@@ -167,13 +198,11 @@ class _RecipeSelectorState extends State<RecipeSelector> {
                         }
                       });
                     },
-                    backgroundColor: Colors.grey[100],
-                    selectedColor: const Color(0xFF6A5AE0),
-                    labelStyle: TextStyle(
-                      color: isSelected ? Colors.white : Colors.black87,
-                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                    ),
-                    checkmarkColor: Colors.white,
+                    backgroundColor: categoryColor.withOpacity(0.15),
+                    selectedColor: categoryColor.withOpacity(0.35),
+                    checkmarkColor: textColor,
+                    side: BorderSide.none,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                   );
                 },
               ),
@@ -253,6 +282,7 @@ class _RecipeSelectorState extends State<RecipeSelector> {
                 : _filteredRecipes.isEmpty
                     ? const Center(child: Text('Aucune recette disponible'))
                     : ListView.builder(
+                        controller: widget.scrollController,
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         itemCount: _filteredRecipes.length,
                         itemBuilder: (_, index) {

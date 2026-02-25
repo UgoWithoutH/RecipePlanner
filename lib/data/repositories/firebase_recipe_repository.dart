@@ -38,7 +38,12 @@ class FirebaseRecipeRepository implements RecipeRepository {
         preparationTime: (data['preparationTime'] as num?)?.toInt() ?? 0,
         cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
         servings: (data['servings'] as num?)?.toInt() ?? 1,
-        category: data['category'] ?? '',
+        categoryIds: (data['categoryIds'] as List<dynamic>?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            (data['category'] != null && (data['category'] as String).isNotEmpty
+                ? [data['category'] as String]
+                : []),
         ingredients: ingredients,
         instructions: List<String>.from(data['instructions'] ?? []),
         createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
@@ -72,7 +77,10 @@ class FirebaseRecipeRepository implements RecipeRepository {
         preparationTime: (data['preparationTime'] as num?)?.toInt() ?? 0,
         cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
         servings: (data['servings'] as num?)?.toInt() ?? 1,
-        category: data['category'] ?? '',
+        categoryIds: (data['categoryIds'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
+            (data['category'] != null && (data['category'] as String).isNotEmpty
+                ? [data['category'] as String]
+                : []),
         ingredients: ingredients,
         instructions: List<String>.from(data['instructions'] ?? []),
         createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
@@ -182,7 +190,12 @@ class FirebaseRecipeRepository implements RecipeRepository {
         preparationTime: (data['preparationTime'] as num?)?.toInt() ?? 0,
         cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
         servings: (data['servings'] as num?)?.toInt() ?? 1,
-        category: data['category'] ?? '',
+        categoryIds: (data['categoryIds'] as List<dynamic>?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            (data['category'] != null && (data['category'] as String).isNotEmpty
+                ? [data['category'] as String]
+                : []),
         ingredients: ingredients,
         instructions: List<String>.from(data['instructions'] ?? []),
         createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
@@ -227,7 +240,12 @@ class FirebaseRecipeRepository implements RecipeRepository {
         preparationTime: (data['preparationTime'] as num?)?.toInt() ?? 0,
         cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
         servings: (data['servings'] as num?)?.toInt() ?? 1,
-        category: data['category'] ?? '',
+        categoryIds: (data['categoryIds'] as List<dynamic>?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            (data['category'] != null && (data['category'] as String).isNotEmpty
+                ? [data['category'] as String]
+                : []),
         ingredients: ingredients,
         instructions: List<String>.from(data['instructions'] ?? []),
         createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
@@ -246,7 +264,8 @@ class FirebaseRecipeRepository implements RecipeRepository {
       'description': recipe.description,
       'preparationTime': recipe.preparationTime,
       'cookingTime': recipe.cookingTime,
-      'category': recipe.category,
+      'categoryIds': recipe.categoryIds,
+      'category': recipe.categoryIds.isNotEmpty ? recipe.categoryIds.first : '',
       'rating': recipe.rating,
       'createdAt': recipe.createdAt.toUtc().toIso8601String(),
       'isFavorite': recipe.isFavorite,

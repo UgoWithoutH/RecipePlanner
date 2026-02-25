@@ -1,6 +1,7 @@
 // ignore_for_file: use_build_context_synchronously
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:recipe_planner/domain/entities/category.dart';
 import 'package:recipe_planner/presentation/widgets/ingredient_autocomplete.dart' show IngredientAutocomplete;
@@ -55,7 +56,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
 
   // Categories
   List<Category> _categories = [];
-  String? _selectedCategoryId;
+  List<String> _selectedCategoryIds = [];
 
   // Users & servings
   List<User> _users = [];
@@ -94,7 +95,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
       _preparationTimeController.text = r.preparationTime.toString();
       _cookingTimeController.text = r.cookingTime.toString();
       _servingsController.text = r.servings.toString();
-      _selectedCategoryId = r.category;
+      if (mounted) setState(() => _selectedCategoryIds = List.from(r.categoryIds));
       _ingredients.addAll(r.ingredients);
       _instructions.addAll(r.instructions);
       _addExtraMeal = r.addExtraMeal;
@@ -152,9 +153,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     if (_ingredientNameController.text.isEmpty ||
         _ingredientQuantityController.text.isEmpty ||
         _selectedIngredientUnit == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill all ingredient fields')),
-      );
+      _showError('Remplissez tous les champs ingrédient');
       return;
     }
 
@@ -190,25 +189,14 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   Future<void> _saveRecipe() async {
     if (!_formKey.currentState!.validate()) return;
 
-    if (_selectedCategoryId == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please select a category')));
-      return;
-    }
-
     if (widget.recipe == null &&
         await _recipeTitleExists(_titleController.text)) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Recipe already exists')));
+      _showError('Une recette avec ce titre existe déjà');
       return;
     }
 
-    if (_ingredients.isEmpty || _instructions.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Add ingredients and instructions')),
-      );
+    if (_ingredients.isEmpty) {
+      _showError('Ajoutez au moins un ingrédient');
       return;
     }
 
@@ -223,7 +211,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
         preparationTime: int.parse(_preparationTimeController.text),
         cookingTime: int.parse(_cookingTimeController.text),
         servings: int.parse(_servingsController.text),
-        category: _selectedCategoryId!,
+        categoryIds: _selectedCategoryIds,
         ingredients: _ingredients,
         instructions: _instructions,
         createdAt: widget.recipe?.createdAt ?? DateTime.now(),
@@ -257,10 +245,32 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _isSaving = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error saving recipe: $e')));
+      _showError('Erreur lors de la sauvegarde : $e');
     }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline_rounded, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                message,
+                style: GoogleFonts.poppins(color: Colors.white, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: const Color(0xFFE53935), // Less flashy red
+        behavior: SnackBarBehavior.floating, // Floating creates the "bubble" effect
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+        elevation: 4,
+      ),
+    );
   }
 
   // ------------------------
@@ -272,7 +282,14 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     String label, {
     int maxLines = 1,
     TextInputType? keyboardType,
+    bool isRequired = true,
   }) {
+    // Defines input formatters if keyboardType is number
+    List<TextInputFormatter>? inputFormatters;
+    if (keyboardType == TextInputType.number) {
+       inputFormatters = [FilteringTextInputFormatter.digitsOnly];
+    }
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: Column(
@@ -304,6 +321,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
               controller: controller,
               maxLines: maxLines,
               keyboardType: keyboardType,
+              inputFormatters: inputFormatters,
               style: GoogleFonts.poppins(fontSize: 15),
               decoration: InputDecoration(
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -311,7 +329,10 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                 hintText: 'Entrez $label...',
                 hintStyle: GoogleFonts.poppins(color: Colors.grey[400]),
               ),
-              validator: (v) => v == null || v.isEmpty ? 'Requis' : null,
+              validator: (v) {
+                if (!isRequired) return null;
+                return v == null || v.isEmpty ? 'Requis' : null;
+              },
             ),
           ),
         ],
@@ -319,7 +340,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     );
   }
 
-  Widget _buildCategoryDropdown() {
+  Widget _buildCategorySelector() {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: Column(
@@ -333,37 +354,55 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
               color: Colors.black87,
             ),
           ),
-          const SizedBox(height: 8),
-          Container(
-             padding: const EdgeInsets.symmetric(horizontal: 16),
-             decoration: BoxDecoration(
-              color: Colors.grey[50],
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey[200]!),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.02),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButtonFormField<String>(
-                initialValue: _selectedCategoryId,
-                decoration: const InputDecoration(border: InputBorder.none),
-                icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                items: _categories
-                    .map((c) => DropdownMenuItem(
-                      value: c.id, 
-                      child: Text(c.name, style: GoogleFonts.poppins(fontSize: 15)))
-                    )
-                    .toList(),
-                onChanged: (v) => setState(() => _selectedCategoryId = v),
-                validator: (v) => v == null ? 'Veuillez choisir une catégorie' : null,
+          const SizedBox(height: 12),
+          if (_categories.isEmpty)
+             const Center(child: CircularProgressIndicator())
+          else
+            SizedBox(
+              height: 40,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _categories.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final category = _categories[index];
+                  final isSelected = _selectedCategoryIds.contains(category.id);
+                  final categoryColor = Color(category.color);
+                  
+                  final hsl = HSLColor.fromColor(categoryColor);
+                  final startLightness = hsl.lightness;
+                  final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                  final textColor = hsl.withLightness(textLightness).toColor();
+
+                  return FilterChip(
+                    label: Text(
+                      category.name,
+                      style: GoogleFonts.poppins(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: textColor,
+                      ),
+                    ),
+                    selected: isSelected,
+                    onSelected: (selected) {
+                      setState(() {
+                         if (selected) {
+                           _selectedCategoryIds.add(category.id);
+                         } else {
+                           _selectedCategoryIds.remove(category.id);
+                         }
+                      });
+                    },
+                    backgroundColor: categoryColor.withOpacity(0.15),
+                    selectedColor: categoryColor.withOpacity(0.35),
+                    checkmarkColor: textColor,
+                    side: BorderSide.none,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+                  );
+                },
               ),
             ),
-          ),
         ],
       ),
     );
@@ -525,6 +564,13 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   }
 
   Widget _buildModernInput(TextEditingController controller, String hint, {TextInputType? inputType, FocusNode? focusNode}) {
+    List<TextInputFormatter>? inputFormatters;
+    if (inputType == TextInputType.number) {
+       // Allow decimals for ingredient quantity
+       inputFormatters = [
+         FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
+       ];
+    }
     return Container(
       decoration: BoxDecoration(
         color: Colors.grey[50],
@@ -534,7 +580,10 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
       child: TextFormField(
         controller: controller,
         focusNode: focusNode,
-        keyboardType: inputType,
+        keyboardType: inputType == TextInputType.number 
+            ? const TextInputType.numberWithOptions(decimal: true) 
+            : inputType,
+        inputFormatters: inputFormatters,
         style: GoogleFonts.poppins(fontSize: 14),
         decoration: InputDecoration(
           contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -768,6 +817,9 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
             child: TextField(
               controller: controller,
               keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+              ],
               textAlign: TextAlign.center,
               style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: color, fontSize: 14),
               decoration: const InputDecoration(
@@ -847,13 +899,19 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
+                              _buildCategorySelector(),
                               _buildTextField(_titleController, 'Titre'),
                               _buildTextField(
+                                isRequired: false,
                                 _descriptionController,
                                 'Description',
                                 maxLines: 3,
                               ),
-                              _buildCategoryDropdown(),
+                              _buildTextField(
+                                _servingsController,
+                                'Portions globales (ex: 4)',
+                                keyboardType: TextInputType.number,
+                              ),
                               Row(
                                 children: [
                                   Expanded(
@@ -872,11 +930,6 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                                     ),
                                   ),
                                 ],
-                              ),
-                              _buildTextField(
-                                _servingsController,
-                                'Portions globales (ex: 4)',
-                                keyboardType: TextInputType.number,
                               ),
                               
                               Container(

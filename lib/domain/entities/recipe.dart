@@ -9,7 +9,7 @@ class Recipe {
   final int servings;
   final List<RecipeIngredient> ingredients;
   final List<String> instructions;
-  final String category;
+  final List<String> categoryIds;
   final double rating;
   final DateTime createdAt;
   final bool isFavorite;
@@ -24,7 +24,7 @@ class Recipe {
     required this.servings,
     required this.ingredients,
     required this.instructions,
-    required this.category,
+    required this.categoryIds,
     this.rating = 0.0,
     required this.createdAt,
     this.isFavorite = false,
@@ -42,7 +42,7 @@ class Recipe {
     int? servings,
     List<RecipeIngredient>? ingredients,
     List<String>? instructions,
-    String? category,
+    List<String>? categoryIds,
     double? rating,
     DateTime? createdAt,
     bool? isFavorite,
@@ -57,7 +57,7 @@ class Recipe {
       servings: servings ?? this.servings,
       ingredients: ingredients ?? this.ingredients,
       instructions: instructions ?? this.instructions,
-      category: category ?? this.category,
+      categoryIds: categoryIds ?? this.categoryIds,
       rating: rating ?? this.rating,
       createdAt: createdAt ?? this.createdAt,
       isFavorite: isFavorite ?? this.isFavorite,

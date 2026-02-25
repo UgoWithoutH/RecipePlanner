@@ -18,7 +18,8 @@ class FirebaseMealHistoryRepository {
       'recipeId': m.recipe.id,
       'recipeName': m.recipe.title,
       'recipeDescription': m.recipe.description,
-      'recipeCategory': m.recipe.category,
+      'recipeCategory': m.recipe.categoryIds.isNotEmpty ? m.recipe.categoryIds.first : '',
+      'recipeCategoryIds': m.recipe.categoryIds,
       'recipeServings': m.recipe.servings,
       'recipeRating': m.recipe.rating,
       'recipeAddExtraMeal': m.recipe.addExtraMeal,
@@ -63,7 +64,10 @@ class FirebaseMealHistoryRepository {
           preparationTime: (mealData['preparationTime'] as num?)?.toInt() ?? 0,
           cookingTime: (mealData['cookingTime'] as num?)?.toInt() ?? 0,
           servings: (mealData['recipeServings'] as num?)?.toInt() ?? 1,
-          category: mealData['recipeCategory'] as String? ?? '',
+          categoryIds: (mealData['recipeCategoryIds'] as List?)?.map((e) => e.toString()).toList() ??
+              ((mealData['recipeCategory'] as String?)?.isNotEmpty == true
+                  ? [mealData['recipeCategory'] as String]
+                  : []),
           rating: (mealData['recipeRating'] as num?)?.toDouble() ?? 0.0,
           addExtraMeal: mealData['recipeAddExtraMeal'] as bool? ?? false,
           ingredients: const [],

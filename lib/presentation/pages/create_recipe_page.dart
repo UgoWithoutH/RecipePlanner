@@ -174,30 +174,37 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
       return;
     }
 
-    String name = _ingredientNameController.text.trim();
+    String inputName = _ingredientNameController.text.trim();
+    // Vérifie si un ingrédient avec le même nom existe déjà dans la recette (case-insensitive)
+    final duplicate = _ingredients.any((ri) => ri.ingredient.name.toLowerCase() == inputName.toLowerCase());
+    if (duplicate) {
+      _showError('Cet ingrédient a déjà été ajouté à la recette.');
+      return;
+    }
+
     String? id = _selectedIngredientId;
     String? selectedTypeId;
     String? existingTypeId;
+    String nameToUse = inputName;
 
     // Check if ingredient exists
     if (id == null) {
-      // Check if ingredient exists in DB
-      final existing = await _ingredientRepo.searchIngredients(name);
-      if (existing.isNotEmpty && existing.first['name'] == name) {
-        id = existing.first['id'];
-        existingTypeId = existing.first['typeId'];
-        // log removed
+      // Cherche l'ingrédient existant (non sensible à la casse)
+      final existing = await _ingredientRepo.getIngredientByNameCaseInsensitive(inputName);
+      if (existing != null) {
+        id = existing['id'];
+        existingTypeId = existing['typeId'];
+        nameToUse = existing['name'] ?? inputName;
       } else {
         // Prompt for type selection
-        selectedTypeId = await _showTypeSelectionDialog(name);
+        selectedTypeId = await _showTypeSelectionDialog(inputName);
         if (selectedTypeId == null) {
           // User cancelled
           return;
         }
-        // log removed
         // Ajoute à la liste temporaire, id sera résolu à la sauvegarde
         final pending = PendingIngredient(
-          name: name,
+          name: inputName,
           typeId: selectedTypeId,
           quantity: double.parse(_ingredientQuantityController.text),
           unit: _selectedIngredientUnit!,
@@ -209,7 +216,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
             RecipeIngredient(
               ingredient: Ingredient(
                 id: '', // temporaire, sera remplacé à la sauvegarde
-                name: name,
+                name: inputName,
                 typeId: selectedTypeId,
               ),
               quantity: pending.quantity,
@@ -227,18 +234,20 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
       }
     } else {
       // Si on a un id, on va chercher le type
-      final existing = await _ingredientRepo.searchIngredients(name);
-      if (existing.isNotEmpty) {
-        existingTypeId = existing.first['typeId'];
+      final existing = await _ingredientRepo.getIngredientByNameCaseInsensitive(inputName);
+      if (existing != null) {
+        existingTypeId = existing['typeId'];
+        nameToUse = existing['name'] ?? inputName;
       }
     }
 
+    // Ajoute l'ingrédient existant (ou modifié) à la liste
     setState(() {
       _ingredients.add(
         RecipeIngredient(
           ingredient: Ingredient(
             id: id!,
-            name: name,
+            name: nameToUse,
             typeId: existingTypeId,
           ),
           quantity: double.parse(_ingredientQuantityController.text),

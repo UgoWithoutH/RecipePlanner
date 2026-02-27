@@ -20,7 +20,14 @@ class FirebaseIngredientRepository {
         .get();
 
     return snap.docs
-        .map((doc) => {'id': doc.id, 'name': doc.get('name') as String})
+        .map((doc) {
+          final data = doc.data() as Map<String, dynamic>?;
+          return {
+            'id': doc.id,
+            'name': doc.get('name') as String,
+            'typeId': (data != null && data.containsKey('typeId')) ? data['typeId'] as String : '',
+          };
+        })
         .toList();
   }
 
@@ -30,6 +37,16 @@ class FirebaseIngredientRepository {
     if (query.docs.isNotEmpty) return query.docs.first.id;
 
     final doc = await _ingredients.add({'name': name});
+    return doc.id;
+  }
+
+  /// Create a new ingredient with a typeId
+  Future<String> createIngredientWithType(String name, String? typeId) async {
+    final data = {'name': name};
+    if (typeId != null) {
+      data['typeId'] = typeId;
+    }
+    final doc = await _ingredients.add(data);
     return doc.id;
   }
 }

@@ -18,6 +18,10 @@ import '../../data/repositories/firebase_user_repository.dart';
 import '../../data/repositories/firebase_user_recipe_serving_repository.dart';
 import '../../data/repositories/firebase_meal_plan_repository.dart';
 import '../../domain/usecases/shopping_list_generator.dart';
+import '../../domain/entities/ingredient_type.dart';
+import '../../data/repositories/firebase_ingredient_type_repository.dart';
+
+import '../../domain/entities/pending_ingredient.dart';
 
 class CreateRecipePage extends StatefulWidget {
   final Recipe? recipe;
@@ -50,13 +54,20 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   final List<Unit> _units = Unit.values;
 
   final List<RecipeIngredient> _ingredients = [];
+  // Liste temporaire pour les nouveaux ingrédients à créer à la sauvegarde
+  final List<PendingIngredient> _pendingIngredients = [];
   final List<String> _instructions = [];
 
   String? _selectedIngredientId;
 
+
   // Categories
   List<Category> _categories = [];
   List<String> _selectedCategoryIds = [];
+
+  // Ingredient Types
+  List<IngredientType> _ingredientTypes = [];
+  final FirebaseIngredientTypeRepository _ingredientTypeRepo = FirebaseIngredientTypeRepository();
 
   // Users & servings
   List<User> _users = [];
@@ -87,6 +98,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
 
     _loadCategories();
     _loadUsers();
+    _loadIngredientTypes();
 
     if (widget.recipe != null) {
       final r = widget.recipe!;
@@ -101,6 +113,11 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
       _addExtraMeal = r.addExtraMeal;
       _loadExistingServings();
     }
+  }
+
+  Future<void> _loadIngredientTypes() async {
+    final types = await _ingredientTypeRepo.getTypes() ?? [];
+    if (mounted) setState(() => _ingredientTypes = types);
   }
 
   @override
@@ -157,18 +174,72 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
       return;
     }
 
-    final id =
-        _selectedIngredientId ??
-        await _ingredientRepo.getOrCreateIngredientId(
-          _ingredientNameController.text.trim(),
+    String name = _ingredientNameController.text.trim();
+    String? id = _selectedIngredientId;
+    String? selectedTypeId;
+    String? existingTypeId;
+
+    // Check if ingredient exists
+    if (id == null) {
+      // Check if ingredient exists in DB
+      final existing = await _ingredientRepo.searchIngredients(name);
+      if (existing.isNotEmpty && existing.first['name'] == name) {
+        id = existing.first['id'];
+        existingTypeId = existing.first['typeId'];
+        // log removed
+      } else {
+        // Prompt for type selection
+        selectedTypeId = await _showTypeSelectionDialog(name);
+        if (selectedTypeId == null) {
+          // User cancelled
+          return;
+        }
+        // log removed
+        // Ajoute à la liste temporaire, id sera résolu à la sauvegarde
+        final pending = PendingIngredient(
+          name: name,
+          typeId: selectedTypeId,
+          quantity: double.parse(_ingredientQuantityController.text),
+          unit: _selectedIngredientUnit!,
+          notes: _ingredientNotesController.text.isEmpty ? null : _ingredientNotesController.text,
         );
+        setState(() {
+          _pendingIngredients.add(pending);
+          _ingredients.add(
+            RecipeIngredient(
+              ingredient: Ingredient(
+                id: '', // temporaire, sera remplacé à la sauvegarde
+                name: name,
+                typeId: selectedTypeId,
+              ),
+              quantity: pending.quantity,
+              unit: pending.unit,
+              notes: pending.notes,
+            ),
+          );
+          _ingredientNameController.clear();
+          _ingredientQuantityController.clear();
+          _ingredientNotesController.clear();
+          _selectedIngredientUnit = null;
+          _selectedIngredientId = null;
+        });
+        return;
+      }
+    } else {
+      // Si on a un id, on va chercher le type
+      final existing = await _ingredientRepo.searchIngredients(name);
+      if (existing.isNotEmpty) {
+        existingTypeId = existing.first['typeId'];
+      }
+    }
 
     setState(() {
       _ingredients.add(
         RecipeIngredient(
           ingredient: Ingredient(
-            id: id,
-            name: _ingredientNameController.text.trim(),
+            id: id!,
+            name: name,
+            typeId: existingTypeId,
           ),
           quantity: double.parse(_ingredientQuantityController.text),
           unit: _selectedIngredientUnit!,
@@ -184,6 +255,79 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
       _selectedIngredientUnit = null;
       _selectedIngredientId = null;
     });
+  }
+
+  Future<String?> _showTypeSelectionDialog(String ingredientName) async {
+    String? selectedTypeId;
+    return await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            title: Text(
+              'Nouveau ingrédient',
+              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'L\'ingrédient "$ingredientName" n\'existe pas. Sélectionnez un type pour le créer.',
+                  style: GoogleFonts.poppins(fontSize: 14),
+                ),
+                const SizedBox(height: 20),
+                Text('Type', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: selectedTypeId,
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  ),
+                  dropdownColor: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  items: [
+                    DropdownMenuItem<String>(
+                      value: null,
+                      child: Text('Aucun type', style: GoogleFonts.poppins(color: Colors.grey[600])),
+                    ),
+                    ..._ingredientTypes.map((type) {
+                      return DropdownMenuItem(
+                        value: type.id,
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 14,
+                              height: 14,
+                              decoration: BoxDecoration(color: Color(type.color), shape: BoxShape.circle),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(type.name, style: GoogleFonts.poppins()),
+                          ],
+                        ),
+                      );
+                    })
+                  ],
+                  onChanged: (val) => setStateDialog(() => selectedTypeId = val),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, null),
+                child: Text('Annuler', style: GoogleFonts.poppins(color: Colors.grey)),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, selectedTypeId),
+                child: Text('Créer', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: const Color(0xFF6A5AE0))),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _saveRecipe() async {
@@ -203,6 +347,29 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     setState(() => _isSaving = true);
 
     try {
+      // 1. Créer les nouveaux ingrédients en base et mettre à jour les IDs dans _ingredients
+      for (int i = 0; i < _pendingIngredients.length; i++) {
+        final pending = _pendingIngredients[i];
+        final newId = await _ingredientRepo.createIngredientWithType(pending.name, pending.typeId);
+        // Met à jour l'ID dans la liste _ingredients
+        final idx = _ingredients.indexWhere((ri) => ri.ingredient.id == '' && ri.ingredient.name == pending.name);
+        if (idx != -1) {
+          final old = _ingredients[idx];
+          _ingredients[idx] = RecipeIngredient(
+            ingredient: Ingredient(
+              id: newId,
+              name: pending.name,
+              typeId: pending.typeId,
+            ),
+            quantity: old.quantity,
+            unit: old.unit,
+            notes: old.notes,
+          );
+        }
+      }
+      _pendingIngredients.clear();
+
+      // 2. Sauvegarde la recette normalement
       String recipeId;
       final recipe = Recipe(
         id: widget.recipe?.id ?? '',
@@ -452,6 +619,8 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                   });
                   controller.addListener(() {
                     _ingredientNameController.value = controller.value;
+                    // Dès que l'utilisateur modifie le champ, on réinitialise l'id sélectionné
+                    _selectedIngredientId = null;
                   });
                   return _buildModernInput(controller, 'Nom (ex: Farine)', focusNode: focusNode);
                 },
@@ -511,6 +680,18 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                 children: _ingredients.asMap().entries.map((entry) {
                   final index = entry.key;
                   final ingredient = entry.value;
+                  // Cherche le type associé à l'ingrédient
+                  final type = _ingredientTypes.firstWhere(
+                    (t) => t.id == ingredient.ingredient.typeId,
+                    orElse: () => IngredientType(id: '', name: '', color: 0xFFBDBDBD),
+                  );
+                  final hasType = ingredient.ingredient.typeId != null && type.id.isNotEmpty;
+                  // Couleur logique similaire aux catégories
+                  final typeColor = Color(type.color).withOpacity(0.15);
+                  final hsl = HSLColor.fromColor(Color(type.color));
+                  final startLightness = hsl.lightness;
+                  final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                  final textColor = hsl.withLightness(textLightness).toColor();
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Container(
@@ -530,19 +711,50 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                           ),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: RichText(
-                              text: TextSpan(
-                                children: [
-                                  TextSpan(
-                                    text: ingredient.ingredient.name, 
-                                    style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: Colors.black87)
-                                  ),
-                                  TextSpan(
-                                    text: ' - ${ingredient.quantity} ${ingredient.unit.label}', 
-                                    style: GoogleFonts.poppins(color: Colors.grey[600])
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Text(
+                                  ingredient.ingredient.name,
+                                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: Colors.black87),
+                                ),
+                                if (hasType) ...[
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: typeColor,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 10,
+                                          height: 10,
+                                          decoration: BoxDecoration(
+                                            color: Color(type.color),
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          type.name,
+                                          style: GoogleFonts.poppins(
+                                            fontWeight: FontWeight.w600,
+                                            color: textColor,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ],
-                              ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '- ${ingredient.quantity} ${ingredient.unit.label}',
+                                  style: GoogleFonts.poppins(color: Colors.grey[600]),
+                                ),
+                              ],
                             ),
                           ),
                           InkWell(

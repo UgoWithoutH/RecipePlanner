@@ -50,6 +50,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
         isFavorite: data['isFavorite'] ?? false,
         rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
         addExtraMeal: data['addExtraMeal'] ?? false,
+        url: data['url'],
       );
     }
     // Fallback: try by doc id
@@ -87,6 +88,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
         isFavorite: data['isFavorite'] ?? false,
         rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
         addExtraMeal: data['addExtraMeal'] ?? false,
+        url: data['url'],
       );
     }
     return null;
@@ -138,23 +140,15 @@ class FirebaseRecipeRepository implements RecipeRepository {
   /// Delete a recipe by its ID
   @override
   Future<void> deleteRecipe(String id) async {
-    // Try to find document by stored 'id' field first
-    final query = await _recipes.where('id', isEqualTo: id).limit(1).get();
-    if (query.docs.isNotEmpty) {
-      await query.docs.first.reference.delete();
+    if (id.isEmpty) {
+      throw Exception('Recipe id is empty');
+    }
+    final docRef = _recipes.doc(id);
+    final snapshot = await docRef.get();
+    if (snapshot.exists) {
+      await docRef.delete();
       return;
     }
-
-    // Fallback: if no document has 'id' field set, try deleting by doc id
-    if (id.isNotEmpty) {
-      final docRef = _recipes.doc(id);
-      final snapshot = await docRef.get();
-      if (snapshot.exists) {
-        await docRef.delete();
-        return;
-      }
-    }
-
     throw Exception('Recipe with id $id not found');
   }
 
@@ -280,6 +274,9 @@ class FirebaseRecipeRepository implements RecipeRepository {
             },
           )
           .toList(),
+      'url': (recipe.url != null && recipe.url!.trim().isNotEmpty)
+          ? recipe.url
+          : null,
     };
   }
 }

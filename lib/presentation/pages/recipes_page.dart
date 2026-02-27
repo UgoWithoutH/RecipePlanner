@@ -410,6 +410,34 @@ class _RecipesPageState extends State<RecipesPage> {
                     ),
                 ],
 
+                // COMPTEUR DE RECETTES
+                FutureBuilder<List<Recipe>>(
+                  future: _recipesFuture,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const SizedBox.shrink();
+                    }
+                    final recipes = snapshot.data ?? [];
+                    final filteredRecipes = recipes.where((recipe) {
+                      final matchesTitle = _titleFilter.isEmpty || recipe.title.toLowerCase().contains(_titleFilter.toLowerCase());
+                      final matchesIngredients = _selectedIngredientIds.isEmpty || recipe.ingredients.any((ri) => _selectedIngredientIds.contains(ri.ingredient.id));
+                      final matchesCategory = _selectedCategoryIds.isEmpty || recipe.categoryIds.any((cId) => _selectedCategoryIds.contains(cId));
+                      return matchesTitle && matchesIngredients && matchesCategory;
+                    }).toList();
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                      child: Text(
+                        'Recettes (${filteredRecipes.length})',
+                        style: GoogleFonts.poppins(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+
                 // LISTE
                 Expanded(
                   child: FutureBuilder<List<Recipe>>(

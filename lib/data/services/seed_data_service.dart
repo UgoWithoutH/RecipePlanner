@@ -219,6 +219,7 @@ Future<List<Recipe>> seedAllToFirestore() async {
       'rating': recipe.rating,
       'addExtraMeal': recipe.addExtraMeal,
       'userServings': userServings,
+      'url': 'https://example.com/recette-${i+1}',
     });
 
     // Update the recipe document to set its id field

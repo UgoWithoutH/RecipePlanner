@@ -1,14 +1,23 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class FirebaseIngredientRepository {
-    /// Fetch ingredients by a list of IDs
-    Future<List<Map<String, String>>> getIngredientsByIds(List<String> ids) async {
-      if (ids.isEmpty) return [];
-      final snap = await _ingredients.where(FieldPath.documentId, whereIn: ids).get();
-      return snap.docs
-          .map((doc) => {'id': doc.id, 'name': doc.get('name') as String})
-          .toList();
-    }
+      /// Retourne l'ingrédient (id, name, typeId) correspondant à un nom (non sensible à la casse), ou null si absent
+      Future<Map<String, String>?> getIngredientByNameCaseInsensitive(String name) async {
+        final snap = await _ingredients.get();
+        final lowerName = name.toLowerCase();
+        for (final doc in snap.docs) {
+          final docName = (doc.get('name') as String?)?.toLowerCase();
+          if (docName == lowerName) {
+            final data = doc.data() as Map<String, dynamic>?;
+            return {
+              'id': doc.id,
+              'name': doc.get('name') as String,
+              'typeId': (data != null && data.containsKey('typeId')) ? data['typeId'] as String : '',
+            };
+          }
+        }
+        return null;
+      }
   final CollectionReference _ingredients =
       FirebaseFirestore.instance.collection('ingredients');
 
@@ -30,6 +39,7 @@ class FirebaseIngredientRepository {
         })
         .toList();
   }
+
 
   /// Get the ID of an existing ingredient, or create it if it doesn't exist
   Future<String> getOrCreateIngredientId(String name) async {

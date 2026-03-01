@@ -25,10 +25,7 @@ class DefaultFirebaseOptions {
       case TargetPlatform.iOS:
         return ios;
       case TargetPlatform.macOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for macos - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return macos;
       case TargetPlatform.windows:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for windows - '
@@ -48,7 +45,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyBLB4BGYWwz41q8jbH6ZSwHmNTGP05Ix3c',
-    appId: '1:1027242987088:android:6b00c2e30a67967bf70b55',
+    appId: '1:1027242987088:android:b1ffe0d08f6d2152f70b55',
     messagingSenderId: '1027242987088',
     projectId: 'recipe-planner-22416',
     storageBucket: 'recipe-planner-22416.firebasestorage.app',
@@ -60,15 +57,29 @@ class DefaultFirebaseOptions {
     messagingSenderId: '1027242987088',
     projectId: 'recipe-planner-22416',
     storageBucket: 'recipe-planner-22416.firebasestorage.app',
+    androidClientId: '1027242987088-jv58qmi7j0ulb30ohnk4oaoh2pv62uj2.apps.googleusercontent.com',
+    iosClientId: '1027242987088-qk9da2duuo19tosd7rtm9h0lqe4geukg.apps.googleusercontent.com',
     iosBundleId: 'com.example.recipePlanner',
   );
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: "AIzaSyAc3DMyiOKdamMmOBgoCgx8z-YKawQw5P4",
-    authDomain: "recipe-planner-22416.firebaseapp.com",
-    projectId: "recipe-planner-22416",
-    storageBucket: "recipe-planner-22416.firebasestorage.app",
-    messagingSenderId: "1027242987088",
-    appId: "1:1027242987088:web:801b7c2b204cb421f70b55",
+    apiKey: 'AIzaSyAc3DMyiOKdamMmOBgoCgx8z-YKawQw5P4',
+    appId: '1:1027242987088:web:801b7c2b204cb421f70b55',
+    messagingSenderId: '1027242987088',
+    projectId: 'recipe-planner-22416',
+    authDomain: 'recipe-planner-22416.firebaseapp.com',
+    storageBucket: 'recipe-planner-22416.firebasestorage.app',
   );
+
+  static const FirebaseOptions macos = FirebaseOptions(
+    apiKey: 'AIzaSyAgN_VK-mQU5VM_VcUp2yNtoUWoh7Inf2Y',
+    appId: '1:1027242987088:ios:e3093c015f0b56e3f70b55',
+    messagingSenderId: '1027242987088',
+    projectId: 'recipe-planner-22416',
+    storageBucket: 'recipe-planner-22416.firebasestorage.app',
+    androidClientId: '1027242987088-jv58qmi7j0ulb30ohnk4oaoh2pv62uj2.apps.googleusercontent.com',
+    iosClientId: '1027242987088-qk9da2duuo19tosd7rtm9h0lqe4geukg.apps.googleusercontent.com',
+    iosBundleId: 'com.example.recipePlanner',
+  );
+
 }

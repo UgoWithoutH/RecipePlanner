@@ -14,9 +14,12 @@ class FirebaseUserRepository {
     }).toList();
   }
 
-  /// Add a new user
-  Future<void> addUser(String name) async {
-    await _users.add({'name': name});
+  /// Add an email to the allowed_emails whitelist.
+  /// The `users/{uid}` document is created automatically at first login.
+  Future<void> addUser(String email) async {
+    await FirebaseFirestore.instance
+        .collection('allowed_emails')
+        .add({'email': email});
   }
 
   /// Update user name

@@ -1,0 +1,78 @@
+rules_version = '2';
+
+// ============================================================================
+// Recipe Planner – Firestore Security Rules
+// ============================================================================
+//
+// Access model (binary: authorised / refused)
+// ─────────────────────────────────────────────
+//  • Only users whose UID exists as a document in `users/{uid}` are granted
+//    read access to any collection.
+//  • NO writes are allowed from client applications (admin / backend only).
+//  • A user may only read their OWN document in `users`.
+//  • Even if the Flutter app is modified or reversed, an absence of the
+//    `users/{uid}` document prevents ALL data access server-side.
+//
+// ============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // -------------------------------------------------------------------------
+    // Helper function
+    // -------------------------------------------------------------------------
+
+    /// Returns true if the caller is authenticated AND their UID exists as a
+    /// document in the `users` collection (created at first login).
+    function isAuthorised() {
+      return request.auth != null
+          && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // -------------------------------------------------------------------------
+    // allowed_emails collection  (admin-managed whitelist)
+    // -------------------------------------------------------------------------
+    // • Authenticated users can read (needed to check their own email).
+    // • No client-side writes.
+    // -------------------------------------------------------------------------
+    match /allowed_emails/{docId} {
+      allow read:  if request.auth != null;
+      allow write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // users collection  (one document per authenticated user, keyed by UID)
+    // -------------------------------------------------------------------------
+    // • A user may read/create/update ONLY their own document.
+    // • Delete is forbidden from client.
+    // -------------------------------------------------------------------------
+    match /users/{uid} {
+      allow read:   if request.auth != null && request.auth.uid == uid;
+      allow create: if request.auth != null && request.auth.uid == uid;
+      allow update: if request.auth != null && request.auth.uid == uid;
+      allow delete: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // recipes collection
+    // -------------------------------------------------------------------------
+    match /recipes/{recipeId} {
+      allow read, write: if isAuthorised();
+
+      match /{subCollection}/{docId} {
+        allow read, write: if isAuthorised();
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // All other collections (ingredients, categories, mealPlans, etc.)
+    // -------------------------------------------------------------------------
+    match /{collection}/{docId} {
+      allow read, write: if isAuthorised();
+
+      match /{subCollection}/{subDocId} {
+        allow read, write: if isAuthorised();
+      }
+    }
+  }
+}

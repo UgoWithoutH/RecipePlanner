@@ -10,7 +10,10 @@ import 'presentation/pages/recipes_page.dart';
 import 'presentation/pages/planner_page.dart';
 import 'presentation/pages/ingredients_page.dart';
 import 'presentation/pages/shopping_list_page.dart';
+import 'presentation/pages/login_page.dart';
+import 'presentation/pages/access_denied_page.dart';
 import 'presentation/providers/auth_notifier.dart';
+import 'presentation/providers/auth_state.dart';
 
 import 'firebase_options.dart';
 
@@ -90,23 +93,45 @@ class _AuthWrapper extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authNotifierProvider);
 
-    return authState.when(
-      loading: () => const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      ),
-      error: (_, __) => Scaffold(
-        body: Center(
-          child: ElevatedButton(
-            onPressed: () {
-              ref.read(authNotifierProvider.notifier).signInAnonymously();
-            },
-            child: const Text('Réessayer'),
+    return switch (authState) {
+      // ── Still determining session ──────────────────────────────────────────
+      AuthInitial() || AuthLoading() => const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
           ),
-        ),
-      ),
-      data: (user) =>
-          user != null ? const _DataLoader() : const SizedBox.shrink(),
-    );
+
+      // ── Valid session + UID present in Firestore ───────────────────────────
+      AuthAuthenticated() => const _DataLoader(),
+
+      // ── UID not in Firestore – access refused ──────────────────────────────
+      AuthDenied() => const AccessDeniedPage(),
+
+      // ── No session or user signed out ─────────────────────────────────────
+      AuthUnauthenticated() => const LoginPage(),
+
+      // ── Unexpected error ───────────────────────────────────────────────────
+      AuthError(:final message) => Scaffold(
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                    const SizedBox(height: 16),
+                    Text(message, textAlign: TextAlign.center),
+                    const SizedBox(height: 24),
+                    ElevatedButton(
+                      onPressed: () => ref
+                          .read(authNotifierProvider.notifier)
+                          .signOut(),
+                      child: const Text('Retour à la connexion'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+    };
   }
 }
 

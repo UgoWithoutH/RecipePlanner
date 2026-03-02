@@ -39,19 +39,23 @@ Future<void> _loadTestDataIfNeeded() async {
 }
 
 Future<void> _purgeAllData(FirebaseFirestore firestore) async {
-  final collections = ['recipes', 'ingredients', 'categories', 'users', 'mealPlans', 'mealPlanHistory', 'shopping_lists'];
+  // 'users' documents are NOT deleted (managed manually in Firestore).
+  // Only their recipeServings subcollection is cleared so stale entries
+  // (from old recipe IDs) don't accumulate between seed runs.
+  final usersSnap = await firestore.collection('users').get();
+  for (final userDoc in usersSnap.docs) {
+    final servingsSnap = await userDoc.reference.collection('recipeServings').get();
+    for (final sub in servingsSnap.docs) {
+      await sub.reference.delete();
+    }
+  }
+
+  final collections = ['recipes', 'ingredients', 'categories', 'mealPlans', 'mealPlanHistory', 'shopping_lists'];
   for (final col in collections) {
     final snap = await firestore.collection(col).get();
     for (final doc in snap.docs) {
-      // Delete known subcollections before the document itself
       if (col == 'recipes') {
         final subSnap = await doc.reference.collection('userServings').get();
-        for (final sub in subSnap.docs) {
-          await sub.reference.delete();
-        }
-      }
-      if (col == 'users') {
-        final subSnap = await doc.reference.collection('recipeServings').get();
         for (final sub in subSnap.docs) {
           await sub.reference.delete();
         }

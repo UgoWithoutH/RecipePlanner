@@ -901,11 +901,19 @@ class _PlannerPageState extends State<PlannerPage> {
 
   Future<List<UserRecipeServing>> _loadServings() async {
     final users = await _userRepo.getUsers();
+    print('[SERVINGS] users loaded: ${users.length}');
     final all = <UserRecipeServing>[];
     for (final user in users) {
+      print('[SERVINGS] fetching servings for user=${user.id}');
       final stream = _userServingRepo.watchForUser(user.id);
-      all.addAll(await stream.first);
+      final list = await stream.first;
+      print('[SERVINGS]   -> ${list.length} servings found');
+      for (final s in list) {
+        print('[SERVINGS]     recipeId=${s.recipeId} lunch=${s.lunchServings} dinner=${s.dinnerServings}');
+      }
+      all.addAll(list);
     }
+    print('[SERVINGS] total servings: ${all.length}');
     return all;
   }
 

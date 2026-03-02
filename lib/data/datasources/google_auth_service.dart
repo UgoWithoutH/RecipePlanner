@@ -66,8 +66,11 @@ class GoogleAuthService {
   }
 
   /// Checks whether the currently authenticated Firebase user (if any) has a
-  /// valid `users/{uid}` document in Firestore. Called at app start to restore
+  /// valid `users` document in Firestore. Called at app start to restore
   /// session — does NOT re-check `allowed_emails` (already done at first login).
+  ///
+  /// Looks up by UID first, then falls back to email (handles seeded users
+  /// whose document ID differs from the Firebase Auth UID).
   ///
   /// Returns [AppUser] if valid, null if no session or document absent.
   /// Throws [AccessDeniedException] if the session is found but not authorised.
@@ -86,12 +89,28 @@ class GoogleAuthService {
 
     if (user == null) return null;
 
+    // Try by UID first
     final doc = await _firestore.collection('users').doc(user.uid).get();
-    if (!doc.exists) {
-      await signOut();
-      throw const AccessDeniedException();
+    if (doc.exists) {
+      return AppUser.fromFirestore(doc.id, doc.data()!);
     }
-    return AppUser.fromFirestore(doc.id, doc.data()!);
+
+    // Fallback: look up by email (e.g. user document was seeded with a different ID)
+    final email = user.email;
+    if (email != null) {
+      final emailQuery = await _firestore
+          .collection('users')
+          .where('email', isEqualTo: email)
+          .limit(1)
+          .get();
+      if (emailQuery.docs.isNotEmpty) {
+        return AppUser.fromFirestore(
+            emailQuery.docs.first.id, emailQuery.docs.first.data());
+      }
+    }
+
+    await signOut();
+    throw const AccessDeniedException();
   }
 
   /// Signs out from Firebase.
@@ -127,8 +146,23 @@ class GoogleAuthService {
       throw const AccessDeniedException();
     }
 
-    // Step 2 – upsert users/{uid}
-    final userRef = _firestore.collection('users').doc(firebaseUser.uid);
+    // Step 2 – find existing user document by email (handles seeded users
+    // whose document ID differs from the Firebase Auth UID), or create at
+    // users/{uid} for new users.
+    final existingQuery = await _firestore
+        .collection('users')
+        .where('email', isEqualTo: email)
+        .limit(1)
+        .get();
+
+    late DocumentReference userRef;
+    if (existingQuery.docs.isNotEmpty) {
+      // Pre-existing user (e.g. seeded doc) – update name, keep document ID
+      userRef = existingQuery.docs.first.reference;
+    } else {
+      // New user – create at users/{uid}
+      userRef = _firestore.collection('users').doc(firebaseUser.uid);
+    }
     await userRef.set({
       'email': email,
       'name': firebaseUser.displayName ?? '',
@@ -136,7 +170,7 @@ class GoogleAuthService {
 
     // Step 3 – return AppUser
     final doc = await userRef.get();
-    return AppUser.fromFirestore(doc.id, doc.data()!);
+    return AppUser.fromFirestore(doc.id, doc.data()! as Map<String, dynamic>);
   }
 }
 

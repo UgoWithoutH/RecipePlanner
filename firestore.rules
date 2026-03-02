@@ -43,14 +43,25 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     // users collection  (one document per authenticated user, keyed by UID)
     // -------------------------------------------------------------------------
-    // • A user may read/create/update ONLY their own document.
-    // • Delete is forbidden from client.
+    // • get  (single doc): own document only.
+    // • list (collection query): any authenticated user — needed for the
+    //   email-based lookup in _verifyUserAccess (runs before the users/{uid}
+    //   doc exists) and for the seed reading all users.
+    // • create/update: own document only.
+    // • delete: forbidden from client.
+    // • recipeServings subcollection: any authorised user may read/write so
+    //   the seed can create servings for every user in one pass.
     // -------------------------------------------------------------------------
     match /users/{uid} {
-      allow read:   if request.auth != null && request.auth.uid == uid;
+      allow get:    if request.auth != null && request.auth.uid == uid;
+      allow list:   if request.auth != null;
       allow create: if request.auth != null && request.auth.uid == uid;
       allow update: if request.auth != null && request.auth.uid == uid;
       allow delete: if false;
+
+      match /recipeServings/{docId} {
+        allow read, write, delete: if isAuthorised();
+      }
     }
 
     // -------------------------------------------------------------------------

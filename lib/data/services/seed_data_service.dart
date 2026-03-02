@@ -4,9 +4,10 @@ import '../../domain/entities/recipe.dart';
 import '../../domain/entities/recipe_ingredient.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// Seeds all test data: users, ingredients, recipes, categories and user servings
+/// Seeds all test data: ingredients, recipes, categories and user servings.
+/// Users are NOT seeded here — they are managed manually in Firestore.
+/// Servings are created for every user currently present in the `users` collection.
 Future<void> seedAllTestData() async {
-  await seedTestUsersToFirestore();
   await seedAllToFirestore();
 }
 
@@ -95,8 +96,8 @@ Future<Map<String, String>> seedIngredientTypesToFirestore() async {
 Future<List<String>> seedTestUsersToFirestore() async {
   final firestore = FirebaseFirestore.instance;
   final userDatas = [
-    {'id': 'userA', 'name': 'Alice', 'email': 'alice@test.com'},
-    {'id': 'userB', 'name': 'Bob', 'email': 'bob@test.com'},
+    {'id': 'user_ugo', 'name': 'Ugo', 'email': 'ugo.vignon@gmail.com'},
+    {'id': 'user_test', 'name': 'Test', 'email': 'test@test.com'},
   ];
   List<String> userIds = [];
   for (final user in userDatas) {
@@ -110,7 +111,8 @@ Future<List<String>> seedTestUsersToFirestore() async {
   return userIds;
 }
 
-/// Populates Firestore with all test ingredients and recipes
+/// Populates Firestore with all test ingredients and recipes.
+/// Creates UserRecipeServings for every user in the `users` collection.
 Future<List<Recipe>> seedAllToFirestore() async {
   final firestore = FirebaseFirestore.instance;
   final categoryIds = await seedCategoriesToFirestore();
@@ -119,80 +121,19 @@ Future<List<Recipe>> seedAllToFirestore() async {
   final now = DateTime.now();
   List<Recipe> seededRecipes = [];
 
+  // Load all users from Firestore (managed manually)
+  final usersSnap = await firestore.collection('users').get();
+  final existingUsers = usersSnap.docs.map((doc) {
+    final data = doc.data();
+    return {'id': doc.id, 'name': (data['name'] as String? ?? doc.id)};
+  }).toList();
+
   for (int i = 0; i < recipes.length; i++) {
     final recipe = recipes[i];
-    // User servings test cases for planning algorithm
-    // Each user has at least 1 portion for every recipe
-    List<Map<String, dynamic>> userServings = [];
-
-    switch (i) {
-      case 0:
-        userServings = [
-          {'userId': 'userA', 'portion': 2, 'date': now.toIso8601String()},
-          {'userId': 'userB', 'portion': 2, 'date': now.toIso8601String()},
-        ];
-        break;
-      case 1:
-        userServings = [
-          {'userId': 'userA', 'portion': 2, 'date': now.toIso8601String()},
-          {'userId': 'userB', 'portion': 2, 'date': now.toIso8601String()},
-        ];
-        break;
-      case 2:
-        userServings = [
-          {'userId': 'userA', 'portion': 2, 'date': now.toIso8601String()},
-          {'userId': 'userB', 'portion': 2, 'date': now.toIso8601String()},
-        ];
-        break;
-      case 3:
-        userServings = [
-          {'userId': 'userA', 'portion': 2, 'date': now.toIso8601String()},
-          {'userId': 'userB', 'portion': 2, 'date': now.toIso8601String()},
-        ];
-        break;
-      case 4:
-        userServings = [
-          {'userId': 'userA', 'portion': 2, 'date': now.toIso8601String()},
-          {'userId': 'userB', 'portion': 2, 'date': now.toIso8601String()},
-        ];
-        break;
-      case 5:
-        userServings = [
-          {'userId': 'userA', 'portion': 2, 'date': now.toIso8601String()},
-          {'userId': 'userB', 'portion': 2, 'date': now.toIso8601String()},
-        ];
-        break;
-      case 6:
-        userServings = [
-          {'userId': 'userA', 'portion': 2, 'date': now.toIso8601String()},
-          {'userId': 'userB', 'portion': 2, 'date': now.toIso8601String()},
-        ];
-        break;
-      case 7:
-        userServings = [
-          {'userId': 'userA', 'portion': 2, 'date': now.toIso8601String()},
-          {'userId': 'userB', 'portion': 2, 'date': now.toIso8601String()},
-        ];
-        break;
-      case 8:
-        userServings = [
-          {'userId': 'userA', 'portion': 2, 'date': now.toIso8601String()},
-          {'userId': 'userB', 'portion': 2, 'date': now.toIso8601String()},
-        ];
-        break;
-      case 9:
-        userServings = [
-          {'userId': 'userA', 'portion': 2, 'date': now.toIso8601String()},
-          {'userId': 'userB', 'portion': 2, 'date': now.toIso8601String()},
-        ];
-        break;
-      default:
-        userServings = [
-          {'userId': 'userA', 'portion': 2, 'date': now.toIso8601String()},
-          {'userId': 'userB', 'portion': 2, 'date': now.toIso8601String()},
-        ];
-        break;
-    }
+    // Build user servings for all existing users (2 portions each)
+    final List<Map<String, dynamic>> userServings = existingUsers.map((u) =>
+      {'userId': u['id'], 'portion': 2, 'date': now.toIso8601String()}
+    ).toList();
 
     // Add recipe document (without id field)
     // Store the category ID (not the name) for consistent referencing
@@ -226,14 +167,14 @@ Future<List<Recipe>> seedAllToFirestore() async {
     await firestore.collection('recipes').doc(recipeRef.id).update({'id': recipeRef.id});
 
     // Add user servings to user_recipe_servings collection
-    final userMap = {'userA': 'Alice', 'userB': 'Bob'};
+    final userNameMap = {for (final u in existingUsers) u['id']!: u['name']!};
 
     for (final serving in userServings) {
       final lunch = (serving['portion'] as int) ~/ 2;
       final dinner = (serving['portion'] as int) - lunch;
       final data = {
         'userId': serving['userId'],
-        'userName': userMap[serving['userId']] ?? serving['userId'],
+        'userName': userNameMap[serving['userId']] ?? serving['userId'],
         'lunchServings': lunch,
         'dinnerServings': dinner,
         'recipeId': recipeRef.id,

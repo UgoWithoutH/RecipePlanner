@@ -8,6 +8,7 @@ import '../../domain/entities/shopping_list.dart';
 import '../../domain/usecases/shopping_list_generator.dart';
 import '../../data/repositories/firebase_ingredient_type_repository.dart';
 import '../../domain/entities/ingredient_type.dart';
+import '../../core/constants/unit.dart';
 
 class ShoppingListPage extends StatefulWidget {
   const ShoppingListPage({super.key});
@@ -453,7 +454,7 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    '${widget.formatQuantity(item.quantity)} ${item.unit}',
+                    '${widget.formatQuantity(item.quantity)} ${Unit.labelOf(item.unit)}',
                     style: GoogleFonts.poppins(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,

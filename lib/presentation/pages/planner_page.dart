@@ -61,6 +61,10 @@ class _PlannerPageState extends State<PlannerPage> {
   /// ID de la recette en cours de chargement avant navigation (null = aucune)
   String? _loadingRecipeId;
 
+  /// Banned recipes per slot for the auto-change feature.
+  /// Key: slot key (date_mealType), Value: set of banned recipe IDs.
+  final Map<String, Set<String>> _autoChangeBannedRecipes = {};
+
   static const _kPrefKeyCategories = 'selected_category_ids';
   static const _kPrefKeyDuration = 'planner_duration_days';
 
@@ -750,6 +754,8 @@ class _PlannerPageState extends State<PlannerPage> {
     }
 
     setState(() => _isLoading = true);
+    // New plan — clear all auto-change bans
+    _autoChangeBannedRecipes.clear();
     try {
       final allRecipes = await _loadRecipes();
       // History duration is always based on the total number of recipes (all categories)
@@ -812,9 +818,15 @@ class _PlannerPageState extends State<PlannerPage> {
       // Filter historical meals to only include the last N days (N = total recipe count)
       final now = DateTime.now();
       final cutoffDate = now.subtract(Duration(days: _maxHistoryDays));
+      final currentUserIds = users.map((u) => u.id).toSet();
       final filteredHistoryMeals = _mealHistory.entries
           .where((entry) => !entry.key.isBefore(cutoffDate))
           .expand((entry) => entry.value)
+          // Discard meals whose userServings belong to stale/deleted users.
+          // This prevents leftover injection from old seed data (e.g. userA/userB)
+          // when the current user set has changed.
+          .where((meal) => meal.userServings.isEmpty ||
+              meal.userServings.keys.any((uid) => currentUserIds.contains(uid)))
           .toList();
 
       final plan = MealPlanningService.generateMealPlan(
@@ -857,6 +869,242 @@ class _PlannerPageState extends State<PlannerPage> {
 
   Future<List<Recipe>> _loadRecipes() async {
     return FirebaseRecipeRepository().fetchAllRecipes();
+  }
+
+  String _slotKey(DateTime date, MealType type) =>
+      '${date.year}-${date.month}-${date.day}_${type.name}';
+
+  /// Automatically picks a new recipe for [mealToChange] using the planning
+  /// algorithm, accumulating banned recipes on repeated presses.
+  Future<void> _autoChangeMealRecipe(Meal mealToChange) async {
+    if (_generatedMealPlan == null) return;
+    setState(() => _isLoading = true);
+    try {
+      final slotKey = _slotKey(mealToChange.date, mealToChange.type);
+
+      // Accumulate bans for this slot
+      final banned = _autoChangeBannedRecipes.putIfAbsent(slotKey, () => {});
+      final wasAlreadyBanned = banned.contains(mealToChange.recipe.id);
+      banned.add(mealToChange.recipe.id);
+
+      final allRecipes = await _loadRecipes();
+      final users = await _userRepo.getUsers();
+      final servings = await _loadServings();
+
+      // Exclude banned recipes so the algo can't pick them
+      final candidateRecipes = allRecipes
+          .where((r) => !banned.contains(r.id))
+          .toList();
+
+      // All recipes have been seen — clear the ban cache and notify user
+      if (candidateRecipes.isEmpty) {
+        banned.clear(); // Reset so the user can shuffle again from scratch
+        setState(() => _isLoading = false);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.info_outline_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Toutes les recettes ont été proposées. Le cache a été réinitialisé.',
+                    style: GoogleFonts.poppins(color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: const Color(0xFF6A5AE0),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: const EdgeInsets.all(16),
+            elevation: 4,
+          ),
+        );
+        return;
+      }
+
+      // If this is the first occurrence of an addExtraMeal recipe, check whether
+      // the leftover (second occurrence) is still present in the plan and warn the user.
+      // Only show the dialog the first time (not on repeated shuffles after "Annuler").
+      if (!wasAlreadyBanned && mealToChange.recipe.addExtraMeal && !mealToChange.isLeftoverMeal) {
+        final nextDay = mealToChange.date.add(const Duration(days: 1));
+        final leftoverExists = _generatedMealPlan!.meals.any((m) =>
+            m.recipe.id == mealToChange.recipe.id &&
+            m.date.year == nextDay.year &&
+            m.date.month == nextDay.month &&
+            m.date.day == nextDay.day &&
+            m.isLeftoverMeal);
+
+        if (leftoverExists) {
+          setState(() => _isLoading = false);
+          if (!mounted) return;
+          final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Text(
+                'Recette cuisinée pour 2 repas',
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+              ),
+              content: Text(
+                'Cette recette est prévue pour 2 repas (aujourd\'hui + lendemain). '
+                'Remplacer supprimera également le repas du lendemain.',
+                style: GoogleFonts.poppins(),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: Text('Annuler', style: GoogleFonts.poppins()),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6A5AE0),
+                    foregroundColor: Colors.white,
+                  ),
+                  child: Text('Remplacer', style: GoogleFonts.poppins()),
+                ),
+              ],
+            ),
+          );
+          if (confirmed != true) {
+            // User cancelled -- remove from banned so the dialog shows again next time
+            banned.remove(mealToChange.recipe.id);
+            return;
+          }
+          setState(() => _isLoading = true);
+        }
+      }
+
+      // Run the planning algorithm for a 1-day window starting on the meal's date.
+      // Pass all other plan slots as recentMeals so the algo diversifies relative
+      // to everything already placed (past + future), using the shuffled slot as pivot.
+      final currentUserIds = users.map((u) => u.id).toSet();
+      final filteredHistory = _mealHistory.entries
+          .expand((e) => e.value)
+          .where((m) => m.userServings.isEmpty ||
+              m.userServings.keys.any((uid) => currentUserIds.contains(uid)))
+          .toList();
+
+      final otherPlanMeals = _generatedMealPlan!.meals.where((m) =>
+          !(m.date.year == mealToChange.date.year &&
+            m.date.month == mealToChange.date.month &&
+            m.date.day == mealToChange.date.day &&
+            m.type == mealToChange.type)).toList();
+
+      // Exclude banned addExtraMeal meals from recentMeals so the algo's
+      // "historical leftover injection" block cannot reinstate a banned recipe
+      // into the shuffled slot (it runs before scoring and ignores candidateRecipes).
+      final recentMealsForAlgo = [...filteredHistory, ...otherPlanMeals]
+          .where((m) => !(banned.contains(m.recipe.id) && m.recipe.addExtraMeal))
+          .toList();
+
+      final tempPlan = MealPlanningService.generateMealPlan(
+        recipes: candidateRecipes,
+        servings: servings,
+        users: users,
+        startDate: mealToChange.date,
+        durationDays: 1,
+        recentMeals: recentMealsForAlgo,
+        pantryItems: _pantryIngredients,
+        selectedCategories: _selectedCategories.toList(),
+        referenceDate: mealToChange.date,
+      );
+
+      // Pick the meal for the correct type
+      final newMeal = tempPlan.meals.where((m) => m.type == mealToChange.type).firstOrNull;
+      if (newMeal == null) return;
+
+      // Clear bans for all OTHER slots; keep accumulating for this slot
+      _autoChangeBannedRecipes.removeWhere((key, _) => key != slotKey);
+
+      setState(() => _isLoading = false);
+      await _changeMealRecipe(mealToChange, newMeal.recipe, showSnackbar: false);
+
+      // If the new recipe has addExtraMeal=true, handle leftover logic.
+      if (newMeal.recipe.addExtraMeal && _generatedMealPlan != null) {
+        // Check if the previous day already has the same recipe (non-leftover).
+        // In that case, the current slot should become a leftover of the previous day.
+        final prevDay = mealToChange.date.subtract(const Duration(days: 1));
+        final prevDayHasSameRecipe = _generatedMealPlan!.meals.any((m) =>
+            m.recipe.id == newMeal.recipe.id &&
+            m.date.year == prevDay.year &&
+            m.date.month == prevDay.month &&
+            m.date.day == prevDay.day &&
+            m.type == mealToChange.type &&
+            !m.isLeftoverMeal);
+
+        if (prevDayHasSameRecipe) {
+          // Mark the current slot as a leftover of the previous day's meal.
+          final updatedMeals = List<Meal>.from(_generatedMealPlan!.meals);
+          final currentIndex = updatedMeals.indexWhere((m) =>
+              m.recipe.id == newMeal.recipe.id &&
+              m.date.year == mealToChange.date.year &&
+              m.date.month == mealToChange.date.month &&
+              m.date.day == mealToChange.date.day &&
+              m.type == mealToChange.type);
+          if (currentIndex != -1) {
+            updatedMeals[currentIndex] = Meal(
+              recipe: newMeal.recipe,
+              date: mealToChange.date,
+              type: mealToChange.type,
+              totalServings: updatedMeals[currentIndex].totalServings,
+              userServings: updatedMeals[currentIndex].userServings,
+              recipeMultiplier: updatedMeals[currentIndex].recipeMultiplier,
+              isLeftoverMeal: true,
+            );
+            final updatedPlan = MealPlan(
+              id: _generatedMealPlan!.id,
+              startDate: _generatedMealPlan!.startDate,
+              durationDays: _generatedMealPlan!.durationDays,
+              meals: updatedMeals,
+              createdAt: _generatedMealPlan!.createdAt,
+              pantryItems: _generatedMealPlan!.pantryItems,
+              selectedCategories: _generatedMealPlan!.selectedCategories,
+            );
+            await _mealPlanRepo.saveMealPlan(updatedPlan);
+            await ShoppingListGenerator().generateAndSaveShoppingList(updatedPlan);
+            setState(() => _generatedMealPlan = updatedPlan);
+          }
+        } else {
+          // No previous-day same recipe — create a leftover on the next day if empty.
+          final nextDay = mealToChange.date.add(const Duration(days: 1));
+          final nextDaySlotOccupied = _generatedMealPlan!.meals.any((m) =>
+              m.date.year == nextDay.year &&
+              m.date.month == nextDay.month &&
+              m.date.day == nextDay.day &&
+              m.type == mealToChange.type);
+
+          if (!nextDaySlotOccupied) {
+            final leftover = Meal(
+              recipe: newMeal.recipe,
+              date: nextDay,
+              type: mealToChange.type,
+              totalServings: newMeal.totalServings,
+              userServings: newMeal.userServings,
+              recipeMultiplier: newMeal.recipeMultiplier,
+              isLeftoverMeal: true,
+            );
+            final updatedMeals = List<Meal>.from(_generatedMealPlan!.meals)..add(leftover);
+            final updatedPlan = MealPlan(
+              id: _generatedMealPlan!.id,
+              startDate: _generatedMealPlan!.startDate,
+              durationDays: _generatedMealPlan!.durationDays,
+              meals: updatedMeals,
+              createdAt: _generatedMealPlan!.createdAt,
+              pantryItems: _generatedMealPlan!.pantryItems,
+              selectedCategories: _generatedMealPlan!.selectedCategories,
+            );
+            await _mealPlanRepo.saveMealPlan(updatedPlan);
+            await ShoppingListGenerator().generateAndSaveShoppingList(updatedPlan);
+            setState(() => _generatedMealPlan = updatedPlan);
+          }
+        }
+      }
+    } finally {
+      setState(() => _isLoading = false);
+    }
   }
 
   /// Navigue vers RecipeDetailPage avec l'ID de la recette.
@@ -980,12 +1228,14 @@ class _PlannerPageState extends State<PlannerPage> {
     try {
       final updatedMeals = List<Meal>.from(_generatedMealPlan!.meals);
 
-      // Find the index of the meal to delete
+      // Find the index of the meal to delete (slot = date + type + isLeftoverMeal).
       final indexToDelete = updatedMeals.indexWhere(
         (m) =>
-            m.recipe.id == mealToDelete.recipe.id &&
-            m.date == mealToDelete.date &&
-            m.type == mealToDelete.type,
+            m.date.year == mealToDelete.date.year &&
+            m.date.month == mealToDelete.date.month &&
+            m.date.day == mealToDelete.date.day &&
+            m.type == mealToDelete.type &&
+            m.isLeftoverMeal == mealToDelete.isLeftoverMeal,
       );
 
       if (indexToDelete == -1) return;
@@ -1002,49 +1252,6 @@ class _PlannerPageState extends State<PlannerPage> {
               m.date.day == nextDay.day &&
               m.isLeftoverMeal,
         );
-      }
-
-      // If this is a leftover of a recipe with addExtraMeal
-      if (mealToDelete.isLeftoverMeal && mealToDelete.recipe.addExtraMeal) {
-        // Find the first occurrence (non-leftover) and update it to remove addExtraMeal flag
-        final firstOccurrenceIndex = updatedMeals.indexWhere(
-          (m) =>
-              m.recipe.id == mealToDelete.recipe.id &&
-              !m.isLeftoverMeal &&
-              m.date.isBefore(mealToDelete.date),
-        );
-
-        if (firstOccurrenceIndex != -1) {
-          final firstMeal = updatedMeals[firstOccurrenceIndex];
-
-          // Create a copy of the recipe with addExtraMeal set to false
-          final updatedRecipe = Recipe(
-            id: firstMeal.recipe.id,
-            title: firstMeal.recipe.title,
-            description: firstMeal.recipe.description,
-            preparationTime: firstMeal.recipe.preparationTime,
-            cookingTime: firstMeal.recipe.cookingTime,
-            servings: firstMeal.recipe.servings,
-            categoryIds: firstMeal.recipe.categoryIds,
-            ingredients: firstMeal.recipe.ingredients,
-            instructions: firstMeal.recipe.instructions,
-            createdAt: firstMeal.recipe.createdAt,
-            isFavorite: firstMeal.recipe.isFavorite,
-            rating: firstMeal.recipe.rating,
-            addExtraMeal: false, // Remove the flag
-          );
-
-          // Update the meal with the new recipe
-          updatedMeals[firstOccurrenceIndex] = Meal(
-            recipe: updatedRecipe,
-            date: firstMeal.date,
-            type: firstMeal.type,
-            totalServings: firstMeal.totalServings,
-            userServings: firstMeal.userServings,
-            recipeMultiplier: firstMeal.recipeMultiplier,
-            isLeftoverMeal: firstMeal.isLeftoverMeal,
-          );
-        }
       }
 
       // Delete the main meal
@@ -1091,7 +1298,7 @@ class _PlannerPageState extends State<PlannerPage> {
     }
   }
 
-  Future<void> _changeMealRecipe(Meal mealToUpdate, Recipe newRecipe) async {
+  Future<void> _changeMealRecipe(Meal mealToUpdate, Recipe newRecipe, {bool showSnackbar = true}) async {
     setState(() => _isLoading = true);
     try {
       // Check if the meal belongs to history
@@ -1105,9 +1312,11 @@ class _PlannerPageState extends State<PlannerPage> {
         final historyMeals = _mealHistory[mealDate] ?? [];
         final indexToUpdate = historyMeals.indexWhere(
           (m) =>
-              m.recipe.id == mealToUpdate.recipe.id &&
-              m.date == mealToUpdate.date &&
-              m.type == mealToUpdate.type,
+              m.date.year == mealToUpdate.date.year &&
+              m.date.month == mealToUpdate.date.month &&
+              m.date.day == mealToUpdate.date.day &&
+              m.type == mealToUpdate.type &&
+              m.recipe.id == mealToUpdate.recipe.id,
         );
         if (indexToUpdate == -1) return;
 
@@ -1132,6 +1341,7 @@ class _PlannerPageState extends State<PlannerPage> {
         setState(() {});
 
         if (!mounted) return;
+        if (showSnackbar)
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
@@ -1155,12 +1365,16 @@ class _PlannerPageState extends State<PlannerPage> {
       if (_generatedMealPlan == null) return;
       final updatedMeals = List<Meal>.from(_generatedMealPlan!.meals);
 
-      // Find the index of the meal to update
+      // Find the index of the meal to update.
+      // Identify the slot by (date, type, isLeftoverMeal) — not by recipe.id —
+      // so the lookup is robust even when the plan has been reloaded from Firestore.
       final indexToUpdate = updatedMeals.indexWhere(
         (m) =>
-            m.recipe.id == mealToUpdate.recipe.id &&
-            m.date == mealToUpdate.date &&
-            m.type == mealToUpdate.type,
+            m.date.year == mealToUpdate.date.year &&
+            m.date.month == mealToUpdate.date.month &&
+            m.date.day == mealToUpdate.date.day &&
+            m.type == mealToUpdate.type &&
+            m.isLeftoverMeal == mealToUpdate.isLeftoverMeal,
       );
 
       if (indexToUpdate == -1) return;
@@ -1178,45 +1392,6 @@ class _PlannerPageState extends State<PlannerPage> {
               m.date.day == nextDay.day &&
               m.isLeftoverMeal,
         );
-      }
-
-      // If previous WAS a leftover, unflag the original
-      if (mealToUpdate.isLeftoverMeal && mealToUpdate.recipe.addExtraMeal) {
-        final firstOccurrenceIndex = updatedMeals.indexWhere(
-          (m) =>
-              m.recipe.id == mealToUpdate.recipe.id &&
-              !m.isLeftoverMeal &&
-              m.date.isBefore(mealToUpdate.date),
-        );
-
-        if (firstOccurrenceIndex != -1) {
-          final firstMeal = updatedMeals[firstOccurrenceIndex];
-          final updatedOriginRecipe = Recipe(
-            id: firstMeal.recipe.id,
-            title: firstMeal.recipe.title,
-            description: firstMeal.recipe.description,
-            preparationTime: firstMeal.recipe.preparationTime,
-            cookingTime: firstMeal.recipe.cookingTime,
-            servings: firstMeal.recipe.servings,
-            categoryIds: firstMeal.recipe.categoryIds,
-            ingredients: firstMeal.recipe.ingredients,
-            instructions: firstMeal.recipe.instructions,
-            createdAt: firstMeal.recipe.createdAt,
-            isFavorite: firstMeal.recipe.isFavorite,
-            rating: firstMeal.recipe.rating,
-            addExtraMeal: false, // Remove flag
-          );
-
-          updatedMeals[firstOccurrenceIndex] = Meal(
-            recipe: updatedOriginRecipe,
-            date: firstMeal.date,
-            type: firstMeal.type,
-            totalServings: firstMeal.totalServings,
-            userServings: firstMeal.userServings,
-            recipeMultiplier: firstMeal.recipeMultiplier,
-            isLeftoverMeal: firstMeal.isLeftoverMeal,
-          );
-        }
       }
 
       // --- UPDATE CURRENT SLOT ---
@@ -1252,6 +1427,7 @@ class _PlannerPageState extends State<PlannerPage> {
       });
 
       if (!mounted) return;
+      if (showSnackbar)
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Row(
@@ -2085,7 +2261,10 @@ class _PlannerPageState extends State<PlannerPage> {
         )
         .value;
 
-    final isPastDay = _selectedMealDate!.isBefore(DateTime.now());
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final selectedDay = DateTime(_selectedMealDate!.year, _selectedMealDate!.month, _selectedMealDate!.day);
+    final isPastDay = selectedDay.isBefore(today);
     final mealsOfDay = isPastDay && historyMeals.isNotEmpty
         ? historyMeals
         : (_generatedMealPlan?.meals.where((meal) {
@@ -2248,7 +2427,15 @@ class _PlannerPageState extends State<PlannerPage> {
                                       ),
                                     ],
                                     if (meal.recipe.addExtraMeal &&
-                                        !meal.isLeftoverMeal) ...[
+                                        !meal.isLeftoverMeal &&
+                                        (_generatedMealPlan?.meals.any((m) {
+                                          final nextDay = meal.date.add(const Duration(days: 1));
+                                          return m.recipe.id == meal.recipe.id &&
+                                              m.date.year == nextDay.year &&
+                                              m.date.month == nextDay.month &&
+                                              m.date.day == nextDay.day &&
+                                              m.isLeftoverMeal;
+                                        }) ?? false)) ...[
                                       const SizedBox(height: 6),
                                       Row(
                                         children: [
@@ -2323,6 +2510,18 @@ class _PlannerPageState extends State<PlannerPage> {
               ),
               // Vertical Divider
               Container(width: 2, color: actionColor),
+              if (!isPastDay) ...[  
+                // Auto-change (shuffle) button
+                InkWell(
+                  onTap: () => _autoChangeMealRecipe(meal),
+                  child: Container(
+                    width: 46,
+                    alignment: Alignment.center,
+                    child: Icon(Icons.autorenew, color: actionColor, size: 24),
+                  ),
+                ),
+                Container(width: 2, color: actionColor),
+              ],
               // Swap/Change Meal Button
               InkWell(
                 onTap: () async {
@@ -2360,13 +2559,16 @@ class _PlannerPageState extends State<PlannerPage> {
                       ),
                     );
                     if (confirmed != true) return;
+                  } else {
+                    // Manual change — clear all bans
+                    _autoChangeBannedRecipes.clear();
                   }
                   _showRecipeSelector(mealToUpdate: meal, requireConfirmation: false);
                 },
                 child: Container(
                   width: 50,
                   alignment: Alignment.center,
-                  child: Icon(Icons.swap_horiz, color: actionColor, size: 28),
+                  child: Icon(Icons.search, color: actionColor, size: 24),
                 ),
               ),
             ],

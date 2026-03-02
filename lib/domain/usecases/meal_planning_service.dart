@@ -44,6 +44,7 @@ class MealPlanningService {
     List<Meal>? userSelectedMeals,
     List<RecipeIngredient> pantryItems = const [],
     List<String> selectedCategories = const [],
+    DateTime? referenceDate,
   }) {
     if (recipes.isEmpty || users.isEmpty) {
       throw Exception('Recipes and users are required');
@@ -137,10 +138,14 @@ class MealPlanningService {
 
     // Historique : recettes mangées récemment (toutes passées en paramètre)
     // Map recipeId -> daysAgo (plus petit daysAgo si plusieurs repas)
+    // referenceDate allows computing distances relative to a pivot (e.g. the shuffled meal)
+    // instead of now — meals closer to the pivot are penalised more, symmetrically
+    // for both past AND future slots.
     final now = DateTime.now();
+    final pivot = referenceDate ?? now;
     if (recentMeals != null && recentMeals.isNotEmpty) {
       for (final meal in recentMeals) {
-        final daysAgo = now.difference(meal.date).inDays;
+        final daysAgo = pivot.difference(meal.date).inDays.abs();
         if (!recentRecipeDaysAgo.containsKey(meal.recipe.id) || daysAgo < recentRecipeDaysAgo[meal.recipe.id]!) {
           recentRecipeDaysAgo[meal.recipe.id] = daysAgo;
         }

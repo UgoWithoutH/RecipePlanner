@@ -214,7 +214,7 @@ class _HomePageState extends State<HomePage> {
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.calendar_today),
-            label: 'Planner',
+            label: 'Planning',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.shopping_cart),
@@ -222,11 +222,11 @@ class _HomePageState extends State<HomePage> {
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.list),
-            label: 'Recipes',
+            label: 'Recettes',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.kitchen),
-            label: 'Ingredients',
+            label: 'Ingrédients',
           ),
         ],
       ),

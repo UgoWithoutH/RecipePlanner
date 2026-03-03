@@ -8,7 +8,6 @@ import '../../core/constants/unit.dart';
 import '../../data/repositories/firebase_meal_plan_repository.dart';
 import '../../data/repositories/firebase_meal_history_repository.dart';
 import '../../data/repositories/firebase_user_recipe_serving_repository.dart';
-import '../../data/repositories/firebase_user_repository.dart';
 import '../../data/repositories/notification_settings_repository.dart';
 import '../../data/services/notification_service.dart';
 
@@ -16,6 +15,7 @@ import '../../domain/entities/ingredient.dart';
 import '../../domain/entities/meal_plan.dart';
 import '../../domain/entities/recipe.dart';
 import '../../domain/entities/recipe_ingredient.dart';
+import '../../domain/entities/user.dart';
 import '../../domain/entities/user_recipe_serving.dart';
 import '../../domain/usecases/meal_planning_service.dart';
 import '../../domain/usecases/shopping_list_generator.dart';
@@ -35,7 +35,6 @@ class PlannerPage extends StatefulWidget {
 }
 
 class _PlannerPageState extends State<PlannerPage> {
-  final FirebaseUserRepository _userRepo = FirebaseUserRepository();
   final FirebaseUserRecipeServingRepository _userServingRepo =
       FirebaseUserRecipeServingRepository();
   final FirebaseMealPlanRepository _mealPlanRepo = FirebaseMealPlanRepository();
@@ -801,8 +800,13 @@ class _PlannerPageState extends State<PlannerPage> {
         return;
       }
 
-      final users = await _userRepo.getUsers();
       final servings = await _loadServings();
+      // Dériver les users à partir des servings (UIDs uniques)
+      final users = servings
+          .map((s) => s.userId)
+          .toSet()
+          .map((uid) => User(id: uid, name: uid))
+          .toList();
 
       // Résoudre les noms d'ingrédients (stockés séparément dans Firestore)
       // Les recettes ont ingredient.name = '' par défaut après fetchAllRecipes()
@@ -823,7 +827,7 @@ class _PlannerPageState extends State<PlannerPage> {
       // Filter historical meals to only include the last N days (N = total recipe count)
       final now = DateTime.now();
       final cutoffDate = now.subtract(Duration(days: _maxHistoryDays));
-      final currentUserIds = users.map((u) => u.id).toSet();
+      final currentUserIds = servings.map((s) => s.userId).toSet();
       final filteredHistoryMeals = _mealHistory.entries
           .where((entry) => !entry.key.isBefore(cutoffDate))
           .expand((entry) => entry.value)
@@ -937,8 +941,13 @@ class _PlannerPageState extends State<PlannerPage> {
       banned.add(mealToChange.recipe.id);
 
       final allRecipes = await _loadRecipes();
-      final users = await _userRepo.getUsers();
       final servings = await _loadServings();
+      // Dériver les users à partir des servings (UIDs uniques)
+      final users = servings
+          .map((s) => s.userId)
+          .toSet()
+          .map((uid) => User(id: uid, name: uid))
+          .toList();
 
       // Exclude banned recipes so the algo can't pick them
       final candidateRecipes = allRecipes
@@ -1186,8 +1195,13 @@ class _PlannerPageState extends State<PlannerPage> {
     setState(() => _isLoading = true);
     try {
       final allRecipes = await _loadRecipes();
-      final users = await _userRepo.getUsers();
       final servings = await _loadServings();
+      // Dériver les users à partir des servings (UIDs uniques)
+      final users = servings
+          .map((s) => s.userId)
+          .toSet()
+          .map((uid) => User(id: uid, name: uid))
+          .toList();
 
       // Apply category filter (same as _launchPlanning)
       final validSelectedCategories = _selectedCategories
@@ -1201,7 +1215,7 @@ class _PlannerPageState extends State<PlannerPage> {
 
       if (filteredRecipes.isEmpty) return;
 
-      final currentUserIds = users.map((u) => u.id).toSet();
+      final currentUserIds = servings.map((s) => s.userId).toSet();
       final filteredHistory = _mealHistory.entries
           .expand((e) => e.value)
           .where((m) => m.userServings.isEmpty ||
@@ -1278,21 +1292,7 @@ class _PlannerPageState extends State<PlannerPage> {
   }
 
   Future<List<UserRecipeServing>> _loadServings() async {
-    final users = await _userRepo.getUsers();
-    print('[SERVINGS] users loaded: ${users.length}');
-    final all = <UserRecipeServing>[];
-    for (final user in users) {
-      print('[SERVINGS] fetching servings for user=${user.id}');
-      final stream = _userServingRepo.watchForUser(user.id);
-      final list = await stream.first;
-      print('[SERVINGS]   -> ${list.length} servings found');
-      for (final s in list) {
-        print('[SERVINGS]     recipeId=${s.recipeId} lunch=${s.lunchServings} dinner=${s.dinnerServings}');
-      }
-      all.addAll(list);
-    }
-    print('[SERVINGS] total servings: ${all.length}');
-    return all;
+    return _userServingRepo.fetchAllGroupServings();
   }
 
   Future<String> _saveMealPlan(MealPlan plan) async {

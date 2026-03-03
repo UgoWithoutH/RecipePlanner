@@ -4,11 +4,18 @@ import '../../domain/entities/ingredient.dart' show Ingredient;
 import '../../domain/entities/recipe.dart';
 import '../../domain/entities/recipe_ingredient.dart';
 import 'recipe_repository.dart';
+import 'group_repository.dart';
 
 class FirebaseRecipeRepository implements RecipeRepository {
   final CollectionReference _recipes = FirebaseFirestore.instance.collection(
     'recipes',
   );
+
+  Future<String> _getGroupId() async {
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
+    return groupId;
+  }
 
   /// Fetch a single recipe by its ID
   Future<Recipe?> fetchRecipeById(String id) async {
@@ -97,11 +104,13 @@ class FirebaseRecipeRepository implements RecipeRepository {
   @override
   /// Create a new recipe and return its Firestore document ID
   Future<String> createRecipe(Recipe recipe) async {
+    final groupId = await _getGroupId();
     final data = _recipeToMap(recipe);
 
     final docRef = _recipes.doc(); // generates a new unique ID
     // Ensure the stored document contains the generated ID (avoid empty id stored)
     data['id'] = docRef.id;
+    data['groupId'] = groupId;
     await docRef.set(data);
 
     return docRef.id;
@@ -155,7 +164,11 @@ class FirebaseRecipeRepository implements RecipeRepository {
   /// Fetch recipes by their title (used to check for duplicates)
   @override
   Future<List<Recipe>> fetchRecipesByTitle(String title) async {
-    final query = await _recipes.where('title', isEqualTo: title).get();
+    final groupId = await _getGroupId();
+    final query = await _recipes
+        .where('groupId', isEqualTo: groupId)
+        .where('title', isEqualTo: title)
+        .get();
 
     return query.docs.map((doc) {
       final data = doc.data() as Map<String, dynamic>;
@@ -202,8 +215,9 @@ class FirebaseRecipeRepository implements RecipeRepository {
   /// Fetch all recipes ordered by creation date
   @override
   Future<List<Recipe>> fetchAllRecipes() async {
+    final groupId = await _getGroupId();
     final snapshot = await _recipes
-        .orderBy('createdAt', descending: true)
+        .where('groupId', isEqualTo: groupId)
         .get();
 
     return snapshot.docs.map((doc) {
@@ -247,10 +261,9 @@ class FirebaseRecipeRepository implements RecipeRepository {
         rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
         addExtraMeal: data['addExtraMeal'] ?? false,
       );
-    }).toList();
+    }).toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
-
-  /// Convert a Recipe object into a Firestore map
   Map<String, dynamic> _recipeToMap(Recipe recipe) {
     return {
       'id': recipe.id,

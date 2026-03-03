@@ -4,14 +4,23 @@ import '../../domain/entities/recipe.dart';
 import '../../domain/entities/recipe_ingredient.dart';
 import '../../domain/entities/ingredient.dart';
 import '../../core/constants/unit.dart';
+import 'group_repository.dart';
 
 class FirebaseMealPlanRepository {
   final CollectionReference _mealPlans =
       FirebaseFirestore.instance.collection('mealPlans');
 
+  Future<String> _getGroupId() async {
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
+    return groupId;
+  }
+
   /// Save a new meal plan to Firestore (replaces any existing plan)
   Future<String> saveMealPlan(MealPlan mealPlan) async {
+    final groupId = await _getGroupId();
     final data = mealPlan.toFirestore();
+    data['groupId'] = groupId;
 
     // If the plan already has an ID, just update it
     if (mealPlan.id.isNotEmpty) {
@@ -22,8 +31,10 @@ class FirebaseMealPlanRepository {
       return mealPlan.id;
     }
 
-    // For new plans, delete all existing meal plans first
-    final existingPlans = await _mealPlans.get();
+    // For new plans, delete all existing meal plans for this group first
+    final existingPlans = await _mealPlans
+        .where('groupId', isEqualTo: groupId)
+        .get();
     for (var doc in existingPlans.docs) {
       await doc.reference.delete();
     }
@@ -40,9 +51,19 @@ class FirebaseMealPlanRepository {
 
   /// Fetch all meal plans
   Future<List<MealPlan>> getAllMealPlans() async {
-    final snapshot = await _mealPlans.orderBy('createdAt', descending: true).get();
+    final groupId = await _getGroupId();
+    final snapshot = await _mealPlans
+        .where('groupId', isEqualTo: groupId)
+        .get();
 
-    return snapshot.docs.map((doc) {
+    final docs = snapshot.docs.toList()
+      ..sort((a, b) {
+        final aDate = (a.data() as Map<String, dynamic>)['createdAt'] as String? ?? '';
+        final bDate = (b.data() as Map<String, dynamic>)['createdAt'] as String? ?? '';
+        return bDate.compareTo(aDate); // descending
+      });
+
+    return docs.map((doc) {
       final data = doc.data() as Map<String, dynamic>;
 
       final mealsData = (data['meals'] as List<dynamic>?) ?? [];

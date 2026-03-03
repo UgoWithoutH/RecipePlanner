@@ -1,26 +1,40 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../domain/entities/category.dart' show Category;
+import 'group_repository.dart';
 
 class FirebaseCategoryRepository {
   final CollectionReference _categories = FirebaseFirestore.instance.collection(
     'categories',
   );
 
+  Future<String> _getGroupId() async {
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
+    return groupId;
+  }
+
   // ignore: unintended_html_in_doc_comment
   /// Fetch all categories from Firestore and convert to List<Map<String, String\u003c\u003e>>
   Future<List<Category>> getCategories() async {
-    final snap = await _categories.orderBy('name').get();
+    final groupId = await _getGroupId();
+    final snap = await _categories
+        .where('groupId', isEqualTo: groupId)
+        .get();
 
-    return snap.docs.map((doc) {
+    final categories = snap.docs.map((doc) {
       final data = doc.data() as Map<String, dynamic>;
       return Category.fromFirestore(doc.id, data);
-    }).toList();
+    }).toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+
+    return categories;
   }
 
   /// Add a new category
   Future<void> addCategory(String name, int color) async {
-    await _categories.add({'name': name, 'color': color});
+    final groupId = await _getGroupId();
+    await _categories.add({'name': name, 'color': color, 'groupId': groupId});
   }
 
   /// Update category name and potentially color.

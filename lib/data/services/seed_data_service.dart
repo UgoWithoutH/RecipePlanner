@@ -2,6 +2,7 @@ import '../../core/constants/unit.dart';
 import '../../domain/entities/ingredient.dart';
 import '../../domain/entities/recipe.dart';
 import '../../domain/entities/recipe_ingredient.dart';
+import '../../data/repositories/group_repository.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// Seeds all test data: ingredients, recipes, categories and user servings.
@@ -11,9 +12,17 @@ Future<void> seedAllTestData() async {
   await seedAllToFirestore();
 }
 
+/// Helper to resolve the current user's group ID.
+Future<String> _resolveGroupId() async {
+  final groupId = await GroupRepository.instance.getCurrentGroupId();
+  if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
+  return groupId;
+}
+
 /// Populates Firestore with distinct recipe categories and returns a {name: id} map
-Future<Map<String, String>> seedCategoriesToFirestore() async {
+Future<Map<String, String>> seedCategoriesToFirestore({String? groupId}) async {
   final firestore = FirebaseFirestore.instance;
+  final gid = groupId ?? await _resolveGroupId();
   // Map category name to color
   final categories = {
     'Viande': 0xFFE57373, // Red
@@ -44,11 +53,15 @@ Future<Map<String, String>> seedCategoriesToFirestore() async {
       final ref = await firestore.collection('categories').add({
         'name': name,
         'color': color,
+        'groupId': gid,
       });
       nameToId[name] = ref.id;
     } else {
-      // Update color for existing categories to ensure they have one
-      await firestore.collection('categories').doc(nameToId[name]).update({'color': color});
+      // Update color and groupId for existing categories
+      await firestore.collection('categories').doc(nameToId[name]).update({
+        'color': color,
+        'groupId': gid,
+      });
     }
   }
 
@@ -56,8 +69,9 @@ Future<Map<String, String>> seedCategoriesToFirestore() async {
 }
 
 /// Populates Firestore with ingredient types and returns a {name: id} map
-Future<Map<String, String>> seedIngredientTypesToFirestore() async {
+Future<Map<String, String>> seedIngredientTypesToFirestore({String? groupId}) async {
   final firestore = FirebaseFirestore.instance;
+  final gid = groupId ?? await _resolveGroupId();
   final types = {
     'Viande': 0xFFE57373,
     'Légume': 0xFF81C784,
@@ -83,10 +97,14 @@ Future<Map<String, String>> seedIngredientTypesToFirestore() async {
       final ref = await firestore.collection('ingredient_types').add({
         'name': name,
         'color': color,
+        'groupId': gid,
       });
       nameToId[name] = ref.id;
     } else {
-      await firestore.collection('ingredient_types').doc(nameToId[name]).update({'color': color});
+      await firestore.collection('ingredient_types').doc(nameToId[name]).update({
+        'color': color,
+        'groupId': gid,
+      });
     }
   }
   return nameToId;
@@ -115,8 +133,9 @@ Future<List<String>> seedTestUsersToFirestore() async {
 /// Creates UserRecipeServings for every user in the `users` collection.
 Future<List<Recipe>> seedAllToFirestore() async {
   final firestore = FirebaseFirestore.instance;
-  final categoryIds = await seedCategoriesToFirestore();
-  final ingredientIds = await seedIngredientsToFirestore();
+  final gid = await _resolveGroupId();
+  final categoryIds = await seedCategoriesToFirestore(groupId: gid);
+  final ingredientIds = await seedIngredientsToFirestore(groupId: gid);
   final recipes = buildRecipes(ingredientIds);
   final now = DateTime.now();
   List<Recipe> seededRecipes = [];
@@ -161,6 +180,7 @@ Future<List<Recipe>> seedAllToFirestore() async {
       'addExtraMeal': recipe.addExtraMeal,
       'userServings': userServings,
       'url': 'https://example.com/recette-${i+1}',
+      'groupId': gid,
     });
 
     // Update the recipe document to set its id field
@@ -603,7 +623,7 @@ List<Recipe> buildRecipes(Map<String, String> ingredients) {
 }
 
 /// Saves all required ingredients to Firestore and returns the {name: id} map
-Future<Map<String, String>> seedIngredientsToFirestore() async {
+Future<Map<String, String>> seedIngredientsToFirestore({String? groupId}) async {
   final ingredientNames = [
     'Boeuf','Pomme de terre','Carotte','Oignon','Ail',"Huile d'olive",'Sel','Poivre',
     'Lentilles','Spaghetti','Oeuf','Lardons','Parmesan','Poulet','Lait de coco',
@@ -612,7 +632,8 @@ Future<Map<String, String>> seedIngredientsToFirestore() async {
     'Maïs','Pomme','Banane',
   ];
   final firestore = FirebaseFirestore.instance;
-  final typeIds = await seedIngredientTypesToFirestore();
+  final gid = groupId ?? await _resolveGroupId();
+  final typeIds = await seedIngredientTypesToFirestore(groupId: gid);
   final Map<String, String> ids = {};
   // Mapping ingredient to type
   final Map<String, String> ingredientType = {
@@ -656,6 +677,7 @@ Future<Map<String, String>> seedIngredientsToFirestore() async {
     final doc = await firestore.collection('ingredients').add({
       'name': name,
       'typeId': typeId,
+      'groupId': gid,
       'createdAt': DateTime.now().toIso8601String(),
     });
     ids[name] = doc.id;

@@ -12,6 +12,7 @@ import '../../core/utils/ingredient_name_cache.dart';
 import 'recipe_detail_page.dart';
 import 'categories_page.dart';
 import 'create_recipe_page.dart';
+import '../../data/repositories/group_repository.dart';
 
 class RecipesPage extends StatefulWidget {
   const RecipesPage({super.key});
@@ -46,7 +47,11 @@ class _RecipesPageState extends State<RecipesPage> {
   
   Future<void> _fetchCategories() async {
     setState(() => _categoriesLoading = true);
-    final snap = await FirebaseFirestore.instance.collection('categories').get();
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    final snap = await FirebaseFirestore.instance
+        .collection('categories')
+        .where('groupId', isEqualTo: groupId)
+        .get();
     if (!mounted) return;
     setState(() {
       _allCategories = snap.docs.map((doc) {
@@ -63,7 +68,12 @@ class _RecipesPageState extends State<RecipesPage> {
 
   Future<void> _fetchAllIngredients() async {
     setState(() => _ingredientsLoading = true);
-    final snap = await FirebaseFirestore.instance.collection('ingredients').get();
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    final snap = await FirebaseFirestore.instance
+        .collection('ingredients')
+        .where('groupId', isEqualTo: groupId)
+        .get();
+    if (!mounted) return;
     setState(() {
       _allIngredients = snap.docs.map((doc) => {
         'id': doc.id,
@@ -77,9 +87,10 @@ class _RecipesPageState extends State<RecipesPage> {
   // FETCH RECIPES
   // =========================
   Future<List<Recipe>> fetchRecipes() async {
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
     final snapshot = await FirebaseFirestore.instance
         .collection('recipes')
-        .orderBy('title')
+        .where('groupId', isEqualTo: groupId)
         .get();
 
     return Future.wait(
@@ -138,7 +149,7 @@ class _RecipesPageState extends State<RecipesPage> {
           addExtraMeal: data['addExtraMeal'] ?? false,
         );
       }),
-    );
+    ).then((list) => list..sort((a, b) => a.title.compareTo(b.title)));
   }
 
   // =========================

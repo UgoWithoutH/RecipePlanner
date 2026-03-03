@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart' show FirebaseFirestore;
 import 'ingredient_autocomplete.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../data/repositories/group_repository.dart';
 
 import '../../domain/entities/recipe.dart';
 import '../../data/repositories/firebase_recipe_repository.dart';
@@ -56,7 +57,11 @@ class _RecipeSelectorState extends State<RecipeSelector> {
   }
 
   Future<List<Map<String, dynamic>>> _fetchCategories() async {
-    final snap = await FirebaseFirestore.instance.collection('categories').get();
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    final snap = await FirebaseFirestore.instance
+        .collection('categories')
+        .where('groupId', isEqualTo: groupId)
+        .get();
     return snap.docs.map((doc) => {
       'id': doc.id,
       'name': doc.get('name') as String,
@@ -83,7 +88,11 @@ class _RecipeSelectorState extends State<RecipeSelector> {
   }
 
   Future<List<Map<String, String>>> _fetchAllIngredients() async {
-    final snap = await FirebaseFirestore.instance.collection('ingredients').get();
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    final snap = await FirebaseFirestore.instance
+        .collection('ingredients')
+        .where('groupId', isEqualTo: groupId)
+        .get();
     return snap.docs.map((doc) => {
       'id': doc.id,
       'name': doc.get('name') as String,

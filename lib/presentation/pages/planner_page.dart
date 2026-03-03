@@ -21,6 +21,7 @@ import '../../domain/usecases/meal_planning_service.dart';
 import '../../domain/usecases/shopping_list_generator.dart';
 import '../../core/utils/ingredient_name_cache.dart';
 import '../../data/repositories/firebase_recipe_repository.dart';
+import '../../data/repositories/group_repository.dart';
 
 import 'recipe_detail_page.dart';
 import 'meal_plan_notifications_page.dart';
@@ -79,7 +80,11 @@ class _PlannerPageState extends State<PlannerPage> {
   }
 
   Future<void> _loadAllCategories() async {
-    final snapshot = await FirebaseFirestore.instance.collection('categories').get();
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    final snapshot = await FirebaseFirestore.instance
+        .collection('categories')
+        .where('groupId', isEqualTo: groupId)
+        .get();
     
     final allCategories = snapshot.docs.map((doc) {
       final data = doc.data();
@@ -304,7 +309,11 @@ class _PlannerPageState extends State<PlannerPage> {
 
   Future<void> _pickCategories({VoidCallback? onUpdated}) async {
     // Load categories from the categories collection (name + ID)
-    final snapshot = await FirebaseFirestore.instance.collection('categories').get();
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    final snapshot = await FirebaseFirestore.instance
+        .collection('categories')
+        .where('groupId', isEqualTo: groupId)
+        .get();
     
     final allCategories = snapshot.docs.map((doc) {
       final data = doc.data();

@@ -11,6 +11,7 @@ import 'ingredient_types_page.dart';
 import '../../domain/entities/ingredient_type.dart';
 import '../../data/repositories/firebase_ingredient_type_repository.dart';
 import '../../data/repositories/firebase_shopping_list_repository.dart';
+import '../../data/repositories/group_repository.dart';
 
 class IngredientsPage extends StatefulWidget {
   const IngredientsPage({super.key});
@@ -39,9 +40,10 @@ class _IngredientsPageState extends State<IngredientsPage> {
     
     // Load types first or parallel
     final typesFuture = _typeRepo.getTypes();
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
     final ingredientsFuture = FirebaseFirestore.instance
         .collection('ingredients')
-        .orderBy('name')
+        .where('groupId', isEqualTo: groupId)
         .get();
 
     final results = await Future.wait([typesFuture, ingredientsFuture]);
@@ -57,7 +59,8 @@ class _IngredientsPageState extends State<IngredientsPage> {
                 'name': doc.get('name'),
                 'typeId': doc.data().toString().contains('typeId') ? doc.get('typeId') : null,
               })
-          .toList();
+          .toList()
+        ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
       _isLoading = false;
     });
   }
@@ -153,6 +156,8 @@ class _IngredientsPageState extends State<IngredientsPage> {
         data['typeId'] = selectedTypeId;
       }
 
+      final gid = await GroupRepository.instance.getCurrentGroupId();
+      if (gid != null) data['groupId'] = gid;
       final docRef = await FirebaseFirestore.instance
           .collection('ingredients')
           .add(data);
@@ -297,7 +302,11 @@ class _IngredientsPageState extends State<IngredientsPage> {
 
   Future<void> _showRecipesForIngredient(String ingredientId, String ingredientName) async {
     // Pre-load so we can size the sheet to fit the content
-    final snap = await FirebaseFirestore.instance.collection('recipes').get();
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    final snap = await FirebaseFirestore.instance
+        .collection('recipes')
+        .where('groupId', isEqualTo: groupId)
+        .get();
     if (!mounted) return;
 
     // Use full Recipe objects instead of just strings

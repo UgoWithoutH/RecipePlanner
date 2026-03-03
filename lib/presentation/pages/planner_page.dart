@@ -9,6 +9,8 @@ import '../../data/repositories/firebase_meal_plan_repository.dart';
 import '../../data/repositories/firebase_meal_history_repository.dart';
 import '../../data/repositories/firebase_user_recipe_serving_repository.dart';
 import '../../data/repositories/firebase_user_repository.dart';
+import '../../data/repositories/notification_settings_repository.dart';
+import '../../data/services/notification_service.dart';
 
 import '../../domain/entities/ingredient.dart';
 import '../../domain/entities/meal_plan.dart';
@@ -21,6 +23,7 @@ import '../../core/utils/ingredient_name_cache.dart';
 import '../../data/repositories/firebase_recipe_repository.dart';
 
 import 'recipe_detail_page.dart';
+import 'meal_plan_notifications_page.dart';
 import '../widgets/recipe_selector.dart';
 import '../widgets/pantry_input_dialog.dart';
 
@@ -165,6 +168,8 @@ class _PlannerPageState extends State<PlannerPage> {
           _generatedMealPlan,
           _maxHistoryDays,
         );
+        // Planifie silencieusement les notifications (pour tous les utilisateurs)
+        _autoScheduleNotifications(loadedPlan).ignore();
       }
       // Load history into state (stubs are fine here; detail page lazy-loads)
       final rawHistory = await _historyRepo.getHistory();
@@ -862,6 +867,10 @@ class _PlannerPageState extends State<PlannerPage> {
           selectedCategories: plan.selectedCategories,
         );
       });
+
+      // Planifie silencieusement les notifications pour ce nouveau plan
+      _autoScheduleNotifications(_generatedMealPlan!).ignore();
+
     } finally {
       setState(() => _isLoading = false);
     }
@@ -869,6 +878,46 @@ class _PlannerPageState extends State<PlannerPage> {
 
   Future<List<Recipe>> _loadRecipes() async {
     return FirebaseRecipeRepository().fetchAllRecipes();
+  }
+
+  /// Planifie silencieusement les notifications locales pour [plan] en utilisant
+  /// les préférences sauvegardées de l'utilisateur courant.
+  /// Appelée à chaque chargement/génération de plan — remplace les notifs existantes.
+  Future<void> _autoScheduleNotifications(MealPlan plan) async {
+    try {
+      final settings = await NotificationSettingsRepository().load();
+      final notifService = NotificationService();
+      final granted = await notifService.requestPermissions();
+      if (!granted) return;
+
+      final now = DateTime.now();
+      final effectiveDays = settings.effectiveNotificationDaysForPlan(
+          plan.id, plan.durationDays);
+
+      // Jours activés ET dont la notification est dans le futur
+      final activeDays = <int>{};
+      for (int i = 0; i < plan.durationDays; i++) {
+        if (!effectiveDays[i]) continue;
+        final planDay = plan.startDate.add(Duration(days: i));
+        final notifyDay = planDay.add(Duration(days: settings.offsetDays));
+        final notifyDateTime = DateTime(
+          notifyDay.year, notifyDay.month, notifyDay.day,
+          settings.time.hour, settings.time.minute,
+        );
+        if (notifyDateTime.isAfter(now)) activeDays.add(i);
+      }
+
+      if (activeDays.isEmpty) return;
+
+      await notifService.scheduleMealPlanNotifications(
+        plan: plan,
+        notificationTime: settings.time,
+        activeDays: activeDays,
+        offsetDays: settings.offsetDays,
+      );
+    } catch (_) {
+      // Silencieux — ne doit pas bloquer l'UI
+    }
   }
 
   String _slotKey(DateTime date, MealType type) =>
@@ -943,27 +992,50 @@ class _PlannerPageState extends State<PlannerPage> {
           final confirmed = await showDialog<bool>(
             context: context,
             builder: (context) => AlertDialog(
-              title: Text(
-                'Recette cuisinée pour 2 repas',
-                style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+              contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+              actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6A5AE0).withOpacity(0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.info_outline, color: Color(0xFF6A5AE0), size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Recette cuisinée pour 2 repas',
+                      style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
+                    ),
+                  ),
+                ],
               ),
               content: Text(
                 'Cette recette est prévue pour 2 repas (aujourd\'hui + lendemain). '
                 'Remplacer supprimera également le repas du lendemain.',
-                style: GoogleFonts.poppins(),
+                style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54),
               ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context, false),
-                  child: Text('Annuler', style: GoogleFonts.poppins()),
+                  style: TextButton.styleFrom(foregroundColor: Colors.black54),
+                  child: Text('Annuler', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
                 ),
                 ElevatedButton(
                   onPressed: () => Navigator.pop(context, true),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF6A5AE0),
                     foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    elevation: 0,
                   ),
-                  child: Text('Remplacer', style: GoogleFonts.poppins()),
+                  child: Text('Remplacer', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
                 ),
               ],
             ),
@@ -1194,29 +1266,93 @@ class _PlannerPageState extends State<PlannerPage> {
   Future<void> _deleteMeal(Meal mealToDelete) async {
     if (_generatedMealPlan == null) return;
 
+    // Vérifie si une deuxième occurrence (restes) existe le lendemain
+    final nextDay = mealToDelete.date.add(const Duration(days: 1));
+    final hasLeftover = mealToDelete.recipe.addExtraMeal &&
+        !mealToDelete.isLeftoverMeal &&
+        _generatedMealPlan!.meals.any((m) =>
+            m.recipe.id == mealToDelete.recipe.id &&
+            m.date.year == nextDay.year &&
+            m.date.month == nextDay.month &&
+            m.date.day == nextDay.day &&
+            m.isLeftoverMeal);
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(
-          'Supprimer ce repas ?',
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+        contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF6A5AE0).withOpacity(0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.delete_outline, color: Color(0xFF6A5AE0), size: 22),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Supprimer ce repas ?',
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
+              ),
+            ),
+          ],
         ),
-        content: Text(
-          'Voulez-vous retirer "${mealToDelete.recipe.title}" du plan ?',
-          style: GoogleFonts.poppins(),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Voulez-vous retirer "${mealToDelete.recipe.title}" du plan ?',
+              style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54),
+            ),
+            if (hasLeftover) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.warning_amber_rounded, color: Colors.orange[700], size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Cette recette est prévue en deux fois : le repas du lendemain (restes) sera également retiré du plan.',
+                        style: GoogleFonts.poppins(fontSize: 12, color: Colors.orange[800], fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: Text('Annuler', style: GoogleFonts.poppins()),
+            style: TextButton.styleFrom(foregroundColor: Colors.black54),
+            child: Text('Annuler', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
+              backgroundColor: const Color(0xFF6A5AE0),
               foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              elevation: 0,
             ),
-            child: Text('Supprimer', style: GoogleFonts.poppins()),
+            child: Text('Supprimer', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -1622,22 +1758,49 @@ class _PlannerPageState extends State<PlannerPage> {
               final confirmed = await showDialog<bool>(
                 context: context,
                 builder: (context) => AlertDialog(
-                  title: Text('Modifier un repas historique'),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+                  contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                  actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  title: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.history, color: Colors.orange, size: 22),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Repas historique',
+                          style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
+                        ),
+                      ),
+                    ],
+                  ),
                   content: Text(
                     "Ce repas fait partie de l'historique. Voulez-vous vraiment modifier la recette ?",
+                    style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54),
                   ),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Annuler'),
+                      style: TextButton.styleFrom(foregroundColor: Colors.black54),
+                      child: Text('Annuler', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
                     ),
                     ElevatedButton(
                       onPressed: () => Navigator.pop(context, true),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.deepPurpleAccent,
+                        backgroundColor: const Color(0xFF6A5AE0),
                         foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                        elevation: 0,
                       ),
-                      child: const Text('Oui, modifier'),
+                      child: Text('Oui, modifier', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
                     ),
                   ],
                 ),
@@ -1811,13 +1974,46 @@ class _PlannerPageState extends State<PlannerPage> {
               children: [
                 SafeArea(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
-                    child: Text(
-                      'Planificateur de repas',
-                      style: GoogleFonts.poppins(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    padding: const EdgeInsets.fromLTRB(24, 8, 16, 0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Planificateur de repas',
+                            style: GoogleFonts.poppins(
+                              fontSize: 28,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        Tooltip(
+                            message: 'Notifications du plan',
+                            child: Material(
+                              color: const Color(0xFF6A5AE0),
+                              borderRadius: BorderRadius.circular(14),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(14),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => MealPlanNotificationsPage(
+                                        mealPlan: _generatedMealPlan,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                child: const Padding(
+                                  padding: EdgeInsets.all(10),
+                                  child: Icon(
+                                    Icons.notifications_outlined,
+                                    color: Colors.white,
+                                    size: 24,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ),
@@ -2283,30 +2479,21 @@ class _PlannerPageState extends State<PlannerPage> {
         .toList();
 
     Widget buildMealCard(Meal meal) {
-      // Color used for both the separator and the action icon/button
-      final actionColor = Colors.grey.shade400;
-
       return Card(
-        color: Colors.grey.shade100,
+        color: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        elevation: 3,
+        elevation: 2,
         clipBehavior: Clip.antiAlias,
         margin: const EdgeInsets.symmetric(vertical: 8),
-        child: IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Main content (clickable to open recipe)
-              Expanded(
-                child: InkWell(
-                  onTap: () => _openRecipeDetail(meal),
-                  child: Stack(
-                    children: [
-                    Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 16,
-                    ),
+        child: Column(
+          children: [
+            // ── Main content (tap to open recipe) ──
+            InkWell(
+              onTap: () => _openRecipeDetail(meal),
+              child: Stack(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
@@ -2315,177 +2502,96 @@ class _PlannerPageState extends State<PlannerPage> {
                             ? Container(
                                 padding: const EdgeInsets.all(8),
                                 decoration: BoxDecoration(
-                                  color: Colors.orange.withOpacity(0.2),
+                                  color: Colors.orange.withOpacity(0.15),
                                   shape: BoxShape.circle,
                                 ),
-                                child: const Icon(
-                                  Icons.restaurant,
-                                  color: Colors.orange,
-                                  size: 24,
-                                ),
+                                child: const Icon(Icons.restaurant, color: Colors.orange, size: 24),
                               )
                             : Container(
                                 padding: const EdgeInsets.all(8),
                                 decoration: BoxDecoration(
-                                  color: Colors.green.withOpacity(0.2),
+                                  color: Colors.green.withOpacity(0.15),
                                   shape: BoxShape.circle,
                                 ),
-                                child: const Icon(
-                                  Icons.restaurant_menu,
-                                  color: Colors.green,
-                                  size: 24,
-                                ),
+                                child: const Icon(Icons.restaurant_menu, color: Colors.green, size: 24),
                               ),
                         const SizedBox(width: 12),
-                        // Content
                         Expanded(
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Left: Title + Description + Badges
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.center,
+                              // Title + multiplier badge
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      meal.recipe.title,
+                                      style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 15),
+                                    ),
+                                  ),
+                                  if (meal.recipeMultiplier > 1 && !meal.isLeftoverMeal)
+                                    Container(
+                                      margin: const EdgeInsets.only(left: 8),
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: Colors.green.withOpacity(0.15),
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(color: Colors.green, width: 1.5),
+                                      ),
+                                      child: Text(
+                                        'x${meal.recipeMultiplier}',
+                                        style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.green[800]),
+                                      ),
+                                    ),
+                                  // Servings badge
+                                  Container(
+                                    margin: const EdgeInsets.only(left: 8),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF6A5AE0).withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      '${meal.totalServings} pers',
+                                      style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: const Color(0xFF6A5AE0), fontSize: 12),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                meal.recipe.description,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 13),
+                              ),
+                              // Badges
+                              if (meal.isLeftoverMeal) ...[
+                                const SizedBox(height: 5),
+                                Row(
                                   children: [
-                                    // Title with multiplier
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            meal.recipe.title,
-                                            style: GoogleFonts.poppins(
-                                              fontWeight: FontWeight.w600,
-                                              fontSize: 16,
-                                            ),
-                                          ),
-                                        ),
-                                        if (meal.recipeMultiplier > 1 &&
-                                            !meal.isLeftoverMeal)
-                                          Container(
-                                            margin: const EdgeInsets.only(
-                                              left: 8,
-                                            ),
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 4,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: Colors.green.withOpacity(
-                                                0.2,
-                                              ),
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
-                                              border: Border.all(
-                                                color: Colors.green,
-                                                width: 1.5,
-                                              ),
-                                            ),
-                                            child: Text(
-                                              'x${meal.recipeMultiplier}',
-                                              style: GoogleFonts.poppins(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 14,
-                                                color: Colors.green[800],
-                                              ),
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 4),
-                                    // Description
-                                    Text(
-                                      meal.recipe.description,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: GoogleFonts.poppins(
-                                        color: Colors.grey[600],
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                    // Info badges
-                                    if (meal.isLeftoverMeal) ...[
-                                      const SizedBox(height: 6),
-                                      Row(
-                                        children: [
-                                          Icon(
-                                            Icons.info_outline,
-                                            size: 16,
-                                            color: Colors.orange[700],
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Restes du repas précédent',
-                                            style: GoogleFonts.poppins(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w500,
-                                              color: Colors.orange[700],
-                                              fontStyle: FontStyle.italic,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                    if (meal.recipe.addExtraMeal &&
-                                        !meal.isLeftoverMeal &&
-                                        (_generatedMealPlan?.meals.any((m) {
-                                          final nextDay = meal.date.add(const Duration(days: 1));
-                                          return m.recipe.id == meal.recipe.id &&
-                                              m.date.year == nextDay.year &&
-                                              m.date.month == nextDay.month &&
-                                              m.date.day == nextDay.day &&
-                                              m.isLeftoverMeal;
-                                        }) ?? false)) ...[
-                                      const SizedBox(height: 6),
-                                      Row(
-                                        children: [
-                                          Icon(
-                                            Icons.info_outline,
-                                            size: 16,
-                                            color: Colors.green[700],
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'À cuisiner pour 2 repas',
-                                            style: GoogleFonts.poppins(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w500,
-                                              color: Colors.green[700],
-                                              fontStyle: FontStyle.italic,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
+                                    Icon(Icons.info_outline, size: 14, color: Colors.orange[700]),
+                                    const SizedBox(width: 4),
+                                    Text('Restes du repas précédent',
+                                        style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.orange[700], fontStyle: FontStyle.italic)),
                                   ],
                                 ),
-                              ),
-                              // Right: Servings badge
-                              // Reduced margin since we have a separator now
-                              Container(
-                                margin: const EdgeInsets.only(
-                                  left: 8,
-                                  right: 16,
+                              ],
+                              if (meal.recipe.addExtraMeal && !meal.isLeftoverMeal &&
+                                  (_generatedMealPlan?.meals.any((m) {
+                                    final nextDay = meal.date.add(const Duration(days: 1));
+                                    return m.recipe.id == meal.recipe.id && m.date.year == nextDay.year && m.date.month == nextDay.month && m.date.day == nextDay.day && m.isLeftoverMeal;
+                                  }) ?? false)) ...[
+                                const SizedBox(height: 5),
+                                Row(
+                                  children: [
+                                    Icon(Icons.info_outline, size: 14, color: Colors.green[700]),
+                                    const SizedBox(width: 4),
+                                    Text('À cuisiner pour 2 repas',
+                                        style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.green[700], fontStyle: FontStyle.italic)),
+                                  ],
                                 ),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(
-                                    0xFF6A5AE0,
-                                  ).withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  '${meal.totalServings} pers',
-                                  style: GoogleFonts.poppins(
-                                    fontWeight: FontWeight.w600,
-                                    color: const Color(0xFF6A5AE0),
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ),
+                              ],
                             ],
                           ),
                         ),
@@ -2495,88 +2601,143 @@ class _PlannerPageState extends State<PlannerPage> {
                   if (_loadingRecipeId == meal.recipe.id)
                     Positioned.fill(
                       child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.5),
-                          borderRadius: BorderRadius.circular(16),
+                        decoration: BoxDecoration(color: Colors.white.withOpacity(0.5), borderRadius: BorderRadius.circular(16)),
+                        child: const Center(child: CircularProgressIndicator()),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            // ── Action bar ──
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                border: Border(top: BorderSide(color: Colors.grey.shade200)),
+              ),
+              child: IntrinsicHeight(
+                child: Row(
+                  children: [
+                    if (!isPastDay) ...[
+                      Expanded(
+                        child: InkWell(
+                          onTap: () => _autoChangeMealRecipe(meal),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.autorenew, color: Colors.grey.shade500, size: 20),
+                                const SizedBox(height: 3),
+                                Text('Aléatoire', style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade500, fontWeight: FontWeight.w500)),
+                              ],
+                            ),
+                          ),
                         ),
-                        child: const Center(
-                          child: CircularProgressIndicator(),
+                      ),
+                      VerticalDivider(width: 1, color: Colors.grey.shade200),
+                    ],
+                    Expanded(
+                      child: InkWell(
+                        onTap: () async {
+                          final now = DateTime.now();
+                          final today = DateTime(now.year, now.month, now.day);
+                          final mealDate = DateTime(meal.date.year, meal.date.month, meal.date.day);
+                          final isHistory = mealDate.isBefore(today);
+                          if (isHistory) {
+                            final confirmed = await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+                                contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                                actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                                title: Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(8),
+                                      decoration: BoxDecoration(
+                                        color: Colors.orange.withOpacity(0.12),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(Icons.history, color: Colors.orange, size: 22),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        'Repas historique',
+                                        style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                content: Text(
+                                  "Ce repas fait partie de l'historique. Voulez-vous vraiment modifier la recette ?",
+                                  style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(context, false),
+                                    style: TextButton.styleFrom(foregroundColor: Colors.black54),
+                                    child: Text('Annuler', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: () => Navigator.pop(context, true),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF6A5AE0),
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                                      elevation: 0,
+                                    ),
+                                    child: Text('Oui, modifier', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirmed != true) return;
+                          } else {
+                            _autoChangeBannedRecipes.clear();
+                          }
+                          _showRecipeSelector(mealToUpdate: meal, requireConfirmation: false);
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.search, color: Colors.grey.shade500, size: 20),
+                              const SizedBox(height: 3),
+                              Text('Chercher', style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade500, fontWeight: FontWeight.w500)),
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ], 
-                  ),
-                ),
-              ),
-              // Vertical Divider
-              Container(width: 2, color: actionColor),
-              if (!isPastDay) ...[  
-                // Auto-change (shuffle) button
-                InkWell(
-                  onTap: () => _autoChangeMealRecipe(meal),
-                  child: Container(
-                    width: 46,
-                    alignment: Alignment.center,
-                    child: Icon(Icons.autorenew, color: actionColor, size: 24),
-                  ),
-                ),
-                Container(width: 2, color: actionColor),
-              ],
-              // Swap/Change Meal Button
-              InkWell(
-                onTap: () async {
-                  // Check if it's a historical meal
-                  final now = DateTime.now();
-                  final today = DateTime(now.year, now.month, now.day);
-                  final mealDate = DateTime(
-                    meal.date.year,
-                    meal.date.month,
-                    meal.date.day,
-                  );
-                  final isHistory = mealDate.isBefore(today);
-                  if (isHistory) {
-                    final confirmed = await showDialog<bool>(
-                      context: context,
-                      builder: (context) => AlertDialog(
-                        title: Text('Modifier un repas historique'),
-                        content: Text(
-                          "Ce repas fait partie de l'historique. Voulez-vous vraiment modifier la recette ?",
+                    VerticalDivider(width: 1, color: Colors.grey.shade200),
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => _deleteMeal(meal),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.delete_outline, color: Colors.red.shade300, size: 20),
+                              const SizedBox(height: 3),
+                              Text('Supprimer', style: GoogleFonts.poppins(fontSize: 10, color: Colors.red.shade300, fontWeight: FontWeight.w500)),
+                            ],
+                          ),
                         ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(context, false),
-                            child: const Text('Annuler'),
-                          ),
-                          ElevatedButton(
-                            onPressed: () => Navigator.pop(context, true),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.deepPurpleAccent,
-                              foregroundColor: Colors.white,
-                            ),
-                            child: const Text('Oui, modifier'),
-                          ),
-                        ],
                       ),
-                    );
-                    if (confirmed != true) return;
-                  } else {
-                    // Manual change — clear all bans
-                    _autoChangeBannedRecipes.clear();
-                  }
-                  _showRecipeSelector(mealToUpdate: meal, requireConfirmation: false);
-                },
-                child: Container(
-                  width: 50,
-                  alignment: Alignment.center,
-                  child: Icon(Icons.search, color: actionColor, size: 24),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
-
     Widget buildEmptySlot(MealType mealType) {
       return Card(
         color: Colors.grey.shade100,

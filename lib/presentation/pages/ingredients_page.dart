@@ -706,7 +706,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
                   const Icon(Icons.add_rounded, color: Colors.white),
                   const SizedBox(width: 8),
                   Text(
-                    'Ajouter',
+                    'Nouvel ingrédient',
                     style: GoogleFonts.poppins(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,

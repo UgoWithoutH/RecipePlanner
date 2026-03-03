@@ -134,40 +134,37 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       if (data == null && widget.initialRecipe != null) {
         // Try exact title first
         var titleQuery = await firestore
-            .collection('recipes')
-            .where('title', isEqualTo: widget.initialRecipe!.title)
-            .limit(1)
-            .get();
+          .collection('recipes')
+          .where('title', isEqualTo: widget.initialRecipe!.title)
+          .limit(1)
+          .get();
         
         // If failed, try capitalizing the first letter (seed data convention)
         if (titleQuery.docs.isEmpty && widget.initialRecipe!.title.isNotEmpty) {
-           final t = widget.initialRecipe!.title;
-           final capitalized = t[0].toUpperCase() + t.substring(1);
-           if (capitalized != t) {
-              titleQuery = await firestore
-                .collection('recipes')
-                .where('title', isEqualTo: capitalized)
-                .limit(1)
-                .get();
-           }
+          final t = widget.initialRecipe!.title;
+          final capitalized = t[0].toUpperCase() + t.substring(1);
+          if (capitalized != t) {
+            titleQuery = await firestore
+             .collection('recipes')
+             .where('title', isEqualTo: capitalized)
+             .limit(1)
+             .get();
+          }
         }
 
         if (titleQuery.docs.isNotEmpty) {
-           data = titleQuery.docs.first.data() as Map<String, dynamic>;
-           docId = titleQuery.docs.first.id; // Override ID with the new one
-           debugPrint('RecipeDetailPage: Found recipe by title overlap: ${data!['title']}');
+          data = titleQuery.docs.first.data() as Map<String, dynamic>;
+          docId = titleQuery.docs.first.id; // Override ID with the new one
         }
       }
 
       if (data == null || !mounted) {
         // Could not load recipe from Firestore
-        debugPrint('RecipeDetailPage: Recipe document not found. Using partial data.');
         return;
       }
 
       // Parse ingredients — use null-safe id extraction to avoid cast errors
       final ingredientsData = (data['ingredients'] as List<dynamic>?) ?? [];
-      debugPrint('RecipeDetailPage: Found ${ingredientsData.length} ingredients in Firestore');
 
       final ingredientIds = ingredientsData
           .map((i) {
@@ -263,8 +260,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       
     } catch (e, stack) {
       // Log the real error so it is visible in the debug console
-      debugPrint('RecipeDetailPage._loadFullRecipe error: $e');
-      debugPrint('$stack');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

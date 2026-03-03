@@ -13,10 +13,8 @@ class AuthService {
           await _auth.signInAnonymously();
       return userCredential.user;
     } on FirebaseAuthException catch (e) { // ignore: unused_catch_clause
-        // print('Authentication error: ${e.code} - ${e.message}');
       return null;
     } catch (_) {
-        // print('Unexpected error');
       return null;
     }
   }

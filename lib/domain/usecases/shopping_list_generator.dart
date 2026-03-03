@@ -141,7 +141,6 @@ class ShoppingListGenerator {
               }
             }
           } catch (e) {
-            debugPrint('Error resolving ingredients: $e');
           }
         }
       }
@@ -218,7 +217,6 @@ class ShoppingListGenerator {
       await _shoppingListRepo.saveShoppingList(newList);
       
     } catch (e) {
-      debugPrint("Error generating shopping list: $e");
       rethrow;
     }
   }

@@ -68,7 +68,6 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
       }
 
     } catch (e) {
-      debugPrint('Error loading shopping list: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -89,7 +88,6 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
       await FirebaseShoppingListRepository().saveShoppingList(updatedList);
       _currentShoppingList = updatedList;
     } catch (e) {
-      debugPrint("Error updating item: $e");
     }
   }
 

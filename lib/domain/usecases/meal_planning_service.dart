@@ -54,11 +54,6 @@ class MealPlanningService {
     final meals = List<Meal?>.filled(numMeals, null); // Pre-allocate slots
     final pendingLeftovers = <int, Meal>{}; // Track leftovers to insert
 
-    print('[MPS] ===== generateMealPlan START =====');
-    print('[MPS] durationDays=$durationDays numMeals=$numMeals startDate=$startDate');
-    print('[MPS] recipes=${recipes.length} users=${users.length} servings=${servings.length}');
-    print('[MPS] recentMeals=${recentMeals?.length ?? 0}');
-
     // Initialize recentRecipes and recentRecipeDaysAgo before userSelectedMeals loop
     // Note: recentRecipes is used for tracking recent selections for diversity,
     // but recency decay is calculated via recentRecipeDaysAgo for exponential decay
@@ -112,9 +107,6 @@ class MealPlanningService {
         MealType.dinner: dinnerTotal > 0 ? dinnerTotal : durationDays,
       };
     }
-    print('[MPS] remainingPortions (initial):');
-    remainingPortions.forEach((uid, m) => print('[MPS]   user=$uid lunch=${m[MealType.lunch]} dinner=${m[MealType.dinner]}'));
-
     final usedRecipes = <String, int>{}; // track usage per recipe
 
     // Construit la map de suivi des ingrédients du frigo/placard
@@ -162,7 +154,6 @@ class MealPlanningService {
     final similarityCache = _buildSimilarityCache(recipes, ingredientWeights);
 
     // --- GESTION DES LEFTOVERS HISTORIQUES (addExtraMeal sur J-1) ---
-    print('[MPS] Checking historical leftovers for J-1 (${startDate.subtract(const Duration(days: 1))})');
     if (recentMeals != null && recentMeals.isNotEmpty) {
       final expectedDate = startDate.subtract(const Duration(days: 1));
       // Filtre tous les repas J-1 avec addExtraMeal
@@ -172,14 +163,12 @@ class MealPlanningService {
           m.date.day == expectedDate.day &&
           m.recipe.addExtraMeal
       ).toList();
-      print('[MPS] leftoversJ1 count=${leftoversJ1.length}');
       for (final meal in leftoversJ1) {
         // Slot : lunch = 0, dinner = 1
         final slot = (meal.type == MealType.lunch) ? 0 : 1;
         if (slot < meals.length) {
           if (meals[slot] != null) {
             // Collision : slot déjà occupé (userSelected ou autre leftover)
-            print('[MealPlanningService] Collision leftover historique sur slot $slot ($startDate, ${meal.type})');
             continue;
           }
           int recipeMultiplier = 1;
@@ -200,28 +189,22 @@ class MealPlanningService {
       }
     }
 
-    print('[MPS] Starting slot loop (numMeals=$numMeals)...');
     for (int i = 0; i < numMeals; i++) {
-      final _dbgDate = startDate.add(Duration(days: i ~/ 2));
-      final _dbgType = i % 2 == 0 ? 'lunch' : 'dinner';
-      print('[MPS] Slot $i ($_dbgDate $_dbgType) meals[i]=${meals[i]?.recipe.title ?? 'null'}');
       // 1. Gestion des leftovers (pendingLeftovers)
-      if (_handleLeftover(i, pendingLeftovers, meals)) { print('[MPS]   -> pendingLeftover injected'); continue; }
+      if (_handleLeftover(i, pendingLeftovers, meals)) { continue; }
       // 2. Gestion des userSelectedMeals
-      if (_handleUserSelectedSlot(i, meals, usedRecipes, users, recipeUserServingsMap, remainingPortions)) { print('[MPS]   -> userSelected'); continue; }
+      if (_handleUserSelectedSlot(i, meals, usedRecipes, users, recipeUserServingsMap, remainingPortions)) { continue; }
       // 3. Skip slots already filled by historical leftover injection (J-1 addExtraMeal)
       //    These were set directly into meals[i] before the loop and must not be overwritten.
-      if (meals[i] != null) { print('[MPS]   -> already filled (historical leftover)'); continue; }
+      if (meals[i] != null) { continue; }
       // 4. Génération normale du slot
       final mealDate = startDate.add(Duration(days: i ~/ 2));
       final mealType = i % 2 == 0 ? MealType.lunch : MealType.dinner;
       final totalRemainingPortions = remainingPortions.values
           .fold<int>(0, (sum, map) => sum + (map[mealType] ?? 0));
-      print('[MPS]   totalRemainingPortions($mealType)=$totalRemainingPortions');
       if (totalRemainingPortions == 0) {
         // No more portions needed for this meal type — skip but keep going for
         // other days / other types instead of stopping the whole plan.
-        print('[MPS]   -> SKIP (no portions left)');
         continue;
       }
       final selectedRecipe = _selectBestRecipe(
@@ -251,11 +234,9 @@ class MealPlanningService {
         slotsRemaining: numMeals - i,
       );
       if (selectedRecipe == null) {
-        print('[MPS]   -> selectedRecipe=NULL');
         meals[i] = null;
         continue;
       }
-      print('[MPS]   -> selectedRecipe=${selectedRecipe.title}');
       final servingsForRecipe = recipeUserServingsMap[selectedRecipe.id] ?? {};
       final (userServingsForMeal, totalConsumed) = _consumePortions(
         users: users,
@@ -263,9 +244,7 @@ class MealPlanningService {
         mealType: mealType,
         remainingPortions: remainingPortions,
       );
-      print('[MPS]   totalConsumed=$totalConsumed');
       if (totalConsumed == 0) {
-        print('[MPS]   -> SKIP (totalConsumed=0)');
         meals[i] = null;
         continue;
       }
@@ -319,8 +298,6 @@ class MealPlanningService {
     }
 
     final finalMeals = meals.whereType<Meal>().toList();
-    print('[MPS] ===== generateMealPlan END ===== meals generated: ${finalMeals.length}');
-    for (final m in finalMeals) print('[MPS]   ${m.date} ${m.type.name} ${m.recipe.title} leftover=${m.isLeftoverMeal}');
 
     return MealPlan(
       id: '',

@@ -58,6 +58,7 @@ class _RecipeSelectorState extends State<RecipeSelector> {
 
   Future<List<Map<String, dynamic>>> _fetchCategories() async {
     final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) return [];
     final snap = await FirebaseFirestore.instance
         .collection('categories')
         .where('groupId', isEqualTo: groupId)
@@ -89,6 +90,7 @@ class _RecipeSelectorState extends State<RecipeSelector> {
 
   Future<List<Map<String, String>>> _fetchAllIngredients() async {
     final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) return [];
     final snap = await FirebaseFirestore.instance
         .collection('ingredients')
         .where('groupId', isEqualTo: groupId)

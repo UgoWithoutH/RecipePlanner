@@ -41,6 +41,10 @@ class _IngredientsPageState extends State<IngredientsPage> {
     // Load types first or parallel
     final typesFuture = _typeRepo.getTypes();
     final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
     final ingredientsFuture = FirebaseFirestore.instance
         .collection('ingredients')
         .where('groupId', isEqualTo: groupId)
@@ -303,6 +307,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
   Future<void> _showRecipesForIngredient(String ingredientId, String ingredientName) async {
     // Pre-load so we can size the sheet to fit the content
     final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) return;
     final snap = await FirebaseFirestore.instance
         .collection('recipes')
         .where('groupId', isEqualTo: groupId)

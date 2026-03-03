@@ -81,6 +81,7 @@ class _PlannerPageState extends State<PlannerPage> {
 
   Future<void> _loadAllCategories() async {
     final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) return;
     final snapshot = await FirebaseFirestore.instance
         .collection('categories')
         .where('groupId', isEqualTo: groupId)
@@ -310,6 +311,7 @@ class _PlannerPageState extends State<PlannerPage> {
   Future<void> _pickCategories({VoidCallback? onUpdated}) async {
     // Load categories from the categories collection (name + ID)
     final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) return;
     final snapshot = await FirebaseFirestore.instance
         .collection('categories')
         .where('groupId', isEqualTo: groupId)

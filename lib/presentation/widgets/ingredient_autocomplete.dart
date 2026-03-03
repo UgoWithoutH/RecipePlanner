@@ -1,24 +1,36 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../data/repositories/group_repository.dart';
 
 
 class IngredientAutocomplete extends StatefulWidget {
   /// Static method to expose the suggestion logic for reuse in other widgets
   static Future<List<Map<String, String>>> suggestIngredients(String query, {Set<String>? excludeIds}) async {
     if (query.isEmpty) return [];
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) return [];
     List<Map<String, String>> allResults = [];
     if (query.length < 2) {
-      final snap = await FirebaseFirestore.instance.collection('ingredients').limit(50).get();
+      final snap = await FirebaseFirestore.instance
+          .collection('ingredients')
+          .where('groupId', isEqualTo: groupId)
+          .limit(50)
+          .get();
       allResults = snap.docs.map((doc) => {'id': doc.id, 'name': doc.get('name') as String}).toList();
     } else {
       final snap = await FirebaseFirestore.instance
           .collection('ingredients')
+          .where('groupId', isEqualTo: groupId)
           .where('name', isGreaterThanOrEqualTo: query)
           .where('name', isLessThanOrEqualTo: '$query\uf8ff')
           .get();
       allResults = snap.docs.map((doc) => {'id': doc.id, 'name': doc.get('name') as String}).toList();
       if (allResults.length < 10) {
-        final snapAll = await FirebaseFirestore.instance.collection('ingredients').limit(50).get();
+        final snapAll = await FirebaseFirestore.instance
+            .collection('ingredients')
+            .where('groupId', isEqualTo: groupId)
+            .limit(50)
+            .get();
         final extra = snapAll.docs.map((doc) => {'id': doc.id, 'name': doc.get('name') as String});
         for (final ing in extra) {
           if (!allResults.any((e) => e['id'] == ing['id'])) {
@@ -56,19 +68,30 @@ class IngredientAutocomplete extends StatefulWidget {
 class _IngredientAutocompleteState extends State<IngredientAutocomplete> {
   Future<List<Map<String, String>>> _searchIngredients(String query) async {
     if (query.isEmpty) return [];
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) return [];
     List<Map<String, String>> allResults = [];
     if (query.length < 2) {
-      final snap = await FirebaseFirestore.instance.collection('ingredients').limit(50).get();
+      final snap = await FirebaseFirestore.instance
+          .collection('ingredients')
+          .where('groupId', isEqualTo: groupId)
+          .limit(50)
+          .get();
       allResults = snap.docs.map((doc) => {'id': doc.id, 'name': doc.get('name') as String}).toList();
     } else {
       final snap = await FirebaseFirestore.instance
           .collection('ingredients')
+          .where('groupId', isEqualTo: groupId)
           .where('name', isGreaterThanOrEqualTo: query)
           .where('name', isLessThanOrEqualTo: '$query\uf8ff')
           .get();
       allResults = snap.docs.map((doc) => {'id': doc.id, 'name': doc.get('name') as String}).toList();
       if (allResults.length < 10) {
-        final snapAll = await FirebaseFirestore.instance.collection('ingredients').limit(50).get();
+        final snapAll = await FirebaseFirestore.instance
+            .collection('ingredients')
+            .where('groupId', isEqualTo: groupId)
+            .limit(50)
+            .get();
         final extra = snapAll.docs.map((doc) => {'id': doc.id, 'name': doc.get('name') as String});
         for (final ing in extra) {
           if (!allResults.any((e) => e['id'] == ing['id'])) {

@@ -48,6 +48,10 @@ class _RecipesPageState extends State<RecipesPage> {
   Future<void> _fetchCategories() async {
     setState(() => _categoriesLoading = true);
     final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) {
+      if (mounted) setState(() => _categoriesLoading = false);
+      return;
+    }
     final snap = await FirebaseFirestore.instance
         .collection('categories')
         .where('groupId', isEqualTo: groupId)
@@ -69,6 +73,10 @@ class _RecipesPageState extends State<RecipesPage> {
   Future<void> _fetchAllIngredients() async {
     setState(() => _ingredientsLoading = true);
     final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) {
+      if (mounted) setState(() => _ingredientsLoading = false);
+      return;
+    }
     final snap = await FirebaseFirestore.instance
         .collection('ingredients')
         .where('groupId', isEqualTo: groupId)
@@ -88,6 +96,7 @@ class _RecipesPageState extends State<RecipesPage> {
   // =========================
   Future<List<Recipe>> fetchRecipes() async {
     final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) return [];
     final snapshot = await FirebaseFirestore.instance
         .collection('recipes')
         .where('groupId', isEqualTo: groupId)

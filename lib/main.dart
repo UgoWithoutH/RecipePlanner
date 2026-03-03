@@ -13,10 +13,12 @@ import 'presentation/pages/ingredients_page.dart';
 import 'presentation/pages/shopping_list_page.dart';
 import 'presentation/pages/login_page.dart';
 import 'presentation/pages/access_denied_page.dart';
+import 'presentation/pages/no_group_page.dart';
 import 'presentation/providers/auth_notifier.dart';
 import 'presentation/providers/auth_state.dart';
 
 import 'data/repositories/notification_settings_repository.dart';
+import 'data/repositories/group_repository.dart';
 import 'firebase_options.dart';
 
 const bool useTestData = false;
@@ -151,6 +153,7 @@ class _DataLoader extends StatefulWidget {
 
 class _DataLoaderState extends State<_DataLoader> {
   bool _isLoading = true;
+  bool _hasGroup = true;
 
   @override
   void initState() {
@@ -162,11 +165,14 @@ class _DataLoaderState extends State<_DataLoader> {
     if (useTestData) {
       await _loadTestDataIfNeeded();
     }
+    // Check if the user belongs to a group
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
     // Initialise les préférences de notification avec les valeurs par défaut
     // si l'utilisateur n'en a jamais configuré (première ouverture).
     await NotificationSettingsRepository().initializeDefaults();
     if (mounted) {
       setState(() {
+        _hasGroup = groupId != null;
         _isLoading = false;
       });
     }
@@ -178,6 +184,9 @@ class _DataLoaderState extends State<_DataLoader> {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
       );
+    }
+    if (!_hasGroup) {
+      return const NoGroupPage();
     }
     return const HomePage();
   }

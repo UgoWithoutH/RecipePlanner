@@ -1180,6 +1180,64 @@ class _PlannerPageState extends State<PlannerPage> {
   }
 
   /// Navigue vers RecipeDetailPage avec l'ID de la recette.
+  /// Auto-fills an empty meal slot by picking a recipe with the planning algorithm.
+  Future<void> _autoFillEmptySlot(DateTime date, MealType type) async {
+    if (!mounted) return;
+    setState(() => _isLoading = true);
+    try {
+      final allRecipes = await _loadRecipes();
+      final users = await _userRepo.getUsers();
+      final servings = await _loadServings();
+
+      // Apply category filter (same as _launchPlanning)
+      final validSelectedCategories = _selectedCategories
+          .where((id) => _categoryDataById.containsKey(id))
+          .toSet();
+      final filteredRecipes = validSelectedCategories.isEmpty
+          ? allRecipes
+          : allRecipes
+              .where((r) => r.categoryIds.any((c) => validSelectedCategories.contains(c)))
+              .toList();
+
+      if (filteredRecipes.isEmpty) return;
+
+      final currentUserIds = users.map((u) => u.id).toSet();
+      final filteredHistory = _mealHistory.entries
+          .expand((e) => e.value)
+          .where((m) => m.userServings.isEmpty ||
+              m.userServings.keys.any((uid) => currentUserIds.contains(uid)))
+          .toList();
+
+      final otherPlanMeals = _generatedMealPlan?.meals
+          .where((m) => !(m.date.year == date.year &&
+              m.date.month == date.month &&
+              m.date.day == date.day &&
+              m.type == type))
+          .toList() ??
+          [];
+
+      final tempPlan = MealPlanningService.generateMealPlan(
+        recipes: filteredRecipes,
+        servings: servings,
+        users: users,
+        startDate: date,
+        durationDays: 1,
+        recentMeals: [...filteredHistory, ...otherPlanMeals],
+        pantryItems: _pantryIngredients,
+        selectedCategories: _selectedCategories.toList(),
+        referenceDate: date,
+      );
+
+      final newMeal = tempPlan.meals.where((m) => m.type == type).firstOrNull;
+      if (newMeal == null) return;
+
+      setState(() => _isLoading = false);
+      await _addMealToPlan(newMeal.recipe, date, type);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   void _openRecipeDetail(Meal meal) {
     // Calcul du multiplicateur pour les restes
     int? ingredientMultiplier;
@@ -1812,6 +1870,72 @@ class _PlannerPageState extends State<PlannerPage> {
             }
             Navigator.pop(context); // Close modal (normal case)
             if (mealToUpdate != null) {
+              // Vérifie si c'est une première occurrence addExtraMeal avec un reste le lendemain
+              if (mealToUpdate.recipe.addExtraMeal &&
+                  !mealToUpdate.isLeftoverMeal &&
+                  _generatedMealPlan != null) {
+                final nextDay = mealToUpdate.date.add(const Duration(days: 1));
+                final leftoverExists = _generatedMealPlan!.meals.any((m) =>
+                    m.recipe.id == mealToUpdate.recipe.id &&
+                    m.date.year == nextDay.year &&
+                    m.date.month == nextDay.month &&
+                    m.date.day == nextDay.day &&
+                    m.isLeftoverMeal);
+                if (leftoverExists) {
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+                      contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                      actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                      title: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF6A5AE0).withOpacity(0.12),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.info_outline, color: Color(0xFF6A5AE0), size: 22),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Recette cuisinée pour 2 repas',
+                              style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
+                            ),
+                          ),
+                        ],
+                      ),
+                      content: Text(
+                        'Cette recette est prévue pour 2 repas (aujourd\'hui + lendemain). '
+                        'Remplacer supprimera également le repas du lendemain.',
+                        style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          style: TextButton.styleFrom(foregroundColor: Colors.black54),
+                          child: Text('Annuler', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF6A5AE0),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                            elevation: 0,
+                          ),
+                          child: Text('Remplacer', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirmed != true) return;
+                }
+              }
               _changeMealRecipe(mealToUpdate, newRecipe);
             } else if (date != null && type != null) {
               _addMealToPlan(newRecipe, date, type);
@@ -2739,83 +2863,157 @@ class _PlannerPageState extends State<PlannerPage> {
       );
     }
     Widget buildEmptySlot(MealType mealType) {
-      return Card(
-        color: Colors.grey.shade100,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        elevation: 2,
-        margin: const EdgeInsets.symmetric(vertical: 8),
-        child: InkWell(
-          onTap: () async {
-            if (_selectedMealDate != null) {
-              final now = DateTime.now();
-              final today = DateTime(now.year, now.month, now.day);
-              final mealDate = DateTime(
-                _selectedMealDate!.year,
-                _selectedMealDate!.month,
-                _selectedMealDate!.day,
-              );
-              final isHistory = mealDate.isBefore(today);
-              if (isHistory) {
-                final confirmed = await showDialog<bool>(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: Text('Ajouter un repas historique'),
-                    content: Text(
-                      "Ce jour fait partie de l'historique. Voulez-vous vraiment ajouter un repas ?",
+      Future<void> onManualTap() async {
+        if (_selectedMealDate == null) return;
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        final mealDate = DateTime(
+          _selectedMealDate!.year,
+          _selectedMealDate!.month,
+          _selectedMealDate!.day,
+        );
+        final isHistory = mealDate.isBefore(today);
+        if (isHistory) {
+          final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+              contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+              actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withOpacity(0.12),
+                      shape: BoxShape.circle,
                     ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        child: const Text('Annuler'),
-                      ),
-                      ElevatedButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.deepPurpleAccent,
-                          foregroundColor: Colors.white,
-                        ),
-                        child: const Text('Oui, ajouter'),
-                      ),
-                    ],
+                    child: const Icon(Icons.history, color: Colors.orange, size: 22),
                   ),
-                );
-                if (confirmed != true) return;
-              }
-              _showRecipeSelector(date: _selectedMealDate!, type: mealType);
-            }
-          },
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(Icons.add, color: Colors.grey[600], size: 24),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Text(
-                    'Aucun repas planifié',
-                    style: GoogleFonts.poppins(
-                      fontSize: 16,
-                      color: Colors.grey[600],
-                      fontStyle: FontStyle.italic,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Repas historique',
+                      style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
                     ),
                   ),
+                ],
+              ),
+              content: Text(
+                "Ce jour fait partie de l'historique. Voulez-vous vraiment ajouter un repas ?",
+                style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  style: TextButton.styleFrom(foregroundColor: Colors.black54),
+                  child: Text('Annuler', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
                 ),
-                Icon(
-                  Icons.arrow_forward_ios,
-                  color: Colors.grey[400],
-                  size: 16,
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6A5AE0),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    elevation: 0,
+                  ),
+                  child: Text('Oui, ajouter', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
                 ),
               ],
             ),
-          ),
+          );
+          if (confirmed != true) return;
+        }
+        _showRecipeSelector(date: _selectedMealDate!, type: mealType);
+      }
+
+      return Card(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        elevation: 2,
+        clipBehavior: Clip.antiAlias,
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        child: Column(
+          children: [
+            // ── Main content ──
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withOpacity(0.15),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.restaurant_menu, color: Colors.grey[400], size: 24),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Aucun repas planifié',
+                      style: GoogleFonts.poppins(
+                        fontSize: 15,
+                        color: Colors.grey[400],
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // ── Action bar ──
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                border: Border(top: BorderSide(color: Colors.grey.shade200)),
+              ),
+              child: IntrinsicHeight(
+                child: Row(
+                  children: [
+                    if (!isPastDay) ...[
+                      Expanded(
+                        child: InkWell(
+                          onTap: () => _autoFillEmptySlot(_selectedMealDate!, mealType),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.autorenew, color: Colors.grey.shade500, size: 20),
+                                const SizedBox(height: 3),
+                                Text('Aléatoire', style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade500, fontWeight: FontWeight.w500)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      VerticalDivider(width: 1, color: Colors.grey.shade200),
+                    ],
+                    Expanded(
+                      child: InkWell(
+                        onTap: onManualTap,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.search, color: Colors.grey.shade500, size: 20),
+                              const SizedBox(height: 3),
+                              Text('Chercher', style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade500, fontWeight: FontWeight.w500)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       );
     }

@@ -67,6 +67,26 @@ class MealPlan {
     this.selectedCategories = const [],
   });
 
+  MealPlan copyWith({
+    String? id,
+    DateTime? startDate,
+    int? durationDays,
+    List<Meal>? meals,
+    DateTime? createdAt,
+    List<RecipeIngredient>? pantryItems,
+    List<String>? selectedCategories,
+  }) {
+    return MealPlan(
+      id: id ?? this.id,
+      startDate: startDate ?? this.startDate,
+      durationDays: durationDays ?? this.durationDays,
+      meals: meals ?? this.meals,
+      createdAt: createdAt ?? this.createdAt,
+      pantryItems: pantryItems ?? this.pantryItems,
+      selectedCategories: selectedCategories ?? this.selectedCategories,
+    );
+  }
+
   Map<String, dynamic> toFirestore() {
     return {
       'startDate': '${startDate.year}-${startDate.month.toString().padLeft(2, '0')}-${startDate.day.toString().padLeft(2, '0')}',

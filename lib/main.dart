@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:recipe_planner/data/services/seed_data_service.dart';
+import 'package:recipe_planner/data/services/notification_service.dart';
 
 import 'presentation/pages/recipes_page.dart';
 import 'presentation/pages/planner_page.dart';
@@ -15,6 +16,7 @@ import 'presentation/pages/access_denied_page.dart';
 import 'presentation/providers/auth_notifier.dart';
 import 'presentation/providers/auth_state.dart';
 
+import 'data/repositories/notification_settings_repository.dart';
 import 'firebase_options.dart';
 
 const bool useTestData = false;
@@ -25,6 +27,7 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
   await initializeDateFormatting();
+  await NotificationService().initialize();
 
   runApp(const ProviderScope(child: MyApp()));
 }
@@ -159,6 +162,9 @@ class _DataLoaderState extends State<_DataLoader> {
     if (useTestData) {
       await _loadTestDataIfNeeded();
     }
+    // Initialise les préférences de notification avec les valeurs par défaut
+    // si l'utilisateur n'en a jamais configuré (première ouverture).
+    await NotificationSettingsRepository().initializeDefaults();
     if (mounted) {
       setState(() {
         _isLoading = false;

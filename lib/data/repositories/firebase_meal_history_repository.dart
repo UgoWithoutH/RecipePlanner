@@ -1,10 +1,19 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:recipe_planner/domain/entities/recipe.dart' show Recipe;
 import '../../domain/entities/meal_plan.dart';
+import 'group_repository.dart';
 
 class FirebaseMealHistoryRepository {
   final CollectionReference _history =
       FirebaseFirestore.instance.collection('mealPlanHistory');
+
+  Future<String> _getGroupId() async {
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
+    return groupId;
+  }
+
+  String _docKey(String groupId, String dateKey) => '${groupId}_$dateKey';
 
   /// Add meals to history for a specific date
   /// Each day is stored as a separate document with the date as ID
@@ -42,7 +51,11 @@ class FirebaseMealHistoryRepository {
 
   /// Get all history days, ordered by date descending (most recent first)
   Future<Map<DateTime, List<Meal>>> getHistory() async {
-    final snapshot = await _history.orderBy('date', descending: true).get();
+    final groupId = await _getGroupId();
+    final snapshot = await _history
+        .where('groupId', isEqualTo: groupId)
+        .orderBy('date', descending: true)
+        .get();
     
     final Map<DateTime, List<Meal>> history = {};
     
@@ -114,8 +127,12 @@ class FirebaseMealHistoryRepository {
 
   /// Remove history days older than the specified number of days
   Future<void> cleanOldHistory(int maxDays) async {
-    // Retrieve all history days, sorted by ascending date
-    final snapshot = await _history.orderBy('date', descending: false).get();
+    final groupId = await _getGroupId();
+    // Retrieve all history days for this group, sorted by ascending date
+    final snapshot = await _history
+        .where('groupId', isEqualTo: groupId)
+        .orderBy('date', descending: false)
+        .get();
     final docs = snapshot.docs;
     // If there are more than maxDays, delete the oldest ones
     if (docs.length > maxDays) {
@@ -172,14 +189,18 @@ class FirebaseMealHistoryRepository {
 
   /// Check if a specific date is already in history
   Future<bool> isDateInHistory(DateTime date) async {
+    final groupId = await _getGroupId();
     final dateKey = _formatDateKey(date);
-    final doc = await _history.doc(dateKey).get();
+    final doc = await _history.doc(_docKey(groupId, dateKey)).get();
     return doc.exists;
   }
 
   /// Get the number of days currently in history
   Future<int> getHistoryDaysCount() async {
-    final snapshot = await _history.get();
+    final groupId = await _getGroupId();
+    final snapshot = await _history
+        .where('groupId', isEqualTo: groupId)
+        .get();
     return snapshot.docs.length;
   }
 

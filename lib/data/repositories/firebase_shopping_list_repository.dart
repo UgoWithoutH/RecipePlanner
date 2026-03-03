@@ -1,16 +1,28 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../domain/entities/shopping_list.dart';
+import 'group_repository.dart';
 
 class FirebaseShoppingListRepository {
   final CollectionReference _collection =
       FirebaseFirestore.instance.collection('shopping_lists');
 
+  Future<String> _getGroupId() async {
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
+    return groupId;
+  }
+
   Future<void> saveShoppingList(ShoppingList shoppingList) async {
-    await _collection.doc(shoppingList.id).set(shoppingList.toMap());
+    final groupId = await _getGroupId();
+    final data = shoppingList.toMap();
+    data['groupId'] = groupId;
+    await _collection.doc(shoppingList.id).set(data);
   }
 
   Future<ShoppingList?> getShoppingListByMealPlanId(String mealPlanId) async {
+    final groupId = await _getGroupId();
     final querySnapshot = await _collection
+        .where('groupId', isEqualTo: groupId)
         .where('mealPlanId', isEqualTo: mealPlanId)
         .limit(1)
         .get();
@@ -22,8 +34,10 @@ class FirebaseShoppingListRepository {
     return null;
   }
   
-  Stream<ShoppingList?> streamShoppingListByMealPlanId(String mealPlanId) {
-     return _collection
+  Stream<ShoppingList?> streamShoppingListByMealPlanId(String mealPlanId) async* {
+    final groupId = await _getGroupId();
+    yield* _collection
+        .where('groupId', isEqualTo: groupId)
         .where('mealPlanId', isEqualTo: mealPlanId)
         .limit(1)
         .snapshots()
@@ -47,7 +61,10 @@ class FirebaseShoppingListRepository {
 
   /// Update typeId for all shopping list items referencing a given ingredient name
   Future<void> updateShoppingItemsTypeForIngredient(String ingredientName, String? newTypeId) async {
-    final snapshot = await _collection.get();
+    final groupId = await _getGroupId();
+    final snapshot = await _collection
+        .where('groupId', isEqualTo: groupId)
+        .get();
     for (final doc in snapshot.docs) {
       final data = doc.data() as Map<String, dynamic>;
       final list = ShoppingList.fromMap(doc.id, data);

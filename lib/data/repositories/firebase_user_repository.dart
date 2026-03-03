@@ -1,17 +1,27 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../domain/entities/user.dart';
+import 'group_repository.dart';
 
 class FirebaseUserRepository {
   final CollectionReference _users =
       FirebaseFirestore.instance.collection('users');
 
-  /// Fetch all users from Firestore
+  /// Fetch all users that belong to the same group as the current user.
   Future<List<User>> getUsers() async {
-    final snap = await _users.get();
-    return snap.docs.map((doc) {
-      final data = doc.data() as Map<String, dynamic>;
-      return User.fromFirestore(doc.id, data);
-    }).toList();
+    final memberIds = await GroupRepository.instance.getGroupMemberIds();
+    if (memberIds.isEmpty) return [];
+
+    final results = await Future.wait(
+      memberIds.map((uid) => _users.doc(uid).get()),
+    );
+
+    return results
+        .where((doc) => doc.exists)
+        .map((doc) {
+          final data = doc.data() as Map<String, dynamic>;
+          return User.fromFirestore(doc.id, data);
+        })
+        .toList();
   }
 
   /// Add an email to the allowed_emails whitelist.

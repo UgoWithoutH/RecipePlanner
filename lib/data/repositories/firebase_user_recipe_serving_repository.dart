@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../domain/entities/user_recipe_serving.dart';
+import 'group_repository.dart';
 
 class FirebaseUserRecipeServingRepository {
   final CollectionReference _users = FirebaseFirestore.instance.collection(
@@ -8,6 +9,28 @@ class FirebaseUserRecipeServingRepository {
   final CollectionReference _recipes = FirebaseFirestore.instance.collection(
     'recipes',
   );
+
+  /// Fetch all UserRecipeServing for every member of the current user's group.
+  /// Does not require a prior getUsers() call.
+  Future<List<UserRecipeServing>> fetchAllGroupServings() async {
+    final memberIds = await GroupRepository.instance.getGroupMemberIds();
+    if (memberIds.isEmpty) return [];
+    final all = <UserRecipeServing>[];
+    for (final uid in memberIds) {
+      final snapshot = await _users
+          .doc(uid)
+          .collection('recipeServings')
+          .get();
+      for (final doc in snapshot.docs) {
+        all.add(UserRecipeServing.fromFirestore(
+          doc.data(),
+          userId: uid,
+          recipeId: doc.id,
+        ));
+      }
+    }
+    return all;
+  }
 
   Future<List<UserRecipeServing>> fetchServingsForRecipe(
     String recipeId,

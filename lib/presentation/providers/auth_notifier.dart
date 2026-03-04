@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/datasources/google_auth_service.dart';
@@ -60,6 +61,15 @@ class AuthNotifier extends StateNotifier<AuthState> {
       state = const AuthUnauthenticated();
     } on AccessDeniedException {
       state = const AuthDenied();
+    } on PlatformException catch (e) {
+      // Native errors (e.g. Out of Memory, network, cancelled from OS)
+      if (e.code == 'network_error' ||
+          e.message?.toLowerCase().contains('cancel') == true ||
+          e.message?.toLowerCase().contains('memory') == true) {
+        state = const AuthUnauthenticated();
+      } else {
+        state = AuthError(e.message ?? e.code);
+      }
     } catch (e) {
       state = AuthError(e.toString());
     }

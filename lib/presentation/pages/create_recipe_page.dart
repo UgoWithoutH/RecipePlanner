@@ -23,6 +23,7 @@ import '../../domain/entities/ingredient_type.dart';
 import '../../data/repositories/firebase_ingredient_type_repository.dart';
 
 import '../../domain/entities/pending_ingredient.dart';
+import 'preset_recipe_picker_page.dart';
 
 class CreateRecipePage extends StatefulWidget {
   final Recipe? recipe;
@@ -142,6 +143,84 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   Future<void> _loadCategories() async {
     final categories = await _categoryRepo.getCategories();
     if (mounted) setState(() => _categories = categories);
+  }
+
+  // ── Preset recipe picker ────────────────────────────────────────────────────
+
+  Future<void> _openPresetPicker() async {
+    final preset = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(builder: (_) => const PresetRecipePickerPage()),
+    );
+    if (preset != null && mounted) {
+      _prefillFromPreset(preset);
+    }
+  }
+
+  void _prefillFromPreset(Map<String, dynamic> preset) {
+    _titleController.text = preset['title'] as String? ?? '';
+    _descriptionController.text = preset['description'] as String? ?? '';
+    _preparationTimeController.text =
+        ((preset['preparationTime'] as num?)?.toInt() ?? 0).toString();
+    _cookingTimeController.text =
+        ((preset['cookingTime'] as num?)?.toInt() ?? 0).toString();
+    _servingsController.text =
+        ((preset['servings'] as num?)?.toInt() ?? 4).toString();
+
+    // Match category names → IDs
+    final presetCats =
+        List<String>.from(preset['categories'] as List? ?? []);
+    _selectedCategoryIds = _categories
+        .where((c) => presetCats.contains(c.name))
+        .map((c) => c.id)
+        .toList();
+
+    // Instructions
+    _instructions
+      ..clear()
+      ..addAll(List<String>.from(preset['instructions'] as List? ?? []));
+
+    // Ingredients
+    _ingredients.clear();
+    _pendingIngredients.clear();
+    final rawIngredients = preset['ingredients'] as List? ?? [];
+    for (final raw in rawIngredients) {
+      final i = Map<String, dynamic>.from(raw as Map);
+      final name = i['name'] as String? ?? '';
+      if (name.isEmpty) continue;
+      final qty = (i['quantity'] as num?)?.toDouble() ?? 1.0;
+      final unitLabel = i['unit'] as String? ?? '';
+      final typeName = i['type'] as String? ?? '';
+
+      // Match unit label to Unit enum
+      final unit = Unit.values.firstWhere(
+        (u) => u.label == unitLabel || u.name == unitLabel,
+        orElse: () => Unit.piece,
+      );
+
+      // Match type name to typeId
+      final typeMatch = _ingredientTypes.firstWhere(
+        (t) => t.name == typeName,
+        orElse: () => IngredientType(id: '', name: '', color: 0xFFBDBDBD),
+      );
+      final typeId = typeMatch.id.isNotEmpty ? typeMatch.id : null;
+
+      _pendingIngredients.add(PendingIngredient(
+        name: name,
+        typeId: typeId,
+        quantity: qty,
+        unit: unit,
+        notes: null,
+      ));
+      _ingredients.add(RecipeIngredient(
+        ingredient: Ingredient(id: '', name: name, typeId: typeId),
+        quantity: qty,
+        unit: unit,
+        notes: null,
+      ));
+    }
+
+    setState(() {});
   }
 
   Future<void> _loadUsers() async {
@@ -1346,9 +1425,16 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                                 color: Colors.black87,
                               ),
                             ),
-                            const SizedBox(
-                              width: 40,
-                            ), // Balance the back button
+                            if (widget.recipe == null)
+                              Tooltip(
+                                message: 'Depuis le catalogue',
+                                child: _headerCircleButton(
+                                  Icons.library_books_rounded,
+                                  _openPresetPicker,
+                                ),
+                              )
+                            else
+                              const SizedBox(width: 40),
                           ],
                         ),
                       ),

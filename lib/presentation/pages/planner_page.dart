@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
+
+import '../providers/auth_notifier.dart';
 
 import '../../core/constants/unit.dart';
 import '../../data/repositories/firebase_meal_plan_repository.dart';
@@ -2148,6 +2151,95 @@ class _PlannerPageState extends State<PlannerPage> {
                               ),
                             ),
                           ),
+                        const SizedBox(width: 8),
+                        Consumer(
+                          builder: (context, ref, _) => Tooltip(
+                            message: 'Déconnexion',
+                            child: Material(
+                              color: Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(14),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(14),
+                                onTap: () async {
+                                  final confirm = await showDialog<bool>(
+                                    context: context,
+                                    builder: (ctx) => AlertDialog(
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(20)),
+                                      titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+                                      contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                                      actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                                      title: Row(
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFF6A5AE0).withOpacity(0.12),
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: const Icon(Icons.logout_rounded,
+                                                color: Color(0xFF6A5AE0), size: 22),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Text(
+                                              'Déconnexion',
+                                              style: GoogleFonts.poppins(
+                                                  fontWeight: FontWeight.w600, fontSize: 16),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      content: Text(
+                                        'Voulez-vous vous déconnecter ?',
+                                        style: GoogleFonts.poppins(
+                                            fontSize: 14, color: Colors.black54),
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () => Navigator.pop(ctx, false),
+                                          style: TextButton.styleFrom(
+                                              foregroundColor: Colors.black54),
+                                          child: Text('Annuler',
+                                              style: GoogleFonts.poppins(
+                                                  fontWeight: FontWeight.w500)),
+                                        ),
+                                        ElevatedButton(
+                                          onPressed: () => Navigator.pop(ctx, true),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color(0xFF6A5AE0),
+                                            foregroundColor: Colors.white,
+                                            shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(12)),
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 20, vertical: 10),
+                                            elevation: 0,
+                                          ),
+                                          child: Text('Déconnexion',
+                                              style: GoogleFonts.poppins(
+                                                  fontWeight: FontWeight.w600)),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                  if (confirm == true) {
+                                    ref
+                                        .read(authNotifierProvider.notifier)
+                                        .signOut();
+                                  }
+                                },
+                                child: const Padding(
+                                  padding: EdgeInsets.all(10),
+                                  child: Icon(
+                                    Icons.logout_rounded,
+                                    color: Color(0xFF555555),
+                                    size: 24,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),

@@ -35,7 +35,8 @@ class GoogleAuthService {
   /// Throws [SignInCancelledException] if the user dismisses the picker.
   /// Throws [AccessDeniedException] if the UID is not in Firestore.
   Future<AppUser> signInWithGoogle() async {
-    final provider = GoogleAuthProvider();
+    final provider = GoogleAuthProvider()
+      ..setCustomParameters({'prompt': 'select_account'});
 
     UserCredential userCredential;
     try {

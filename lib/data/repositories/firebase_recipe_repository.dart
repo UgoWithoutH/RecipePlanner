@@ -271,11 +271,13 @@ class FirebaseRecipeRepository implements RecipeRepository {
       'description': recipe.description,
       'preparationTime': recipe.preparationTime,
       'cookingTime': recipe.cookingTime,
+      'servings': recipe.servings,
       'categoryIds': recipe.categoryIds,
       'category': recipe.categoryIds.isNotEmpty ? recipe.categoryIds.first : '',
       'rating': recipe.rating,
       'createdAt': recipe.createdAt.toUtc().toIso8601String(),
       'isFavorite': recipe.isFavorite,
+      'addExtraMeal': recipe.addExtraMeal,
       'instructions': recipe.instructions,
       'ingredients': recipe.ingredients
           .map(

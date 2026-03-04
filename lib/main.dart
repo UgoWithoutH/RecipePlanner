@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:recipe_planner/data/services/seed_data_service.dart';
 import 'package:recipe_planner/data/services/notification_service.dart';
+import 'package:recipe_planner/data/services/recipes_cache_service.dart';
 
 import 'presentation/pages/recipes_page.dart';
 import 'presentation/pages/planner_page.dart';
@@ -22,6 +23,7 @@ import 'data/repositories/group_repository.dart';
 import 'firebase_options.dart';
 
 const bool useTestData = false;
+const bool useRecipeCache = false;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -164,6 +166,9 @@ class _DataLoaderState extends State<_DataLoader> {
   Future<void> _loadData() async {
     if (useTestData) {
       await _loadTestDataIfNeeded();
+    }
+    if (useRecipeCache) {
+      await seedRecipesCache();
     }
     // Check if the user belongs to a group
     final groupId = await GroupRepository.instance.getCurrentGroupId();

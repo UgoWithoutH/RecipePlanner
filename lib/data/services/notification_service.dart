@@ -33,8 +33,8 @@ class NotificationService {
     // Fuseau horaire local
     tz_data.initializeTimeZones();
     try {
-      final String timeZoneName = await FlutterTimezone.getLocalTimezone();
-      tz.setLocalLocation(tz.getLocation(timeZoneName));
+      final timezoneInfo = await FlutterTimezone.getLocalTimezone();
+      tz.setLocalLocation(tz.getLocation(timezoneInfo.identifier));
     } catch (_) {
       // Fallback : UTC si la résolution échoue
     }

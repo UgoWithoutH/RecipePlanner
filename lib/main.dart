@@ -117,29 +117,8 @@ class _AuthWrapper extends ConsumerWidget {
       // ── No session or user signed out ─────────────────────────────────────
       AuthUnauthenticated() => const LoginPage(),
 
-      // ── Unexpected error ───────────────────────────────────────────────────
-      AuthError(:final message) => Scaffold(
-            body: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                    const SizedBox(height: 16),
-                    Text(message, textAlign: TextAlign.center),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: () => ref
-                          .read(authNotifierProvider.notifier)
-                          .signOut(),
-                      child: const Text('Retour à la connexion'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
+      // ── Unexpected error – show login page which already handles AuthError ──
+      AuthError() => const LoginPage(),
     };
   }
 }

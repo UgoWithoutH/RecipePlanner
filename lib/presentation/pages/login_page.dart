@@ -162,7 +162,7 @@ class LoginPage extends ConsumerWidget {
                               const SizedBox(width: 10),
                               Expanded(
                                 child: Text(
-                                  'Une erreur est survenue. Veuillez réessayer.',
+                                  'La connexion a échoué. Vérifiez votre connexion internet et réessayez.',
                                   style: GoogleFonts.poppins(
                                     fontSize: 13,
                                     color: Colors.red.shade600,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../providers/auth_notifier.dart';
 
@@ -14,69 +15,181 @@ class AccessDeniedPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F4F0),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // ── Icon ──────────────────────────────────────────────────
-              const Icon(
-                Icons.lock_outline_rounded,
-                size: 80,
-                color: Color(0xFFE53935),
+      body: Stack(
+        children: [
+          // ── Gradient background ────────────────────────────────────────
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF6A5AE0), Color(0xFF9C8FEF)],
               ),
-              const SizedBox(height: 24),
+            ),
+          ),
 
-              // ── Title ─────────────────────────────────────────────────
-              Text(
-                'Accès refusé',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: const Color(0xFF2E2E2E),
-                    ),
+          // ── Decorative circles ─────────────────────────────────────────
+          Positioned(
+            top: -60,
+            right: -60,
+            child: Container(
+              width: 220,
+              height: 220,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withOpacity(0.08),
               ),
-              const SizedBox(height: 16),
-
-              // ── Explanation ───────────────────────────────────────────
-              Text(
-                'Ce compte Google ne dispose pas des autorisations '
-                'nécessaires pour accéder à cette application.\n\n'
-                'Si vous pensez qu\'il s\'agit d\'une erreur, '
-                'veuillez contacter l\'administrateur.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Colors.grey[600],
-                      height: 1.5,
-                    ),
+            ),
+          ),
+          Positioned(
+            top: 80,
+            right: 20,
+            child: Container(
+              width: 100,
+              height: 100,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withOpacity(0.06),
               ),
-              const SizedBox(height: 48),
+            ),
+          ),
+          Positioned(
+            bottom: -80,
+            left: -50,
+            child: Container(
+              width: 260,
+              height: 260,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withOpacity(0.07),
+              ),
+            ),
+          ),
 
-              // ── Retry with a different account ────────────────────────
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF4CAF50),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+          // ── Content ────────────────────────────────────────────────────
+          SafeArea(
+            child: Column(
+              children: [
+                // Top illustration area
+                Expanded(
+                  flex: 5,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // Icon in a frosted circle
+                      Container(
+                        width: 110,
+                        height: 110,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white.withOpacity(0.2),
+                        ),
+                        child: const Icon(
+                          Icons.lock_outline_rounded,
+                          size: 56,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      Text(
+                        'Accès refusé',
+                        style: GoogleFonts.poppins(
+                          fontSize: 32,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Ce compte n\'est pas autorisé\nà accéder à cette application.',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.poppins(
+                          fontSize: 15,
+                          color: Colors.white.withOpacity(0.85),
+                          height: 1.6,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                onPressed: () {
-                  // Reset state to unauthenticated so the LoginPage is shown.
-                  ref.read(authNotifierProvider.notifier).signOut();
-                },
-                child: const Text(
-                  'Utiliser un autre compte',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+
+                // Bottom card
+                Container(
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius:
+                        BorderRadius.vertical(top: Radius.circular(36)),
+                  ),
+                  padding: const EdgeInsets.fromLTRB(32, 40, 32, 48),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Compte non autorisé',
+                        style: GoogleFonts.poppins(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF1F1F1F),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Ce compte Google ne dispose pas des autorisations '
+                        'nécessaires. Contactez l\'administrateur si vous '
+                        'pensez qu\'il s\'agit d\'une erreur.',
+                        style: GoogleFonts.poppins(
+                          fontSize: 13.5,
+                          color: Colors.grey[500],
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+
+                      // Retry button
+                      SizedBox(
+                        height: 56,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF6A5AE0),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          onPressed: () {
+                            ref
+                                .read(authNotifierProvider.notifier)
+                                .signOut();
+                          },
+                          child: Text(
+                            'Utiliser un autre compte',
+                            style: GoogleFonts.poppins(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'Vous serez redirigé vers la page de connexion.',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.poppins(
+                          fontSize: 11,
+                          color: Colors.grey[400],
+                          height: 1.6,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }

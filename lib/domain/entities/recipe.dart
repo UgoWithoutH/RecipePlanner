@@ -13,7 +13,6 @@ class Recipe {
   final double rating;
   final DateTime createdAt;
   final bool isFavorite;
-  final bool addExtraMeal;
   final String? url;
 
   const Recipe({
@@ -29,7 +28,6 @@ class Recipe {
     this.rating = 0.0,
     required this.createdAt,
     this.isFavorite = false,
-    this.addExtraMeal = false,
     this.url,
   });
 
@@ -48,7 +46,6 @@ class Recipe {
     double? rating,
     DateTime? createdAt,
     bool? isFavorite,
-    bool? addExtraMeal,
     String? url,
   }) {
     return Recipe(
@@ -64,7 +61,6 @@ class Recipe {
       rating: rating ?? this.rating,
       createdAt: createdAt ?? this.createdAt,
       isFavorite: isFavorite ?? this.isFavorite,
-      addExtraMeal: addExtraMeal ?? this.addExtraMeal,
       url: url ?? this.url,
     );
   }

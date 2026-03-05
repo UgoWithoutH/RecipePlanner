@@ -31,7 +31,6 @@ class FirebaseMealHistoryRepository {
       'recipeCategoryIds': m.recipe.categoryIds,
       'recipeServings': m.recipe.servings,
       'recipeRating': m.recipe.rating,
-      'recipeAddExtraMeal': m.recipe.addExtraMeal,
       'preparationTime': m.recipe.preparationTime,
       'cookingTime': m.recipe.cookingTime,
       // Store the date as a string YYYY-MM-DD without time
@@ -82,7 +81,6 @@ class FirebaseMealHistoryRepository {
                   ? [mealData['recipeCategory'] as String]
                   : []),
           rating: (mealData['recipeRating'] as num?)?.toDouble() ?? 0.0,
-          addExtraMeal: mealData['recipeAddExtraMeal'] as bool? ?? false,
           ingredients: const [],
           instructions: const [],
           createdAt: DateTime.now(),

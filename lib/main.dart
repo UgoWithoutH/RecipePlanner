@@ -42,6 +42,9 @@ Future<void> _loadTestDataIfNeeded() async {
   if (recipesSnapshot.docs.isNotEmpty) {
     await _purgeAllData(firestore);
   }
+  // Seed ingredient types, categories and ingredients for the group first
+  // so that seedAllTestData can resolve them by name.
+  await seedRecipesCache();
   await seedAllTestData();
 }
 
@@ -143,11 +146,11 @@ class _DataLoaderState extends State<_DataLoader> {
   }
 
   Future<void> _loadData() async {
-    if (useTestData) {
-      await _loadTestDataIfNeeded();
-    }
     if (useRecipeCache) {
       await seedRecipesCache();
+    }
+    if (useTestData) {
+      await _loadTestDataIfNeeded();
     }
     // Check if the user belongs to a group
     final groupId = await GroupRepository.instance.getCurrentGroupId();

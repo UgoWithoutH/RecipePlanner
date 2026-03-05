@@ -35,8 +35,6 @@ class CreateRecipePage extends StatefulWidget {
 }
 
 class _CreateRecipePageState extends State<CreateRecipePage> {
-  // Field for the addExtraMeal switch
-  bool _addExtraMeal = false;
   final _formKey = GlobalKey<FormState>();
   bool _isSaving = false;
 
@@ -116,7 +114,6 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
         setState(() => _selectedCategoryIds = List.from(r.categoryIds));
       _ingredients.addAll(r.ingredients);
       _instructions.addAll(r.instructions);
-      _addExtraMeal = r.addExtraMeal;
       _loadExistingServings();
     }
   }
@@ -359,6 +356,327 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     });
   }
 
+  // ── Edit ingredient ────────────────────────────────────────────────────────
+
+  Future<void> _showEditIngredientDialog(int index) async {
+    final ingredient = _ingredients[index];
+    final nameController = TextEditingController(text: ingredient.ingredient.name);
+    final qtyController = TextEditingController(text: ingredient.quantity.toString());
+    final notesController = TextEditingController(text: ingredient.notes ?? '');
+    Unit selectedUnit = ingredient.unit;
+    String resolvedId = ingredient.ingredient.id;
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            Widget inputBox({
+              required TextEditingController ctrl,
+              required String hint,
+              TextInputType? inputType,
+              List<TextInputFormatter>? formatters,
+            }) =>
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey[200]!),
+                  ),
+                  child: TextField(
+                    controller: ctrl,
+                    keyboardType: inputType,
+                    inputFormatters: formatters,
+                    style: GoogleFonts.poppins(fontSize: 14),
+                    decoration: InputDecoration(
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 12),
+                      border: InputBorder.none,
+                      hintText: hint,
+                      hintStyle: GoogleFonts.poppins(
+                          color: Colors.grey[400], fontSize: 13),
+                    ),
+                  ),
+                );
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24)),
+              title: Text('Modifier l\'ingrédient',
+                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Nom avec autocomplete
+                  Autocomplete<Map<String, String>>(
+                    initialValue:
+                        TextEditingValue(text: nameController.text),
+                    optionsBuilder: (tv) async {
+                      final q = tv.text.trim();
+                      if (q.isEmpty) return [];
+                      return await IngredientAutocomplete
+                          .suggestIngredients(q);
+                    },
+                    displayStringForOption: (o) => o['name']!,
+                    fieldViewBuilder: (ctx, ctrl, fn, _) {
+                      ctrl.addListener(() {
+                        nameController.text = ctrl.text;
+                        resolvedId = '';
+                      });
+                      return Container(
+                        decoration: BoxDecoration(
+                          color: Colors.grey[50],
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey[200]!),
+                        ),
+                        child: TextField(
+                          controller: ctrl,
+                          focusNode: fn,
+                          style: GoogleFonts.poppins(fontSize: 14),
+                          decoration: InputDecoration(
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12),
+                            border: InputBorder.none,
+                            hintText: 'Nom de l\'ingrédient',
+                            hintStyle: GoogleFonts.poppins(
+                                color: Colors.grey[400], fontSize: 13),
+                          ),
+                        ),
+                      );
+                    },
+                    optionsViewBuilder: (ctx, onSel, opts) => Align(
+                      alignment: Alignment.topLeft,
+                      child: Material(
+                        elevation: 4,
+                        borderRadius: BorderRadius.circular(12),
+                        child: ConstrainedBox(
+                          constraints:
+                              const BoxConstraints(maxHeight: 180),
+                          child: ListView(
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 6),
+                            shrinkWrap: true,
+                            children: opts
+                                .map((o) => ListTile(
+                                      dense: true,
+                                      title: Text(o['name']!,
+                                          style: GoogleFonts.poppins(
+                                              fontSize: 13)),
+                                      onTap: () => onSel(o),
+                                    ))
+                                .toList(),
+                          ),
+                        ),
+                      ),
+                    ),
+                    onSelected: (o) {
+                      nameController.text = o['name']!;
+                      resolvedId = o['id'] ?? '';
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  // Quantité + Unité
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: inputBox(
+                          ctrl: qtyController,
+                          hint: 'Qté',
+                          inputType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          formatters: [
+                            FilteringTextInputFormatter.allow(
+                                RegExp(r'^\d+\.?\d{0,2}'))
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 3,
+                        child: Container(
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.grey[50],
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey[200]!),
+                          ),
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<Unit>(
+                              value: selectedUnit,
+                              isExpanded: true,
+                              items: Unit.values
+                                  .map((u) => DropdownMenuItem(
+                                        value: u,
+                                        child: Text(u.label,
+                                            style: GoogleFonts.poppins(
+                                                fontSize: 13)),
+                                      ))
+                                  .toList(),
+                              onChanged: (v) {
+                                if (v != null)
+                                  setStateDialog(() => selectedUnit = v);
+                              },
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  inputBox(
+                      ctrl: notesController, hint: 'Préparation (ex: finement haché)'),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text('Annuler',
+                      style: GoogleFonts.poppins(color: Colors.grey)),
+                ),
+                TextButton(
+                  onPressed: () {
+                    final newName = nameController.text.trim();
+                    final newQty = double.tryParse(qtyController.text) ??
+                        ingredient.quantity;
+                    if (newName.isEmpty) return;
+                    setState(() {
+                      _ingredients[index] = RecipeIngredient(
+                        ingredient: ingredient.ingredient
+                            .copyWith(name: newName, id: resolvedId),
+                        quantity: newQty,
+                        unit: selectedUnit,
+                        notes: notesController.text.isEmpty
+                            ? null
+                            : notesController.text,
+                      );
+                      final pIdx = _pendingIngredients.indexWhere(
+                          (p) => p.name == ingredient.ingredient.name);
+                      if (pIdx != -1) {
+                        final old = _pendingIngredients[pIdx];
+                        _pendingIngredients[pIdx] = PendingIngredient(
+                          name: newName,
+                          typeId: old.typeId,
+                          quantity: newQty,
+                          unit: selectedUnit,
+                          notes: notesController.text.isEmpty
+                              ? null
+                              : notesController.text,
+                        );
+                      }
+                    });
+                    Navigator.pop(context);
+                  },
+                  child: Text('Enregistrer',
+                      style: GoogleFonts.poppins(
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF6A5AE0))),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ── Edit instruction ─────────────────────────────────────────────────────────
+
+  /// [editIndex] null → ajout, non-null → modification de l'étape à cet index.
+  Future<void> _showInstructionDialog({int? editIndex}) async {
+    final controller = TextEditingController(
+      text: editIndex != null ? _instructions[editIndex] : '',
+    );
+    final isEdit = editIndex != null;
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24)),
+        title: Text(
+          isEdit ? 'Étape ${editIndex + 1}' : 'Ajouter une étape',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
+        ),
+        content: SizedBox(
+          width: 400,
+          height: 180,
+          child: Scrollbar(
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  minHeight: 180,
+                  maxHeight: 180,
+                ),
+                child: TextField(
+                  controller: controller,
+                  style: GoogleFonts.poppins(),
+                  minLines: null,
+                  maxLines: null,
+                  expands: true,
+                  textAlignVertical: TextAlignVertical.top,
+                  decoration: InputDecoration(
+                    hintText: "Décrivez l'étape...",
+                    filled: true,
+                    fillColor: Colors.grey[50],
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey[300]!),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey[300]!),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide:
+                          const BorderSide(color: Color(0xFF6A5AE0)),
+                    ),
+                  ),
+                  keyboardType: TextInputType.multiline,
+                  textInputAction: TextInputAction.newline,
+                ),
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child:
+                Text('Annuler', style: GoogleFonts.poppins(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () {
+              if (controller.text.isNotEmpty) {
+                setState(() {
+                  if (isEdit) {
+                    _instructions[editIndex] = controller.text;
+                  } else {
+                    _instructions.add(controller.text);
+                  }
+                });
+                Navigator.pop(context);
+              }
+            },
+            child: Text(
+              isEdit ? 'Enregistrer' : 'Ajouter',
+              style: GoogleFonts.poppins(
+                  color: const Color(0xFF6A5AE0),
+                  fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<String?> _showTypeSelectionDialog(String ingredientName) async {
     String? selectedTypeId;
     return await showDialog<String>(
@@ -475,6 +793,24 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
       return;
     }
 
+    // Vérifier que la somme des portions utilisateurs ne dépasse pas le nombre de portions de la recette (midi et soir séparément)
+    final int recipeServings = int.tryParse(_servingsController.text) ?? 0;
+    final int totalLunch = _userServings.values.fold(0, (sum, s) => sum + s.lunchServings);
+    final int totalDinner = _userServings.values.fold(0, (sum, s) => sum + s.dinnerServings);
+    if (totalLunch > recipeServings || totalDinner > recipeServings) {
+      final List<String> overflowParts = [];
+      if (totalLunch > recipeServings) {
+        overflowParts.add('le midi ($totalLunch portion${totalLunch > 1 ? 's' : ''})');
+      }
+      if (totalDinner > recipeServings) {
+        overflowParts.add('le soir ($totalDinner portion${totalDinner > 1 ? 's' : ''})');
+      }
+      _showError(
+        'La somme des portions dépasse le nombre de portions de la recette ($recipeServings) pour : ${overflowParts.join(' et ')}',
+      );
+      return;
+    }
+
     setState(() => _isSaving = true);
 
     try {
@@ -518,7 +854,6 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
         ingredients: _ingredients,
         instructions: _instructions,
         createdAt: widget.recipe?.createdAt ?? DateTime.now(),
-        addExtraMeal: _addExtraMeal,
       );
 
       if (widget.recipe == null) {
@@ -844,6 +1179,11 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                   ),
                 ],
               ),
+              const SizedBox(height: 12),
+              _buildModernInput(
+                _ingredientNotesController,
+                'Préparation (ex: finement haché)',
+              ),
             ],
           ),
         ),
@@ -906,72 +1246,108 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                           ),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.center,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  ingredient.ingredient.name,
-                                  style: GoogleFonts.poppins(
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.black87,
-                                  ),
-                                ),
-                                if (hasType) ...[
-                                  const SizedBox(width: 8),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 4,
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      ingredient.ingredient.name,
+                                      style: GoogleFonts.poppins(
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.black87,
+                                      ),
                                     ),
-                                    decoration: BoxDecoration(
-                                      color: typeColor,
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Container(
-                                          width: 10,
-                                          height: 10,
-                                          decoration: BoxDecoration(
-                                            color: Color(type.color),
-                                            shape: BoxShape.circle,
-                                          ),
+                                    if (hasType) ...[
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 4,
                                         ),
-                                        const SizedBox(width: 6),
-                                        Text(
-                                          type.name,
-                                          style: GoogleFonts.poppins(
-                                            fontWeight: FontWeight.w600,
-                                            color: textColor,
-                                            fontSize: 12,
-                                          ),
+                                        decoration: BoxDecoration(
+                                          color: typeColor,
+                                          borderRadius:
+                                              BorderRadius.circular(12),
                                         ),
-                                      ],
+                                        child: Row(
+                                          children: [
+                                            Container(
+                                              width: 10,
+                                              height: 10,
+                                              decoration: BoxDecoration(
+                                                color: Color(type.color),
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              type.name,
+                                              style: GoogleFonts.poppins(
+                                                fontWeight: FontWeight.w600,
+                                                color: textColor,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      '- ${ingredient.quantity} ${ingredient.unit.label}',
+                                      style: GoogleFonts.poppins(
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                if (ingredient.notes != null &&
+                                    ingredient.notes!.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      ingredient.notes!,
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 12,
+                                        color: Colors.grey[500],
+                                        fontStyle: FontStyle.italic,
+                                      ),
                                     ),
                                   ),
-                                ],
-                                const SizedBox(width: 8),
-                                Text(
-                                  '- ${ingredient.quantity} ${ingredient.unit.label}',
-                                  style: GoogleFonts.poppins(
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
                               ],
                             ),
                           ),
-                          InkWell(
-                            onTap: () =>
-                                setState(() => _ingredients.removeAt(index)),
-                            borderRadius: BorderRadius.circular(20),
-                            child: const Padding(
-                              padding: EdgeInsets.all(8.0),
-                              child: Icon(
-                                Icons.close_rounded,
-                                size: 18,
-                                color: Colors.redAccent,
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              InkWell(
+                                onTap: () => _showEditIngredientDialog(index),
+                                borderRadius: BorderRadius.circular(20),
+                                child: const Padding(
+                                  padding: EdgeInsets.all(8.0),
+                                  child: Icon(
+                                    Icons.edit_rounded,
+                                    size: 17,
+                                    color: Color(0xFF6A5AE0),
+                                  ),
+                                ),
                               ),
-                            ),
+                              InkWell(
+                                onTap: () =>
+                                    setState(() => _ingredients.removeAt(index)),
+                                borderRadius: BorderRadius.circular(20),
+                                child: const Padding(
+                                  padding: EdgeInsets.all(8.0),
+                                  child: Icon(
+                                    Icons.close_rounded,
+                                    size: 18,
+                                    color: Colors.redAccent,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -1038,94 +1414,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
               ),
             ),
             TextButton.icon(
-              onPressed: () {
-                final controller = TextEditingController();
-                showDialog(
-                  context: context,
-                  builder: (_) => AlertDialog(
-                    title: Text(
-                      'Ajouter une étape',
-                      style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
-                    ),
-                    content: SizedBox(
-                      width: 400,
-                      height: 180,
-                      child: Scrollbar(
-                        thumbVisibility: true,
-                        child: SingleChildScrollView(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(
-                              minHeight: 180,
-                              maxHeight: 180,
-                            ),
-                            child: TextField(
-                              controller: controller,
-                              style: GoogleFonts.poppins(),
-                              minLines: null,
-                              maxLines: null,
-                              expands: true,
-                              textAlignVertical: TextAlignVertical.top,
-                              decoration: InputDecoration(
-                                hintText: "Décrivez l'étape...",
-                                filled: true,
-                                fillColor: Colors.grey[50],
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 12,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide(
-                                    color: Colors.grey[300]!,
-                                  ),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide(
-                                    color: Colors.grey[300]!,
-                                  ),
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide(
-                                    color: const Color(0xFF6A5AE0),
-                                  ),
-                                ),
-                              ),
-                              keyboardType: TextInputType.multiline,
-                              textInputAction: TextInputAction.newline,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: Text(
-                          'Annuler',
-                          style: GoogleFonts.poppins(color: Colors.grey),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          if (controller.text.isNotEmpty) {
-                            setState(() => _instructions.add(controller.text));
-                            Navigator.pop(context);
-                          }
-                        },
-                        child: Text(
-                          'Ajouter',
-                          style: GoogleFonts.poppins(
-                            color: const Color(0xFF6A5AE0),
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
+              onPressed: () => _showInstructionDialog(),
               icon: const Icon(Icons.add_circle_outline_rounded, size: 18),
               label: Text(
                 "Ajouter",
@@ -1179,17 +1468,33 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                             style: GoogleFonts.poppins(fontSize: 14),
                           ),
                         ),
-                        InkWell(
-                          onTap: () =>
-                              setState(() => _instructions.removeAt(index)),
-                          child: const Padding(
-                            padding: EdgeInsets.only(left: 8.0),
-                            child: Icon(
-                              Icons.close_rounded,
-                              size: 16,
-                              color: Colors.grey,
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            InkWell(
+                              onTap: () => _showInstructionDialog(editIndex: index),
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 6.0),
+                                child: Icon(
+                                  Icons.edit_rounded,
+                                  size: 16,
+                                  color: Color(0xFF6A5AE0),
+                                ),
+                              ),
                             ),
-                          ),
+                            InkWell(
+                              onTap: () =>
+                                  setState(() => _instructions.removeAt(index)),
+                              child: const Padding(
+                                padding: EdgeInsets.only(left: 6.0),
+                                child: Icon(
+                                  Icons.close_rounded,
+                                  size: 16,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -1486,46 +1791,6 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                                 ],
                               ),
 
-                              Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(
-                                    color: Colors.green.withOpacity(0.3),
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.green.withOpacity(0.05),
-                                      blurRadius: 10,
-                                    ),
-                                  ],
-                                ),
-                                child: Row(
-                                  children: [
-                                    Switch(
-                                      value: _addExtraMeal,
-                                      activeColor: Colors.green,
-                                      onChanged: (val) {
-                                        setState(() {
-                                          _addExtraMeal = val;
-                                        });
-                                      },
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        "Génère un repas supplémentaire pour le planning",
-                                        style: GoogleFonts.poppins(
-                                          fontSize: 14,
-                                          color: Colors.green[800],
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
                               const SizedBox(height: 32),
                               _buildIngredientsSection(),
                               const SizedBox(height: 32),

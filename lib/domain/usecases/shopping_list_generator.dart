@@ -16,6 +16,10 @@ class ShoppingListGenerator {
       final Map<String, ShoppingItem> shoppingListMap = {};
 
       for (final meal in mealPlan.meals) {
+        // Les repas "restes" n'ont pas besoin d'achat : les ingrédients ont déjà
+        // été comptabilisés lors du repas original.
+        if (meal.isLeftoverMeal) continue;
+
         // We need the FULL recipe to get ingredients
         Map<String, dynamic>? data;
 
@@ -70,8 +74,12 @@ class ShoppingListGenerator {
         final baseServings = (data['servings'] as num?)?.toInt() ?? 1;
 
         // Calculate scaling factor
-        final servingsNeeded = meal.totalServings > 0 ? meal.totalServings : 1;
-        final ratio = servingsNeeded / baseServings;
+        // On base le ratio sur les portions CUISINÉES (recipeServings × recipeMultiplier),
+        // pas sur les portions consommées (totalServings) qui peuvent être inférieures
+        // quand il y a des restes. Ex : recette pour 8, on cuisine 1× = 8 portions,
+        // on en mange 3 → on achète quand même les ingrédients pour 8.
+        final cookedServings = baseServings * (meal.recipeMultiplier > 0 ? meal.recipeMultiplier : 1);
+        final ratio = cookedServings / baseServings; // = recipeMultiplier
 
         for (final item in ingredientsRef) {
           if (item is! Map<String, dynamic>) continue;
@@ -146,27 +154,64 @@ class ShoppingListGenerator {
       }
 
       // Apply pantry reductions (items I already have)
+      // Units are normalised to a base unit before comparison:
+      //   ml & l  → ml   |   g & kg → g
+      // This allows e.g. "500 ml" in the pantry to correctly reduce "1 l" on the list.
+      double _toBase(double qty, String unit) {
+        if (unit == 'l') return qty * 1000;
+        if (unit == 'kg') return qty * 1000;
+        return qty; // ml, g, piece, etc. already in base
+      }
+
+      String _baseUnit(String unit) {
+        if (unit == 'l') return 'ml';
+        if (unit == 'kg') return 'g';
+        return unit;
+      }
+
       for (final pantryItem in mealPlan.pantryItems) {
         final pantryName = pantryItem.ingredient.name.trim().toLowerCase();
-        final pantryUnit = pantryItem.unit.name;
-        final pantryQty = pantryItem.quantity;
+        final pantryBaseUnit = _baseUnit(pantryItem.unit.name);
+        final pantryBaseQty = _toBase(pantryItem.quantity, pantryItem.unit.name);
 
-        // Find matching item in shopping list
         String? keyToRemove;
         String? keyToUpdate;
         double newQty = 0;
+        String newUnit = '';
 
         for (final entry in shoppingListMap.entries) {
           final item = entry.value;
           final itemName = item.name.trim().toLowerCase();
+          final itemBaseUnit = _baseUnit(item.unit);
 
-          // Simple match: name and unit
-          if (itemName == pantryName && item.unit == pantryUnit) {
-            newQty = item.quantity - pantryQty;
-            if (newQty <= 0) {
+          if (itemName == pantryName && itemBaseUnit == pantryBaseUnit) {
+            final itemBaseQty = _toBase(item.quantity, item.unit);
+            final remaining = itemBaseQty - pantryBaseQty;
+            if (remaining <= 0) {
               keyToRemove = entry.key;
             } else {
               keyToUpdate = entry.key;
+              // Convert back: if original unit was 'l' and remaining >= 1000, keep l; else use ml
+              if (item.unit == 'l' || item.unit == 'ml') {
+                if (remaining >= 1000) {
+                  newQty = remaining / 1000;
+                  newUnit = 'l';
+                } else {
+                  newQty = remaining;
+                  newUnit = 'ml';
+                }
+              } else if (item.unit == 'kg' || item.unit == 'g') {
+                if (remaining >= 1000) {
+                  newQty = remaining / 1000;
+                  newUnit = 'kg';
+                } else {
+                  newQty = remaining;
+                  newUnit = 'g';
+                }
+              } else {
+                newQty = remaining;
+                newUnit = item.unit;
+              }
             }
             break;
           }
@@ -175,7 +220,10 @@ class ShoppingListGenerator {
         if (keyToRemove != null) {
           shoppingListMap.remove(keyToRemove);
         } else if (keyToUpdate != null) {
-          shoppingListMap[keyToUpdate] = shoppingListMap[keyToUpdate]!.copyWith(quantity: newQty);
+          shoppingListMap[keyToUpdate] = shoppingListMap[keyToUpdate]!.copyWith(
+            quantity: newQty,
+            unit: newUnit,
+          );
         }
       }
 

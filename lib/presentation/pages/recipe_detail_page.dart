@@ -22,14 +22,11 @@ class RecipeDetailPage extends StatefulWidget {
   final String recipeId;
   final Recipe? initialRecipe;
   final int? ingredientMultiplier;
-  final bool showAddExtraMealBadge;
-
   const RecipeDetailPage({
     super.key,
     required this.recipeId,
     this.initialRecipe,
     this.ingredientMultiplier,
-    this.showAddExtraMealBadge = true,
   });
 
   @override
@@ -245,8 +242,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
           isFavorite: data['isFavorite'] as bool? ?? currentRecipe?.isFavorite ?? false,
           rating:
             (data['rating'] as num?)?.toDouble() ?? currentRecipe?.rating ?? 0.0,
-          addExtraMeal:
-            data['addExtraMeal'] as bool? ?? currentRecipe?.addExtraMeal ?? false,
         );
         // Update displayed category name once the full recipe is loaded
         if (_categories.isNotEmpty && _recipe != null) {
@@ -566,35 +561,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                           ),
                         ),
 
-                        if (currentRecipe.addExtraMeal && (widget.showAddExtraMealBadge)) ...[
-                          const SizedBox(height: 24),
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.green.withOpacity(0.08),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: Colors.green.withOpacity(0.3),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.star_rounded, color: Colors.green),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    "Génère un repas supplémentaire pour le planning",
-                                    style: GoogleFonts.poppins(
-                                      color: Colors.green[800],
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+
 
                         const SizedBox(height: 40),
 
@@ -661,48 +628,65 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                   ),
                                   const SizedBox(width: 16),
                                   Expanded(
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      crossAxisAlignment: CrossAxisAlignment.center,
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text(
-                                          item.ingredient.name,
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w500,
-                                            color: Colors.black87,
-                                          ),
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          crossAxisAlignment: CrossAxisAlignment.center,
+                                          children: [
+                                            Text(
+                                              item.ingredient.name,
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w500,
+                                                color: Colors.black87,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            if (item.ingredient.typeId != null)
+                                              Builder(
+                                                builder: (context) {
+                                                  final type = _ingredientTypes.firstWhere(
+                                                    (t) => t.id == item.ingredient.typeId,
+                                                    orElse: () => IngredientType(id: '', name: '', color: 0xFF6A5AE0),
+                                                  );
+                                                  if (type.id.isEmpty) return const SizedBox.shrink();
+                                                  final baseColor = Color(type.color);
+                                                  final hsl = HSLColor.fromColor(baseColor);
+                                                  final startLightness = hsl.lightness;
+                                                  final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                                                  final textColor = hsl.withLightness(textLightness).toColor();
+                                                  return Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                    decoration: BoxDecoration(
+                                                      color: baseColor.withOpacity(0.15),
+                                                      borderRadius: BorderRadius.circular(20),
+                                                    ),
+                                                    child: Text(
+                                                      type.name,
+                                                      style: GoogleFonts.poppins(
+                                                        fontSize: 11,
+                                                        fontWeight: FontWeight.w700,
+                                                        color: textColor,
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                              ),
+                                          ],
                                         ),
-                                        const SizedBox(width: 8),
-                                        if (item.ingredient.typeId != null)
-                                          Builder(
-                                            builder: (context) {
-                                              final type = _ingredientTypes.firstWhere(
-                                                (t) => t.id == item.ingredient.typeId,
-                                                orElse: () => IngredientType(id: '', name: '', color: 0xFF6A5AE0),
-                                              );
-                                              if (type.id.isEmpty) return const SizedBox.shrink();
-                                              final baseColor = Color(type.color);
-                                              final hsl = HSLColor.fromColor(baseColor);
-                                              final startLightness = hsl.lightness;
-                                              final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
-                                              final textColor = hsl.withLightness(textLightness).toColor();
-                                              return Container(
-                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                                decoration: BoxDecoration(
-                                                  color: baseColor.withOpacity(0.15),
-                                                  borderRadius: BorderRadius.circular(20),
-                                                ),
-                                                child: Text(
-                                                  type.name,
-                                                  style: GoogleFonts.poppins(
-                                                    fontSize: 11,
-                                                    fontWeight: FontWeight.w700,
-                                                    color: textColor,
-                                                  ),
-                                                ),
-                                              );
-                                            },
+                                        if (item.notes != null && item.notes!.isNotEmpty)
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 3),
+                                            child: Text(
+                                              item.notes!,
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 12,
+                                                color: Colors.grey[500],
+                                                fontStyle: FontStyle.italic,
+                                              ),
+                                            ),
                                           ),
                                       ],
                                     ),

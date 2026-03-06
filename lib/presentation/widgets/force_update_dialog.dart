@@ -6,8 +6,9 @@ import 'package:url_launcher/url_launcher.dart';
 /// L'utilisateur ne peut pas fermer le dialog — il doit mettre à jour l'app.
 class ForceUpdateDialog extends StatelessWidget {
   final String? storeUrl;
+  final int? minBuildNumber;
 
-  const ForceUpdateDialog({super.key, this.storeUrl});
+  const ForceUpdateDialog({super.key, this.storeUrl, this.minBuildNumber});
 
   static const _purple = Color(0xFF6A5AE0);
   static const _purpleLight = Color(0xFFEDE8FF);

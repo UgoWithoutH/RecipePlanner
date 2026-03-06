@@ -5,10 +5,12 @@ import 'package:package_info_plus/package_info_plus.dart';
 class ForceUpdateResult {
   final bool updateRequired;
   final String? storeUrl;
+  final int? minBuildNumber;
 
   const ForceUpdateResult({
     required this.updateRequired,
     this.storeUrl,
+    this.minBuildNumber,
   });
 }
 
@@ -35,12 +37,25 @@ class ForceUpdateService {
 
       final data = doc.data()!;
       final storeUrl = data['storeUrl'] as String?;
+      final minBuildNumber = (data['minBuildNumber'] as num?)?.toInt();
 
-      // Si le doc existe et qu'une URL est présente, on force la MAJ
-      if (storeUrl != null && storeUrl.isNotEmpty) {
+      if (storeUrl == null || storeUrl.isEmpty) {
+        return const ForceUpdateResult(updateRequired: false);
+      }
+
+      // Si minBuildNumber n'est pas défini, on ne force pas la MAJ
+      if (minBuildNumber == null) {
+        return const ForceUpdateResult(updateRequired: false);
+      }
+
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentBuild = int.tryParse(packageInfo.buildNumber) ?? 0;
+
+      if (currentBuild < minBuildNumber) {
         return ForceUpdateResult(
           updateRequired: true,
           storeUrl: storeUrl,
+          minBuildNumber: minBuildNumber,
         );
       }
       return const ForceUpdateResult(updateRequired: false);

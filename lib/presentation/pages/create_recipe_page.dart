@@ -23,12 +23,12 @@ import '../../domain/entities/ingredient_type.dart';
 import '../../data/repositories/firebase_ingredient_type_repository.dart';
 
 import '../../domain/entities/pending_ingredient.dart';
-import 'preset_recipe_picker_page.dart';
 
 class CreateRecipePage extends StatefulWidget {
   final Recipe? recipe;
+  final Map<String, dynamic>? presetData;
 
-  const CreateRecipePage({super.key, this.recipe});
+  const CreateRecipePage({super.key, this.recipe, this.presetData});
 
   @override
   State<CreateRecipePage> createState() => _CreateRecipePageState();
@@ -139,30 +139,39 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
 
   Future<void> _loadCategories() async {
     final categories = await _categoryRepo.getCategories();
-    if (mounted) setState(() => _categories = categories);
+    if (mounted) {
+      setState(() => _categories = categories);
+      if (widget.presetData != null && widget.recipe == null) {
+        // Wait for types to be loaded too before prefilling
+        await _waitForTypesAndPrefill();
+      }
+    }
   }
 
-  // ── Preset recipe picker ────────────────────────────────────────────────────
-
-  Future<void> _openPresetPicker() async {
-    final preset = await Navigator.push<Map<String, dynamic>>(
-      context,
-      MaterialPageRoute(builder: (_) => const PresetRecipePickerPage()),
-    );
-    if (preset != null && mounted) {
-      _prefillFromPreset(preset);
+  Future<void> _waitForTypesAndPrefill() async {
+    // Poll until ingredient types are loaded (they load in parallel)
+    int attempts = 0;
+    while (_ingredientTypes.isEmpty && attempts < 20) {
+      await Future.delayed(const Duration(milliseconds: 50));
+      attempts++;
+    }
+    if (mounted && widget.presetData != null) {
+      _prefillFromPreset(widget.presetData!);
     }
   }
 
   void _prefillFromPreset(Map<String, dynamic> preset) {
-    _titleController.text = preset['title'] as String? ?? '';
-    _descriptionController.text = preset['description'] as String? ?? '';
-    _preparationTimeController.text =
-        ((preset['preparationTime'] as num?)?.toInt() ?? 0).toString();
-    _cookingTimeController.text =
-        ((preset['cookingTime'] as num?)?.toInt() ?? 0).toString();
-    _servingsController.text =
-        ((preset['servings'] as num?)?.toInt() ?? 4).toString();
+    // Libérer le focus avant de modifier les controllers pour éviter RangeError
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    _titleController.value = TextEditingValue(text: preset['title'] as String? ?? '');
+    _descriptionController.value = TextEditingValue(text: preset['description'] as String? ?? '');
+    _preparationTimeController.value = TextEditingValue(
+        text: ((preset['preparationTime'] as num?)?.toInt() ?? 0).toString());
+    _cookingTimeController.value = TextEditingValue(
+        text: ((preset['cookingTime'] as num?)?.toInt() ?? 0).toString());
+    _servingsController.value = TextEditingValue(
+        text: ((preset['servings'] as num?)?.toInt() ?? 4).toString());
 
     // Match category names → IDs
     final presetCats =
@@ -241,10 +250,13 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     });
   }
 
-  Future<bool> _recipeTitleExists(String title) async {
+  Future<bool> _recipeTitleExists(String title, {String? excludeId}) async {
     final recipes = await _recipeRepo.fetchRecipesByTitle(
       title.trim().toLowerCase(),
     );
+    if (excludeId != null) {
+      return recipes.any((r) => r.id != excludeId);
+    }
     return recipes.isNotEmpty;
   }
 
@@ -782,9 +794,8 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   Future<void> _saveRecipe() async {
     if (!_formKey.currentState!.validate()) return;
 
-    if (widget.recipe == null &&
-        await _recipeTitleExists(_titleController.text)) {
-      _showError('Une recette avec ce titre existe déjà');
+    if (await _recipeTitleExists(_titleController.text, excludeId: widget.recipe?.id)) {
+      _showError('Une recette avec ce titre existe déjà dans le groupe');
       return;
     }
 
@@ -1101,9 +1112,9 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                     (context, controller, focusNode, onFieldSubmitted) {
                       WidgetsBinding.instance.addPostFrameCallback((_) {
                         if (controller.text != _ingredientNameController.text) {
-                          controller.text = _ingredientNameController.text;
-                          controller.selection =
-                              _ingredientNameController.selection;
+                          controller.value = TextEditingValue(
+                            text: _ingredientNameController.text,
+                          );
                         }
                       });
                       controller.addListener(() {
@@ -1566,7 +1577,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                     backgroundColor: const Color(0xFF6A5AE0).withOpacity(0.1),
                     radius: 20,
                     child: Text(
-                      user.name.substring(0, 1).toUpperCase(),
+                      user.name.isNotEmpty ? user.name.substring(0, 1).toUpperCase() : '?',
                       style: GoogleFonts.poppins(
                         fontWeight: FontWeight.bold,
                         color: const Color(0xFF6A5AE0),
@@ -1730,16 +1741,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                                 color: Colors.black87,
                               ),
                             ),
-                            if (widget.recipe == null)
-                              Tooltip(
-                                message: 'Depuis le catalogue',
-                                child: _headerCircleButton(
-                                  Icons.library_books_rounded,
-                                  _openPresetPicker,
-                                ),
-                              )
-                            else
-                              const SizedBox(width: 40),
+                            const SizedBox(width: 40),
                           ],
                         ),
                       ),

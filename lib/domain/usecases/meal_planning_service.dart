@@ -390,7 +390,12 @@ class MealPlanningService {
               final cmpLO = (leftoverCountPerUser[a.key] ?? 0)
                   .compareTo(leftoverCountPerUser[b.key] ?? 0);
               if (cmpLO != 0) return cmpLO;
-              // Secondaire : round-robin
+              // Secondaire : utilisateurs absents du repas original prioritaires
+              // (rétablissement de l'équité quand un slot original était solo)
+              final aInOriginal = userServingsForMeal.containsKey(a.key) ? 1 : 0;
+              final bInOriginal = userServingsForMeal.containsKey(b.key) ? 1 : 0;
+              if (aInOriginal != bInOriginal) return aInOriginal.compareTo(bInOriginal);
+              // Tertiaire : round-robin
               final aIdx = currentUserOrder.indexOf(a.key);
               final bIdx = currentUserOrder.indexOf(b.key);
               return (aIdx == -1 ? 999 : aIdx).compareTo(bIdx == -1 ? 999 : bIdx);
@@ -401,8 +406,19 @@ class MealPlanningService {
           final eligibleEntriesLO = sortedEntriesLO
               .where((e) => !alreadyAssignedLO.contains(e.key))
               .toList();
+          // Calcule un quota de portions par slot pour répartir les restes
+          // sur plusieurs jours plutôt que de tout donner au premier slot.
+          // Ex : 3 restes, 2 users × 1 portion → quota=1 par slot → J+1=user seul, J+2=les deux.
+          final totalEligiblePortionsLO =
+              eligibleEntriesLO.fold(0, (s, e) => s + e.value);
+          final estimatedSlotsLO = totalEligiblePortionsLO > 0
+              ? (remainingLeftover / totalEligiblePortionsLO).ceil().clamp(1, 9999)
+              : 1;
+          final perSlotQuotaLO = remainingLeftover ~/ estimatedSlotsLO;
+          int perSlotTotalLO = 0;
           for (int idx = 0; idx < eligibleEntriesLO.length; idx++) {
             if (remainingLeftover <= 0) break;
+            if (perSlotTotalLO >= perSlotQuotaLO) break; // quota atteint : reporter au slot suivant
             final entry = eligibleEntriesLO[idx];
             final userId = entry.key;
             final portionsNeeded = entry.value;
@@ -413,6 +429,7 @@ class MealPlanningService {
               leftoverUserServings[userId] = toAssign;
               leftoverTotal += toAssign;
               remainingLeftover -= toAssign;
+              perSlotTotalLO += toAssign;
             }
           }
           if (leftoverTotal == 0) break;

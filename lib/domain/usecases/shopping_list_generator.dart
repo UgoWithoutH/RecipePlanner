@@ -235,7 +235,7 @@ class ShoppingListGenerator {
       // However, if the user just edited one meal in the plan, generating a wholly new list might wipe checks.
       // Better approach: Fetch existing list if any, and merge 'isChecked' status if item exists.
       
-      final existingList = await _shoppingListRepo.getShoppingListByMealPlanId(mealPlan.id);
+      final existingList = await _shoppingListRepo.getGroupShoppingList();
       
       List<ShoppingItem> finalItems = shoppingListMap.values.toList();
       

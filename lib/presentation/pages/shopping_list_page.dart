@@ -54,12 +54,12 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
 
       // 2. Fetch Shopping List from DB
       final shoppingRepo = FirebaseShoppingListRepository();
-      var shoppingList = await shoppingRepo.getShoppingListByMealPlanId(_mealPlan!.id);
+      var shoppingList = await shoppingRepo.getGroupShoppingList();
 
-      // 3. Migration / Fallback: If no list exists for this plan, generate it
+      // 3. Migration / Fallback: If no list exists, generate it
       if (shoppingList == null) {
          await ShoppingListGenerator().generateAndSaveShoppingList(_mealPlan!);
-         shoppingList = await shoppingRepo.getShoppingListByMealPlanId(_mealPlan!.id);
+         shoppingList = await shoppingRepo.getGroupShoppingList();
       }
 
       if (shoppingList != null) {

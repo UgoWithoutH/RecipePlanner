@@ -30,7 +30,7 @@ class Meal {
   final int totalServings; // total servings prepared for all users
   final Map<String, int> userServings; // userId -> servings count
   final int recipeMultiplier; // how many times the recipe must be prepared (batch cooking)
-  final bool isLeftoverMeal; // true if this meal is a leftover from addExtraMeal (second meal)
+  final bool isLeftoverMeal; // true if this meal uses leftover portions from a previous meal
   final bool userSelected; // true si choisi manuellement par l'utilisateur
 
   const Meal({
@@ -56,6 +56,9 @@ class MealPlan {
   final DateTime createdAt;
   final List<RecipeIngredient> pantryItems;
   final List<String> selectedCategories;
+  /// Ordre de rotation round-robin pour l'attribution des restes entre utilisateurs.
+  /// Persiste entre les générations de plan pour garantir une répartition équitable.
+  final List<String> leftoverUserOrder;
 
   const MealPlan({
     required this.id,
@@ -65,6 +68,7 @@ class MealPlan {
     required this.createdAt,
     this.pantryItems = const [],
     this.selectedCategories = const [],
+    this.leftoverUserOrder = const [],
   });
 
   MealPlan copyWith({
@@ -75,6 +79,7 @@ class MealPlan {
     DateTime? createdAt,
     List<RecipeIngredient>? pantryItems,
     List<String>? selectedCategories,
+    List<String>? leftoverUserOrder,
   }) {
     return MealPlan(
       id: id ?? this.id,
@@ -84,6 +89,7 @@ class MealPlan {
       createdAt: createdAt ?? this.createdAt,
       pantryItems: pantryItems ?? this.pantryItems,
       selectedCategories: selectedCategories ?? this.selectedCategories,
+      leftoverUserOrder: leftoverUserOrder ?? this.leftoverUserOrder,
     );
   }
 
@@ -93,6 +99,7 @@ class MealPlan {
       'durationDays': durationDays,
       'createdAt': createdAt.toUtc().toIso8601String(),
       'selectedCategories': selectedCategories,
+      'leftoverUserOrder': leftoverUserOrder,
       'pantryItems': pantryItems.map((item) => {
         'name': item.ingredient.name,
         'quantity': item.quantity,
@@ -107,7 +114,6 @@ class MealPlan {
                 'recipeCategoryIds': m.recipe.categoryIds,
                 'recipeServings': m.recipe.servings,
                 'recipeRating': m.recipe.rating,
-                'recipeAddExtraMeal': m.recipe.addExtraMeal,
                 'preparationTime': m.recipe.preparationTime,
                 'cookingTime': m.recipe.cookingTime,
                 'date': '${m.date.year}-${m.date.month.toString().padLeft(2, '0')}-${m.date.day.toString().padLeft(2, '0')}',

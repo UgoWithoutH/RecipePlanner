@@ -12,24 +12,23 @@ import '../../domain/entities/recipe_ingredient.dart';
 import '../../data/repositories/firebase_recipe_repository.dart';
 import '../../data/repositories/firebase_user_recipe_serving_repository.dart';
 import '../../data/repositories/firebase_category_repository.dart';
+import '../../data/repositories/group_repository.dart';
 import 'create_recipe_page.dart';
 import '../../domain/entities/ingredient_type.dart';
 import '../../data/repositories/firebase_ingredient_type_repository.dart';
-
 
 
 class RecipeDetailPage extends StatefulWidget {
   final String recipeId;
   final Recipe? initialRecipe;
   final int? ingredientMultiplier;
-  final bool showAddExtraMealBadge;
-
+  final bool isCatalogRecipe;
   const RecipeDetailPage({
     super.key,
     required this.recipeId,
     this.initialRecipe,
     this.ingredientMultiplier,
-    this.showAddExtraMealBadge = true,
+    this.isCatalogRecipe = false,
   });
 
   @override
@@ -78,18 +77,41 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   List<IngredientType> _ingredientTypes = [];
   final FirebaseIngredientTypeRepository _ingredientTypeRepo = FirebaseIngredientTypeRepository();
 
+  bool _isAlreadyImported = false;
+
   @override
   void initState() {
     super.initState();
     _recipe = widget.initialRecipe;
     _ingredientMultiplier = widget.ingredientMultiplier;
     _loadIngredientTypes();
-    // Always fetch the full recipe to ensure fresh data and complete details
-    _loadFullRecipe();
-    if (_recipe != null) {
-      _loadUserServings();
-      _loadCategories();
+    if (widget.isCatalogRecipe) {
+      _isLoadingRecipe = false;
+      _isLoadingServings = false;
+      if (_recipe != null) {
+        _loadCategories();
+        _checkIfAlreadyImported();
+      }
+    } else {
+      _loadFullRecipe();
+      if (_recipe != null) {
+        _loadUserServings();
+        _loadCategories();
+      }
     }
+  }
+
+  Future<void> _checkIfAlreadyImported() async {
+    if (_recipe == null) return;
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null || !mounted) return;
+    final snap = await FirebaseFirestore.instance
+        .collection('recipes')
+        .where('groupId', isEqualTo: groupId)
+        .where('title', isEqualTo: _recipe!.title)
+        .limit(1)
+        .get();
+    if (mounted) setState(() => _isAlreadyImported = snap.docs.isNotEmpty);
   }
 
   Future<void> _loadIngredientTypes() async {
@@ -245,12 +267,12 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
           isFavorite: data['isFavorite'] as bool? ?? currentRecipe?.isFavorite ?? false,
           rating:
             (data['rating'] as num?)?.toDouble() ?? currentRecipe?.rating ?? 0.0,
-          addExtraMeal:
-            data['addExtraMeal'] as bool? ?? currentRecipe?.addExtraMeal ?? false,
         );
         // Update displayed category name once the full recipe is loaded
         if (_categories.isNotEmpty && _recipe != null) {
-          _currentCategories = _categories.where((c) => _recipe!.categoryIds.contains(c.id)).toList();
+          _currentCategories = _categories.where((c) =>
+            _recipe!.categoryIds.contains(c.id) || _recipe!.categoryIds.contains(c.name)
+          ).toList();
         }
         });
       
@@ -305,7 +327,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     setState(() {
       _categories = categories;
       if (_recipe != null) {
-        _currentCategories = _categories.where((c) => _recipe!.categoryIds.contains(c.id)).toList();
+        _currentCategories = _categories.where((c) =>
+          _recipe!.categoryIds.contains(c.id) || _recipe!.categoryIds.contains(c.name)
+        ).toList();
       }
     });
   }
@@ -329,6 +353,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     final currentRecipe = _recipe!;
     return Scaffold(
       backgroundColor: Colors.white,
+      floatingActionButton: widget.isCatalogRecipe && !_isAlreadyImported
+          ? _buildImportFab()
+          : null,
       body: Stack(
         children: [
           // Background Gradient at the top
@@ -364,35 +391,90 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                           () => Navigator.pop(context),
                         ),
                         const SizedBox(width: 40),
-                        Row(
-                          children: [
-                            _headerCircleButton(
-                              Icons.edit_rounded,
-                              () async {
-                                final result = await Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => CreateRecipePage(recipe: currentRecipe),
+                        if (widget.isCatalogRecipe)
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF6A5AE0).withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.menu_book_rounded, size: 14, color: Color(0xFF6A5AE0)),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'Catalogue',
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: const Color(0xFF6A5AE0),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (_isAlreadyImported) ...
+                                [
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: Colors.green.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.check_circle_rounded, size: 14, color: Colors.green),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          'Dans le groupe',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                            color: Colors.green,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                );
-                                if (result is Recipe) {
-                                  setState(() {
-                                    _recipe = result;
-                                  });
-                                  _loadUserServings();
-                                  _loadCategories();
-                                }
-                              },
-                              color: const Color(0xFF6A5AE0),
-                            ),
-                            const SizedBox(width: 8),
-                            _headerCircleButton(
-                              Icons.delete_outline_rounded,
-                              _onDeleteRecipe,
-                              color: Colors.redAccent,
-                            ),
-                          ],
-                        ),
+                                ],
+                            ],
+                          )
+                        else
+                          Row(
+                            children: [
+                              _headerCircleButton(
+                                Icons.edit_rounded,
+                                () async {
+                                  final result = await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => CreateRecipePage(recipe: currentRecipe),
+                                    ),
+                                  );
+                                  if (result is Recipe) {
+                                    setState(() {
+                                      _recipe = result;
+                                    });
+                                    _loadUserServings();
+                                    _loadCategories();
+                                  }
+                                },
+                                color: const Color(0xFF6A5AE0),
+                              ),
+                              const SizedBox(width: 8),
+                              _headerCircleButton(
+                                Icons.delete_outline_rounded,
+                                _onDeleteRecipe,
+                                color: Colors.redAccent,
+                              ),
+                            ],
+                          ),
                       ],
                     ),
                   ),
@@ -566,35 +648,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                           ),
                         ),
 
-                        if (currentRecipe.addExtraMeal && (widget.showAddExtraMealBadge)) ...[
-                          const SizedBox(height: 24),
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.green.withOpacity(0.08),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: Colors.green.withOpacity(0.3),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.star_rounded, color: Colors.green),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    "Génère un repas supplémentaire pour le planning",
-                                    style: GoogleFonts.poppins(
-                                      color: Colors.green[800],
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+
 
                         const SizedBox(height: 40),
 
@@ -661,48 +715,65 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                   ),
                                   const SizedBox(width: 16),
                                   Expanded(
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      crossAxisAlignment: CrossAxisAlignment.center,
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text(
-                                          item.ingredient.name,
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w500,
-                                            color: Colors.black87,
-                                          ),
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          crossAxisAlignment: CrossAxisAlignment.center,
+                                          children: [
+                                            Text(
+                                              item.ingredient.name,
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w500,
+                                                color: Colors.black87,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            if (item.ingredient.typeId != null)
+                                              Builder(
+                                                builder: (context) {
+                                                  final type = _ingredientTypes.firstWhere(
+                                                    (t) => t.id == item.ingredient.typeId || t.name == item.ingredient.typeId,
+                                                    orElse: () => IngredientType(id: '', name: '', color: 0xFF6A5AE0),
+                                                  );
+                                                  if (type.id.isEmpty) return const SizedBox.shrink();
+                                                  final baseColor = Color(type.color);
+                                                  final hsl = HSLColor.fromColor(baseColor);
+                                                  final startLightness = hsl.lightness;
+                                                  final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                                                  final textColor = hsl.withLightness(textLightness).toColor();
+                                                  return Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                    decoration: BoxDecoration(
+                                                      color: baseColor.withOpacity(0.15),
+                                                      borderRadius: BorderRadius.circular(20),
+                                                    ),
+                                                    child: Text(
+                                                      type.name,
+                                                      style: GoogleFonts.poppins(
+                                                        fontSize: 11,
+                                                        fontWeight: FontWeight.w700,
+                                                        color: textColor,
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                              ),
+                                          ],
                                         ),
-                                        const SizedBox(width: 8),
-                                        if (item.ingredient.typeId != null)
-                                          Builder(
-                                            builder: (context) {
-                                              final type = _ingredientTypes.firstWhere(
-                                                (t) => t.id == item.ingredient.typeId,
-                                                orElse: () => IngredientType(id: '', name: '', color: 0xFF6A5AE0),
-                                              );
-                                              if (type.id.isEmpty) return const SizedBox.shrink();
-                                              final baseColor = Color(type.color);
-                                              final hsl = HSLColor.fromColor(baseColor);
-                                              final startLightness = hsl.lightness;
-                                              final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
-                                              final textColor = hsl.withLightness(textLightness).toColor();
-                                              return Container(
-                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                                decoration: BoxDecoration(
-                                                  color: baseColor.withOpacity(0.15),
-                                                  borderRadius: BorderRadius.circular(20),
-                                                ),
-                                                child: Text(
-                                                  type.name,
-                                                  style: GoogleFonts.poppins(
-                                                    fontSize: 11,
-                                                    fontWeight: FontWeight.w700,
-                                                    color: textColor,
-                                                  ),
-                                                ),
-                                              );
-                                            },
+                                        if (item.notes != null && item.notes!.isNotEmpty)
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 3),
+                                            child: Text(
+                                              item.notes!,
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 12,
+                                                color: Colors.grey[500],
+                                                fontStyle: FontStyle.italic,
+                                              ),
+                                            ),
                                           ),
                                       ],
                                     ),
@@ -749,28 +820,30 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
                         const SizedBox(height: 40),
 
-                        // USER SERVINGS
-                        Text(
-                          'Portions par utilisateur',
-                          style: GoogleFonts.poppins(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.black87,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        if (_isLoadingServings)
-                          const Center(child: CircularProgressIndicator())
-                        else if (_userServings.isEmpty)
+                        // USER SERVINGS — masqué pour les recettes du catalogue
+                        if (!widget.isCatalogRecipe) ...[
                           Text(
-                            'Aucune portion enregistrée',
+                            'Portions par utilisateur',
                             style: GoogleFonts.poppins(
-                              color: Colors.grey, 
-                              fontStyle: FontStyle.italic
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black87,
                             ),
-                          )
-                        else 
-                          _buildUserServingsList(),
+                          ),
+                          const SizedBox(height: 16),
+                          if (_isLoadingServings)
+                            const Center(child: CircularProgressIndicator())
+                          else if (_userServings.isEmpty)
+                            Text(
+                              'Aucune portion enregistrée',
+                              style: GoogleFonts.poppins(
+                                color: Colors.grey,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            )
+                          else
+                            _buildUserServingsList(),
+                        ],
                       ],
                     ),
                   ),
@@ -779,6 +852,52 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildImportFab() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16, right: 16),
+      child: FloatingActionButton.extended(
+        onPressed: () async {
+          final recipe = _recipe;
+          if (recipe == null) return;
+          final presetData = <String, dynamic>{
+            'title': recipe.title,
+            'description': recipe.description,
+            'preparationTime': recipe.preparationTime,
+            'cookingTime': recipe.cookingTime,
+            'servings': recipe.servings,
+            'instructions': recipe.instructions,
+            'categories': recipe.categoryIds,
+            'ingredients': recipe.ingredients.map((ri) => {
+              'name': ri.ingredient.name,
+              'quantity': ri.quantity,
+              'unit': ri.unit.label,
+              'type': ri.ingredient.typeId ?? '',
+            }).toList(),
+          };
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => CreateRecipePage(presetData: presetData),
+            ),
+          );
+          if (mounted) setState(() => _isAlreadyImported = true);
+        },
+        backgroundColor: const Color(0xFF6A5AE0),
+        elevation: 6,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        label: Text(
+          'Ajouter cette recette',
+          style: GoogleFonts.poppins(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+            fontSize: 15,
+          ),
+        ),
+        icon: const Icon(Icons.download_rounded, color: Colors.white),
       ),
     );
   }

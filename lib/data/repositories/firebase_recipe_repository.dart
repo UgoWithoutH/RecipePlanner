@@ -56,7 +56,6 @@ class FirebaseRecipeRepository implements RecipeRepository {
         createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
         isFavorite: data['isFavorite'] ?? false,
         rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
-        addExtraMeal: data['addExtraMeal'] ?? false,
         url: data['url'],
       );
     }
@@ -94,7 +93,6 @@ class FirebaseRecipeRepository implements RecipeRepository {
         createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
         isFavorite: data['isFavorite'] ?? false,
         rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
-        addExtraMeal: data['addExtraMeal'] ?? false,
         url: data['url'],
       );
     }
@@ -259,7 +257,6 @@ class FirebaseRecipeRepository implements RecipeRepository {
         createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
         isFavorite: data['isFavorite'] ?? false,
         rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
-        addExtraMeal: data['addExtraMeal'] ?? false,
       );
     }).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -271,6 +268,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
       'description': recipe.description,
       'preparationTime': recipe.preparationTime,
       'cookingTime': recipe.cookingTime,
+      'servings': recipe.servings,
       'categoryIds': recipe.categoryIds,
       'category': recipe.categoryIds.isNotEmpty ? recipe.categoryIds.first : '',
       'rating': recipe.rating,

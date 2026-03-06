@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:recipe_planner/data/services/seed_data_service.dart';
 import 'package:recipe_planner/data/services/notification_service.dart';
+import 'package:recipe_planner/data/services/recipes_cache_service.dart';
 
 import 'presentation/pages/recipes_page.dart';
 import 'presentation/pages/planner_page.dart';
@@ -19,9 +20,12 @@ import 'presentation/providers/auth_state.dart';
 
 import 'data/repositories/notification_settings_repository.dart';
 import 'data/repositories/group_repository.dart';
+import 'data/services/force_update_service.dart';
+import 'presentation/widgets/force_update_dialog.dart';
 import 'firebase_options.dart';
 
 const bool useTestData = false;
+const bool useRecipeCache = false;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -40,6 +44,9 @@ Future<void> _loadTestDataIfNeeded() async {
   if (recipesSnapshot.docs.isNotEmpty) {
     await _purgeAllData(firestore);
   }
+  // Seed ingredient types, categories and ingredients for the group first
+  // so that seedAllTestData can resolve them by name.
+  await seedRecipesCache();
   await seedAllTestData();
 }
 
@@ -141,6 +148,9 @@ class _DataLoaderState extends State<_DataLoader> {
   }
 
   Future<void> _loadData() async {
+    if (useRecipeCache) {
+      await seedRecipesCache();
+    }
     if (useTestData) {
       await _loadTestDataIfNeeded();
     }
@@ -154,6 +164,23 @@ class _DataLoaderState extends State<_DataLoader> {
         _hasGroup = groupId != null;
         _isLoading = false;
       });
+      // Vérification de mise à jour forcée — affichée après le chargement
+      _checkForceUpdate();
+    }
+  }
+
+  Future<void> _checkForceUpdate() async {
+    final result = await ForceUpdateService().checkForUpdate();
+    if (!mounted) return;
+    if (result.updateRequired) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => ForceUpdateDialog(
+                  storeUrl: result.storeUrl,
+                  minBuildNumber: result.minBuildNumber,
+                ),
+      );
     }
   }
 

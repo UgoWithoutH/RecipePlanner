@@ -155,6 +155,24 @@ class _IngredientsPageState extends State<IngredientsPage> {
 
     if (result == true && controller.text.trim().isNotEmpty) {
       final name = controller.text.trim();
+
+      // Check for duplicate name (case-insensitive)
+      final alreadyExists = _ingredients.any(
+        (ing) => (ing['name'] as String).toLowerCase() == name.toLowerCase(),
+      );
+      if (alreadyExists) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Un ingrédient avec ce nom existe déjà.',
+                  style: GoogleFonts.poppins()),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
       final data = <String, dynamic>{'name': name};
       if (selectedTypeId != null) {
         data['typeId'] = selectedTypeId;
@@ -257,6 +275,26 @@ class _IngredientsPageState extends State<IngredientsPage> {
 
     if (result == true && controller.text.trim().isNotEmpty) {
       final newName = controller.text.trim();
+
+      // Check for duplicate name (case-insensitive), excluding the current ingredient
+      final alreadyExists = _ingredients.any(
+        (ing) =>
+            ing['id'] != id &&
+            (ing['name'] as String).toLowerCase() == newName.toLowerCase(),
+      );
+      if (alreadyExists) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Un ingrédient avec ce nom existe déjà.',
+                  style: GoogleFonts.poppins()),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
       final updates = <String, dynamic>{'name': newName};
       updates['typeId'] = selectedTypeId; // Can be null to remove type
 
@@ -276,19 +314,65 @@ class _IngredientsPageState extends State<IngredientsPage> {
   }
 
   Future<void> _deleteIngredient(String id) async {
+    // Vérifie si l'ingrédient est utilisé dans une recette du groupe
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId != null) {
+      final recipesSnap = await FirebaseFirestore.instance
+          .collection('recipes')
+          .where('groupId', isEqualTo: groupId)
+          .get();
+      final isUsed = recipesSnap.docs.any((doc) {
+        final ingredients = (doc.data()['ingredients'] as List<dynamic>? ?? []);
+        return ingredients.any((i) => i['ingredientId'] == id);
+      });
+      if (isUsed) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Impossible de supprimer : cet ingrédient est utilisé dans une ou plusieurs recettes du groupe.',
+                style: GoogleFonts.poppins(),
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+    }
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Supprimer l\'ingrédient'),
-        content:
-            const Text('Voulez-vous vraiment supprimer cet ingrédient ?'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Text(
+          'Supprimer l\'ingrédient',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 20),
+        ),
+        content: Text(
+          'Voulez-vous vraiment supprimer cet ingrédient ?',
+          style: GoogleFonts.poppins(fontSize: 15),
+        ),
+        actionsPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Annuler')),
+            onPressed: () => Navigator.pop(context, false),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.grey,
+              textStyle: GoogleFonts.poppins(fontWeight: FontWeight.w500),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('Annuler'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Supprimer')),
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFF6A5AE0),
+              textStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('Supprimer'),
+          ),
         ],
       ),
     );
@@ -305,42 +389,38 @@ class _IngredientsPageState extends State<IngredientsPage> {
   }
 
   Future<void> _showRecipesForIngredient(String ingredientId, String ingredientName) async {
-    // Pre-load so we can size the sheet to fit the content
     final groupId = await GroupRepository.instance.getCurrentGroupId();
     if (groupId == null) return;
-    final snap = await FirebaseFirestore.instance
-        .collection('recipes')
-        .where('groupId', isEqualTo: groupId)
-        .get();
+
+    // Chargement en parallèle : recettes du groupe + recettes du catalogue
+    final results = await Future.wait([
+      FirebaseFirestore.instance
+          .collection('recipes')
+          .where('groupId', isEqualTo: groupId)
+          .get(),
+      FirebaseFirestore.instance
+          .collection('recipes_cache')
+          .get(),
+    ]);
     if (!mounted) return;
 
-    // Use full Recipe objects instead of just strings
-    final recipes = <Recipe>[];
-    for (final doc in snap.docs) {
-      final data = doc.data();
+    // Recettes du groupe
+    final groupSnap = results[0] as QuerySnapshot;
+    final groupRecipes = <Recipe>[];
+    for (final doc in groupSnap.docs) {
+      final data = doc.data() as Map<String, dynamic>;
       final ingredients = data['ingredients'] as List<dynamic>? ?? [];
-      
       if (ingredients.any((i) => i['ingredientId'] == ingredientId)) {
-        // Construct minimal Recipe object for list display, or full parsing if needed soon
-        // Let's parse fully so we can pass it to Detail Page
-        final ingredientList = <RecipeIngredient>[]; // We can skip detailed ingredient parsing for now or do it lazy
-        // To be safe and reuse Detail Page logic, let's parse minimally but enough for ID/Title
-        // OR better: parse properly so DetailPage works.
-
-        // Re-using fetch logic locally or parsing manually:
         final rawIngredients = data['ingredients'] as List<dynamic>? ?? [];
-        // Map raw ingredients to RecipeIngredient... (simplified since we might not have names cached for ALL ingredients here)
-        // Ideally we should use a Repository, but here is inline for quick fix:
         final mappedIngredients = rawIngredients.map((i) {
-             return RecipeIngredient(
-                ingredient: Ingredient(id: i['ingredientId'], name: '...'), // Placeholder name
-                quantity: (i['quantity'] as num).toDouble(),
-                unit: Unit.values.firstWhere((u) => u.label == i['unit'], orElse: () => Unit.g),
-                notes: i['notes'],
-             ); 
+          return RecipeIngredient(
+            ingredient: Ingredient(id: i['ingredientId'], name: '...'),
+            quantity: (i['quantity'] as num).toDouble(),
+            unit: Unit.values.firstWhere((u) => u.label == i['unit'], orElse: () => Unit.g),
+            notes: i['notes'],
+          );
         }).toList();
-
-        final r = Recipe(
+        groupRecipes.add(Recipe(
           id: doc.id,
           title: data['title'] ?? '',
           description: data['description'] ?? '',
@@ -348,28 +428,39 @@ class _IngredientsPageState extends State<IngredientsPage> {
           cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
           servings: (data['servings'] as num?)?.toInt() ?? 1,
           categoryIds: (data['categoryIds'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
-              ((data['category'] as String?)?.isNotEmpty == true
-                  ? [data['category'] as String]
-                  : []),
+              ((data['category'] as String?)?.isNotEmpty == true ? [data['category'] as String] : []),
           ingredients: mappedIngredients,
           instructions: List<String>.from(data['instructions'] ?? []),
           createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
           isFavorite: data['isFavorite'] ?? false,
           rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
-          addExtraMeal: data['addExtraMeal'] ?? false,
-        );
-        recipes.add(r);
+        ));
       }
     }
-    recipes.sort((a, b) => a.title.compareTo(b.title));
+    groupRecipes.sort((a, b) => a.title.compareTo(b.title));
 
-    // Compute a snug initial height: header ≈ 130 px, each item ≈ 62 px
+    // Recettes du catalogue (recipes_cache) — filtre sur le nom de l'ingrédient
+    final cacheSnap = results[1] as QuerySnapshot;
+    final catalogRecipes = <Map<String, dynamic>>[];
+    for (final doc in cacheSnap.docs) {
+      final data = Map<String, dynamic>.from(doc.data() as Map<String, dynamic>);
+      final ingredients = data['ingredients'] as List<dynamic>? ?? [];
+      if (ingredients.any((i) =>
+          (i['name'] as String? ?? '').toLowerCase() == ingredientName.toLowerCase())) {
+        data['_id'] = doc.id;
+        catalogRecipes.add(data);
+      }
+    }
+    catalogRecipes.sort((a, b) =>
+        (a['title'] as String? ?? '').compareTo(b['title'] as String? ?? ''));
+
     const double headerPx = 130;
     const double itemPx = 62;
     const double minFraction = 0.50;
     const double maxFraction = 0.95;
     final screenH = MediaQuery.of(context).size.height;
-    final contentH = headerPx + recipes.length * itemPx + 24;
+    final totalItems = groupRecipes.length + catalogRecipes.length;
+    final contentH = headerPx + totalItems * itemPx + 80;
     final initial = (contentH / screenH).clamp(minFraction, maxFraction);
 
     if (!mounted) return;
@@ -379,7 +470,8 @@ class _IngredientsPageState extends State<IngredientsPage> {
       backgroundColor: Colors.transparent,
       builder: (_) => _RecipesForIngredientSheet(
         ingredientName: ingredientName,
-        recipes: recipes,
+        recipes: groupRecipes,
+        catalogRecipes: catalogRecipes,
         initialChildSize: initial,
         maxChildSize: maxFraction,
       ),
@@ -743,12 +835,14 @@ class _IngredientsPageState extends State<IngredientsPage> {
 class _RecipesForIngredientSheet extends StatelessWidget {
   final String ingredientName;
   final List<Recipe> recipes;
+  final List<Map<String, dynamic>> catalogRecipes;
   final double initialChildSize;
   final double maxChildSize;
 
   const _RecipesForIngredientSheet({
     required this.ingredientName,
     required this.recipes,
+    required this.catalogRecipes,
     required this.initialChildSize,
     required this.maxChildSize,
   });
@@ -757,133 +851,250 @@ class _RecipesForIngredientSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        // Zone transparente au-dessus : tap pour fermer
         GestureDetector(
           onTap: () => Navigator.pop(context),
           behavior: HitTestBehavior.opaque,
           child: const SizedBox.expand(),
         ),
         DraggableScrollableSheet(
-      initialChildSize: initialChildSize,
-      minChildSize: 0.3,
-      maxChildSize: maxChildSize,
-      builder: (_, controller) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Column(
-          children: [
-            // Handle (tap to close)
-            GestureDetector(
-              onTap: () => Navigator.pop(context),
-              behavior: HitTestBehavior.opaque,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(0, 12, 0, 12),
-                child: Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-              ),
+          initialChildSize: initialChildSize,
+          minChildSize: 0.3,
+          maxChildSize: maxChildSize,
+          builder: (_, controller) => Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
-            // Title
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Row(
-                children: [
-                  const Icon(Icons.kitchen_rounded, color: Color(0xFF6A5AE0)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Recettes avec "$ingredientName"',
-                      style: GoogleFonts.poppins(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: const Color(0xFF1A1A1A),
+            child: Column(
+              children: [
+                // Handle
+                GestureDetector(
+                  onTap: () => Navigator.pop(context),
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(0, 12, 0, 12),
+                    child: Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded, color: Colors.black45),
-                    onPressed: () => Navigator.pop(context),
+                ),
+                // Title
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.kitchen_rounded, color: Color(0xFF6A5AE0)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Recettes avec "$ingredientName"',
+                          style: GoogleFonts.poppins(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF1A1A1A),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded, color: Colors.black45),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            const Divider(height: 1),
-            // List
-            Expanded(
-              child: recipes.isEmpty
+                ),
+                const SizedBox(height: 12),
+                const Divider(height: 1),
+                // Contenu scrollable : deux sections
+                Expanded(
+                  child: (recipes.isEmpty && catalogRecipes.isEmpty)
                       ? Center(
                           child: Text(
                             'Aucune recette utilise cet ingrédient.',
                             style: GoogleFonts.poppins(color: Colors.grey),
                           ),
                         )
-                      : ListView.separated(
+                      : ListView(
                           controller: controller,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 24, vertical: 12),
-                          itemCount: recipes.length,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(height: 8),
-                          itemBuilder: (_, index) => Container(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF5F4FF),
-                              borderRadius: BorderRadius.circular(14),
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                          children: [
+                            // ── Section recettes du groupe ──
+                            _SectionHeader(
+                              icon: Icons.group_rounded,
+                              label: 'Recettes du groupe (${recipes.length})',
                             ),
-                            child: Material(
-                              color: Colors.transparent,
-                              borderRadius: BorderRadius.circular(14),
-                                child: InkWell(
-                                onTap: () {
-                                  Navigator.push(
+                            const SizedBox(height: 8),
+                            if (recipes.isEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: Text(
+                                  'Aucune recette du groupe.',
+                                  style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey),
+                                ),
+                              )
+                            else
+                              ...recipes.map((recipe) => Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: _RecipeItem(
+                                  title: recipe.title,
+                                  onTap: () => Navigator.push(
                                     context,
-                                    MaterialPageRoute(builder: (_) => RecipeDetailPage(
-                                      recipeId: recipes[index].id, 
-                                      initialRecipe: recipes[index]
-                                    )),
-                                  );
-                                },
-                                borderRadius: BorderRadius.circular(14),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 16, vertical: 14),
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.restaurant_menu_rounded,
-                                          size: 18, color: Color(0xFF6A5AE0)),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Text(
-                                          recipes[index].title,
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w500,
-                                            color: const Color(0xFF2D2D2D),
-                                          ),
-                                        ),
+                                    MaterialPageRoute(
+                                      builder: (_) => RecipeDetailPage(
+                                        recipeId: recipe.id,
+                                        initialRecipe: recipe,
                                       ),
-                                    ],
+                                    ),
                                   ),
                                 ),
-                              ),
+                              )),
+                            const SizedBox(height: 8),
+                            // ── Section catalogue ──
+                            _SectionHeader(
+                              icon: Icons.menu_book_rounded,
+                              label: 'Catalogue (${catalogRecipes.length})',
                             ),
-                          ),
+                            const SizedBox(height: 8),
+                            if (catalogRecipes.isEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: Text(
+                                  'Aucune recette du catalogue.',
+                                  style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey),
+                                ),
+                              )
+                            else
+                              ...catalogRecipes.map((recipe) => Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: _RecipeItem(
+                                  title: recipe['title'] as String? ?? '',
+                                  onTap: () {
+                                    final rawIngredients = (recipe['ingredients'] as List<dynamic>? ?? []);
+                                    final ingredients = rawIngredients.map((i) {
+                                      final name = i['name'] as String? ?? '';
+                                      final typeName = i['type'] as String? ?? '';
+                                      return RecipeIngredient(
+                                        ingredient: Ingredient(id: name, name: name, typeId: typeName.isNotEmpty ? typeName : null),
+                                        quantity: (i['quantity'] as num?)?.toDouble() ?? 0,
+                                        unit: Unit.values.firstWhere(
+                                          (u) => u.label == i['unit'] || u.name == i['unit'],
+                                          orElse: () => Unit.g,
+                                        ),
+                                      );
+                                    }).toList();
+                                    final catalogRecipe = Recipe(
+                                      id: recipe['_id'] as String? ?? '',
+                                      title: recipe['title'] as String? ?? '',
+                                      description: recipe['description'] as String? ?? '',
+                                      preparationTime: (recipe['preparationTime'] as num?)?.toInt() ?? 0,
+                                      cookingTime: (recipe['cookingTime'] as num?)?.toInt() ?? 0,
+                                      servings: (recipe['servings'] as num?)?.toInt() ?? 1,
+                                      categoryIds: (recipe['categories'] as List?)?.map((e) => e.toString()).toList() ?? [],
+                                      ingredients: ingredients,
+                                      instructions: List<String>.from(recipe['instructions'] ?? []),
+                                      createdAt: DateTime.now(),
+                                      isFavorite: false,
+                                      rating: 0.0,
+                                    );
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => RecipeDetailPage(
+                                          recipeId: catalogRecipe.id,
+                                          initialRecipe: catalogRecipe,
+                                          isCatalogRecipe: true,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              )),
+                          ],
                         ),
+                ),
+              ],
             ),
-          ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _SectionHeader({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: const Color(0xFF6A5AE0)),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: GoogleFonts.poppins(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: const Color(0xFF6A5AE0),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _RecipeItem extends StatelessWidget {
+  final String title;
+  final VoidCallback? onTap;
+  const _RecipeItem({required this.title, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: onTap != null ? const Color(0xFFF5F4FF) : const Color(0xFFF0F0F0),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                Icon(
+                  onTap != null ? Icons.restaurant_menu_rounded : Icons.book_rounded,
+                  size: 18,
+                  color: onTap != null ? const Color(0xFF6A5AE0) : Colors.grey,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: GoogleFonts.poppins(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: const Color(0xFF2D2D2D),
+                    ),
+                  ),
+                ),
+
+              ],
+            ),
+          ),
         ),
       ),
-        ), // DraggableScrollableSheet
-      ], // Stack children
-    ); // Stack
+    );
   }
 }

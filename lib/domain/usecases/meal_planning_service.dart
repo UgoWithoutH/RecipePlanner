@@ -34,7 +34,6 @@ class MealPlanningService {
     double recencyPenaltyWeight = 100.0,
     double similarityPenaltyWeight = 30.0,
     double coverageBonusWeight = 2.0,
-    double addExtraMealBonusWeight = 30.0,
     double endOfPlanCoverageBoost = 1.5,
     double endOfPlanThresholdRatio = 0.2,
     bool useMaxPossibleCoverageNormalization = false,
@@ -45,6 +44,8 @@ class MealPlanningService {
     List<RecipeIngredient> pantryItems = const [],
     List<String> selectedCategories = const [],
     DateTime? referenceDate,
+    double wastePenaltyWeight = 0.0,
+    List<String> leftoverUserOrder = const [],
   }) {
     if (recipes.isEmpty || users.isEmpty) {
       throw Exception('Recipes and users are required');
@@ -52,7 +53,30 @@ class MealPlanningService {
 
     final numMeals = durationDays * 2; // lunch + dinner per day
     final meals = List<Meal?>.filled(numMeals, null); // Pre-allocate slots
-    final pendingLeftovers = <int, Meal>{}; // Track leftovers to insert
+    final pendingLeftovers = <int, List<Meal>>{}; // Track leftovers to insert (multiple per slot)
+    final leftoverMealsList = <Meal>[]; // Accumulates all leftover meals for the final plan
+
+    // Ordre round-robin pour l'attribution équitable des restes.
+    // On part de l'ordre sauvegardé ; les nouveaux utilisateurs sont ajoutés à la fin.
+    final currentUserOrder = <String>[
+      ...leftoverUserOrder.where((uid) => users.any((u) => u.id == uid)),
+      ...users.map((u) => u.id).where((uid) => !leftoverUserOrder.contains(uid)),
+    ];
+
+    // Compteur de restes reçus par utilisateur (historique + plan en cours).
+    // Critère primaire pour équilibrer l'attribution des restes entre utilisateurs.
+    final leftoverCountPerUser = <String, int>{
+      for (final user in users) user.id: 0,
+    };
+    if (recentMeals != null) {
+      for (final meal in recentMeals) {
+        if (meal.isLeftoverMeal) {
+          for (final uid in meal.userServings.keys) {
+            leftoverCountPerUser[uid] = (leftoverCountPerUser[uid] ?? 0) + 1;
+          }
+        }
+      }
+    }
 
     // Initialize recentRecipes and recentRecipeDaysAgo before userSelectedMeals loop
     // Note: recentRecipes is used for tracking recent selections for diversity,
@@ -153,55 +177,116 @@ class MealPlanningService {
     final ingredientWeights = computeIngredientWeights(recipes);
     final similarityCache = _buildSimilarityCache(recipes, ingredientWeights);
 
-    // --- GESTION DES LEFTOVERS HISTORIQUES (addExtraMeal sur J-1) ---
+    // --- GESTION DES LEFTOVERS HISTORIQUES (calcul automatique des restes du J-1) ---
     if (recentMeals != null && recentMeals.isNotEmpty) {
       final expectedDate = startDate.subtract(const Duration(days: 1));
-      // Filtre tous les repas J-1 avec addExtraMeal
-      final leftoversJ1 = recentMeals.where((m) =>
+      // Filter J-1 meals that are NOT themselves leftovers (avoid double-cascading)
+      final mealsJ1 = recentMeals.where((m) =>
           m.date.year == expectedDate.year &&
           m.date.month == expectedDate.month &&
           m.date.day == expectedDate.day &&
-          m.recipe.addExtraMeal
+          !m.isLeftoverMeal
       ).toList();
-      for (final meal in leftoversJ1) {
-        // Slot : lunch = 0, dinner = 1
+      for (final meal in mealsJ1) {
+        // Automatic leftover detection: cooked vs consumed
+        final cookedJ1 = meal.recipe.servings * meal.recipeMultiplier;
+        var remainingLeftJ1 = cookedJ1 - meal.totalServings;
+        if (remainingLeftJ1 <= 0) continue;
+        // Determine which users can eat from leftover (greedy, prioritise users with more remaining portions)
+        // Slot calculé en amont pour vérifier les doublons
         final slot = (meal.type == MealType.lunch) ? 0 : 1;
+        final alreadyAssignedJ1 = pendingLeftovers[slot]
+            ?.expand((m) => m.userServings.keys).toSet() ?? <String>{};
+        final leftoverUserServingsJ1 = <String, int>{};
+        int leftoverTotalJ1 = 0;
+        final sortedEntriesJ1 = meal.userServings.entries.toList()
+          ..sort((a, b) {
+            // Primaire : moins de restes reçus (historique + plan) = priorité
+            final cmpLO = (leftoverCountPerUser[a.key] ?? 0)
+                .compareTo(leftoverCountPerUser[b.key] ?? 0);
+            if (cmpLO != 0) return cmpLO;
+            // Secondaire : round-robin
+            final aIdx = currentUserOrder.indexOf(a.key);
+            final bIdx = currentUserOrder.indexOf(b.key);
+            return (aIdx == -1 ? 999 : aIdx).compareTo(bIdx == -1 ? 999 : bIdx);
+          });
+        final eligibleEntriesJ1 = sortedEntriesJ1
+            .where((e) => !alreadyAssignedJ1.contains(e.key))
+            .toList();
+        for (int idx = 0; idx < eligibleEntriesJ1.length; idx++) {
+          if (remainingLeftJ1 <= 0) break;
+          final entry = eligibleEntriesJ1[idx];
+          final userId = entry.key;
+          final portionsNeeded = entry.value;
+          final usersLeft = eligibleEntriesJ1.length - idx;
+          final fairShare = max(1, remainingLeftJ1 ~/ usersLeft);
+          final toAssign = min(portionsNeeded, min(fairShare, remainingLeftJ1));
+          if (toAssign > 0) {
+            leftoverUserServingsJ1[userId] = toAssign;
+            leftoverTotalJ1 += toAssign;
+            remainingLeftJ1 -= toAssign;
+          }
+        }
+        if (leftoverTotalJ1 == 0) continue;
+        // Rotation : les utilisateurs assignés passent en fin d'ordre + compteur de restes
+        for (final uid in leftoverUserServingsJ1.keys) {
+          leftoverCountPerUser[uid] = (leftoverCountPerUser[uid] ?? 0) + 1;
+          currentUserOrder.remove(uid);
+          currentUserOrder.add(uid);
+        }
         if (slot < meals.length) {
-          if (meals[slot] != null) {
-            // Collision : slot déjà occupé (userSelected ou autre leftover)
-            continue;
-          }
-          int recipeMultiplier = 1;
-          if (meal.totalServings > 0 && meal.recipe.servings > 0) {
-            recipeMultiplier = (meal.totalServings / meal.recipe.servings).ceil();
-          }
-          meals[slot] = Meal(
+          if (meals[slot] != null) continue; // blocked by user-selected
+          pendingLeftovers.putIfAbsent(slot, () => []).add(Meal(
             recipe: meal.recipe,
             date: startDate,
             type: meal.type,
-            totalServings: meal.totalServings,
-            userServings: meal.userServings,
-            recipeMultiplier: recipeMultiplier,
+            totalServings: leftoverTotalJ1,
+            userServings: leftoverUserServingsJ1,
+            recipeMultiplier: 1,
             isLeftoverMeal: true,
-          );
+          ));
           recentRecipeDaysAgo[meal.recipe.id] = 0;
         }
       }
     }
 
     for (int i = 0; i < numMeals; i++) {
-      // 1. Gestion des leftovers (pendingLeftovers)
-      if (_handleLeftover(i, pendingLeftovers, meals)) { continue; }
+      // 1. Process pending leftover meals for this slot (may cover some or all users)
+      // On track les users déjà couverts par un leftover pour ce slot afin
+      // de ne pas leur générer un repas normal en plus.
+      final usersWithLeftoverThisSlot = <String>{};
+      if (pendingLeftovers.containsKey(i)) {
+        for (final leftoverMeal in pendingLeftovers[i]!) {
+          final mealTypeForLO = leftoverMeal.type;
+          // Only inject leftover for users who still have portions remaining
+          final filteredServings = <String, int>{};
+          for (final entry in leftoverMeal.userServings.entries) {
+            final uid = entry.key;
+            final portions = entry.value;
+            if ((remainingPortions[uid]?[mealTypeForLO] ?? 0) <= 0) continue;
+            filteredServings[uid] = portions;
+            usersWithLeftoverThisSlot.add(uid);
+            remainingPortions[uid]![mealTypeForLO] =
+                max(0, (remainingPortions[uid]![mealTypeForLO] ?? 0) - portions);
+          }
+          if (filteredServings.isNotEmpty) {
+            leftoverMealsList.add(leftoverMeal.copyWith(userServings: filteredServings));
+            recentRecipeDaysAgo[leftoverMeal.recipe.id] = 0;
+          }
+        }
+        pendingLeftovers.remove(i);
+      }
       // 2. Gestion des userSelectedMeals
       if (_handleUserSelectedSlot(i, meals, usedRecipes, users, recipeUserServingsMap, remainingPortions)) { continue; }
-      // 3. Skip slots already filled by historical leftover injection (J-1 addExtraMeal)
-      //    These were set directly into meals[i] before the loop and must not be overwritten.
+      // 3. Skip slots already filled by user-selected
       if (meals[i] != null) { continue; }
-      // 4. Génération normale du slot
+      // 4. Génération normale du slot — on exclut les users déjà couverts par un leftover
       final mealDate = startDate.add(Duration(days: i ~/ 2));
       final mealType = i % 2 == 0 ? MealType.lunch : MealType.dinner;
-      final totalRemainingPortions = remainingPortions.values
-          .fold<int>(0, (sum, map) => sum + (map[mealType] ?? 0));
+      // Ne compter que les users qui n'ont pas déjà un leftover pour ce slot
+      final totalRemainingPortions = remainingPortions.entries
+          .where((e) => !usersWithLeftoverThisSlot.contains(e.key))
+          .fold<int>(0, (sum, e) => sum + (e.value[mealType] ?? 0));
       if (totalRemainingPortions == 0) {
         // No more portions needed for this meal type — skip but keep going for
         // other days / other types instead of stopping the whole plan.
@@ -219,7 +304,6 @@ class MealPlanningService {
         recencyPenaltyWeight: recencyPenaltyWeight,
         similarityPenaltyWeight: similarityPenaltyWeight,
         coverageBonusWeight: coverageBonusWeight,
-        addExtraMealBonusWeight: addExtraMealBonusWeight,
         endOfPlanCoverageBoost: endOfPlanCoverageBoost,
         endOfPlanThresholdRatio: endOfPlanThresholdRatio,
         useMaxPossibleCoverageNormalization: useMaxPossibleCoverageNormalization,
@@ -230,9 +314,9 @@ class MealPlanningService {
         recencyDecayFactor: recencyDecayFactor,
         useAbsoluteCoverageBonus: useAbsoluteCoverageBonus,
         pantryRemaining: pantryRemaining,
-        canAddLeftover: i + 2 < numMeals,
         slotsRemaining: numMeals - i,
-      );
+        wastePenaltyWeight: wastePenaltyWeight,
+      ); // wastePenaltyWeight non passé par défaut (les restes du plan complet sont utiles)
       if (selectedRecipe == null) {
         meals[i] = null;
         continue;
@@ -243,17 +327,14 @@ class MealPlanningService {
         servingsForRecipe: servingsForRecipe,
         mealType: mealType,
         remainingPortions: remainingPortions,
+        excludedUsers: usersWithLeftoverThisSlot,
       );
       if (totalConsumed == 0) {
         meals[i] = null;
         continue;
       }
-      int requiredServings = totalConsumed;
-      if (selectedRecipe.addExtraMeal) {
-        requiredServings = totalConsumed * 2;
-      }
-      final recipeMultiplier = requiredServings > 0 
-          ? (requiredServings / selectedRecipe.servings).ceil() 
+      final recipeMultiplier = totalConsumed > 0
+          ? (totalConsumed / selectedRecipe.servings).ceil()
           : 1;
       // Consomme les ingrédients du frigo/placard pour cette recette
       _consumePantryItems(
@@ -282,22 +363,101 @@ class MealPlanningService {
           usedInCurrentCycle.clear();
         }
       }
-      if (selectedRecipe.addExtraMeal && i + 2 < numMeals && totalConsumed > 0) {
-        final nextMealDate = mealDate.add(const Duration(days: 1));
-        pendingLeftovers[i + 2] = Meal(
-          recipe: selectedRecipe,
-          date: nextMealDate,
-          type: mealType,
-          totalServings: totalConsumed,
-          userServings: userServingsForMeal,
-          recipeMultiplier: recipeMultiplier,
-          isLeftoverMeal: true,
-          userSelected: false,
-        );
+      // Auto leftover calculation: propagate remaining cooked portions across future days
+      if (totalConsumed > 0) {
+        final cookedServings = selectedRecipe.servings * recipeMultiplier;
+        var remainingLeftover = cookedServings - totalConsumed;
+        int nextSlot = i + 2;
+        while (remainingLeftover > 0 && nextSlot < numMeals) {
+          final nextMealType = nextSlot % 2 == 0 ? MealType.lunch : MealType.dinner;
+          final nextMealDate = startDate.add(Duration(days: nextSlot ~/ 2));
+          final leftoverUserServings = <String, int>{};
+          int leftoverTotal = 0;
+          // On considère TOUS les utilisateurs ayant des portions configurées
+          // pour cette recette (pas seulement ceux du repas original) afin
+          // d'alterner équitablement les restes entre tous les utilisateurs.
+          final servingsForRecipeLO = recipeUserServingsMap[selectedRecipe.id] ?? {};
+          final sortedEntriesLO = users
+              .map((u) {
+                final (lunch, dinner) = servingsForRecipeLO[u.id] ?? (0, 0);
+                final portions = nextMealType == MealType.lunch ? lunch : dinner;
+                return MapEntry(u.id, portions);
+              })
+              .where((e) => e.value > 0)
+              .toList()
+            ..sort((a, b) {
+              // Primaire : moins de restes reçus (historique + plan) = priorité
+              final cmpLO = (leftoverCountPerUser[a.key] ?? 0)
+                  .compareTo(leftoverCountPerUser[b.key] ?? 0);
+              if (cmpLO != 0) return cmpLO;
+              // Secondaire : utilisateurs absents du repas original prioritaires
+              // (rétablissement de l'équité quand un slot original était solo)
+              final aInOriginal = userServingsForMeal.containsKey(a.key) ? 1 : 0;
+              final bInOriginal = userServingsForMeal.containsKey(b.key) ? 1 : 0;
+              if (aInOriginal != bInOriginal) return aInOriginal.compareTo(bInOriginal);
+              // Tertiaire : round-robin
+              final aIdx = currentUserOrder.indexOf(a.key);
+              final bIdx = currentUserOrder.indexOf(b.key);
+              return (aIdx == -1 ? 999 : aIdx).compareTo(bIdx == -1 ? 999 : bIdx);
+            });
+          // Users déjà assignés à un leftover pour ce slot (depuis une autre recette)
+          final alreadyAssignedLO = pendingLeftovers[nextSlot]
+              ?.expand((m) => m.userServings.keys).toSet() ?? <String>{};
+          final eligibleEntriesLO = sortedEntriesLO
+              .where((e) => !alreadyAssignedLO.contains(e.key))
+              .toList();
+          // Calcule un quota de portions par slot pour répartir les restes
+          // sur plusieurs jours plutôt que de tout donner au premier slot.
+          // Ex : 3 restes, 2 users × 1 portion → quota=1 par slot → J+1=user seul, J+2=les deux.
+          final totalEligiblePortionsLO =
+              eligibleEntriesLO.fold(0, (s, e) => s + e.value);
+          final estimatedSlotsLO = totalEligiblePortionsLO > 0
+              ? (remainingLeftover / totalEligiblePortionsLO).ceil().clamp(1, 9999)
+              : 1;
+          final perSlotQuotaLO = remainingLeftover ~/ estimatedSlotsLO;
+          int perSlotTotalLO = 0;
+          for (int idx = 0; idx < eligibleEntriesLO.length; idx++) {
+            if (remainingLeftover <= 0) break;
+            if (perSlotTotalLO >= perSlotQuotaLO) break; // quota atteint : reporter au slot suivant
+            final entry = eligibleEntriesLO[idx];
+            final userId = entry.key;
+            final portionsNeeded = entry.value;
+            final usersLeft = eligibleEntriesLO.length - idx;
+            final fairShare = max(1, remainingLeftover ~/ usersLeft);
+            final toAssign = min(portionsNeeded, min(fairShare, remainingLeftover));
+            if (toAssign > 0) {
+              leftoverUserServings[userId] = toAssign;
+              leftoverTotal += toAssign;
+              remainingLeftover -= toAssign;
+              perSlotTotalLO += toAssign;
+            }
+          }
+          if (leftoverTotal == 0) break;
+          // Rotation : les utilisateurs assignés passent en fin d'ordre + compteur de restes
+          for (final uid in leftoverUserServings.keys) {
+            leftoverCountPerUser[uid] = (leftoverCountPerUser[uid] ?? 0) + 1;
+            currentUserOrder.remove(uid);
+            currentUserOrder.add(uid);
+          }
+          pendingLeftovers.putIfAbsent(nextSlot, () => []).add(Meal(
+            recipe: selectedRecipe,
+            date: nextMealDate,
+            type: nextMealType,
+            totalServings: leftoverTotal,
+            userServings: leftoverUserServings,
+            recipeMultiplier: 1,
+            isLeftoverMeal: true,
+            userSelected: false,
+          ));
+          nextSlot += 2;
+        }
       }
     }
 
-    final finalMeals = meals.whereType<Meal>().toList();
+    final finalMeals = [
+      ...meals.whereType<Meal>(),
+      ...leftoverMealsList,
+    ];
 
     return MealPlan(
       id: '',
@@ -307,6 +467,7 @@ class MealPlanningService {
       createdAt: DateTime.now(),
       pantryItems: pantryItems,
       selectedCategories: selectedCategories,
+      leftoverUserOrder: currentUserOrder,
     );
   }
   /// Gère l'injection des userSelectedMeals dans le plan
@@ -314,7 +475,7 @@ class MealPlanningService {
     required List<Meal>? userSelectedMeals,
     required List<Recipe> recipes,
     required List<Meal?> meals,
-    required Map<int, Meal> pendingLeftovers,
+    required Map<int, List<Meal>> pendingLeftovers,
     required Map<String, int> recentRecipeDaysAgo,
     required DateTime startDate,
     required int durationDays,
@@ -333,33 +494,45 @@ class MealPlanningService {
             continue;
           }
           meals[slot] = meal.copyWith(userSelected: true);
-          if (meal.recipe.addExtraMeal) {
-            final nextDate = meal.date.add(const Duration(days: 1));
-            if (!nextDate.isBefore(startDate) && !nextDate.isAfter(startDate.add(Duration(days: durationDays - 1)))) {
-              final nextSlot = slot + 2;
-              if (nextSlot >= 0 && nextSlot < numMeals) {
-                if (meals[nextSlot] != null || pendingLeftovers.containsKey(nextSlot)) {
-                  // Collision leftover userSelected sur slot, slot déjà occupé
-                } else {
-                  final origUserServings = Map<String, int>.from(meal.userServings);
-                  final origTotalServings = meal.totalServings;
-                  final leftoverUserServings = <String, int>{};
-                  origUserServings.forEach((k, v) {
-                    leftoverUserServings[k] = v;
-                  });
-                  final leftoverTotalServings = origTotalServings;
-                  final leftoverMeal = meal.copyWith(
-                    date: nextDate,
-                    isLeftoverMeal: true,
-                    userSelected: true,
-                    userServings: leftoverUserServings,
-                    totalServings: leftoverTotalServings,
-                  );
-                  pendingLeftovers[nextSlot] = leftoverMeal;
-                  recentRecipeDaysAgo[meal.recipe.id] = 0;
+          // Auto leftover for user-selected meals
+          final cookedUS = meal.recipe.servings * meal.recipeMultiplier;
+          var remainingLeftUS = cookedUS - meal.totalServings;
+          int nextSlotUS = slot + 2;
+          while (remainingLeftUS > 0 && nextSlotUS < numMeals) {
+            final nextDateUS = startDate.add(Duration(days: nextSlotUS ~/ 2));
+            if (!nextDateUS.isBefore(startDate) &&
+                !nextDateUS.isAfter(startDate.add(Duration(days: durationDays - 1)))) {
+              final leftoverUserServingsUS = <String, int>{};
+              int leftoverTotalUS = 0;
+              final shuffledUSentries = meal.userServings.entries.toList()..shuffle();
+              for (int idx = 0; idx < shuffledUSentries.length; idx++) {
+                if (remainingLeftUS <= 0) break;
+                final entry = shuffledUSentries[idx];
+                final userId = entry.key;
+                final portionsNeeded = entry.value;
+                final usersLeftUS = shuffledUSentries.length - idx;
+                final fairShareUS = max(1, remainingLeftUS ~/ usersLeftUS);
+                final toAssignUS = min(portionsNeeded, min(fairShareUS, remainingLeftUS));
+                if (toAssignUS > 0) {
+                  leftoverUserServingsUS[userId] = toAssignUS;
+                  leftoverTotalUS += toAssignUS;
+                  remainingLeftUS -= toAssignUS;
                 }
               }
+              if (leftoverTotalUS == 0) break;
+              final nextMealTypeUS = nextSlotUS % 2 == 0 ? MealType.lunch : MealType.dinner;
+              pendingLeftovers.putIfAbsent(nextSlotUS, () => []).add(meal.copyWith(
+                date: nextDateUS,
+                type: nextMealTypeUS,
+                isLeftoverMeal: true,
+                userSelected: true,
+                userServings: leftoverUserServingsUS,
+                totalServings: leftoverTotalUS,
+                recipeMultiplier: 1,
+              ));
+              recentRecipeDaysAgo[meal.recipe.id] = 0;
             }
+            nextSlotUS += 2;
           }
         }
       }
@@ -394,30 +567,18 @@ class MealPlanningService {
     return false;
   }
 
-  /// Gère l'injection d'un leftover dans le slot
-  static bool _handleLeftover(
-    int i,
-    Map<int, Meal> pendingLeftovers,
-    List<Meal?> meals,
-  ) {
-    if (pendingLeftovers.containsKey(i)) {
-      final leftoverMeal = pendingLeftovers[i]!;
-      meals[i] = leftoverMeal;
-      return true;
-    }
-    return false;
-  }
-
   /// Consomme les portions pour un slot généré normalement
   static (Map<String, int>, int) _consumePortions({
     required List<User> users,
     required Map<String, (int lunch, int dinner)> servingsForRecipe,
     required MealType mealType,
     required Map<String, Map<MealType, int>> remainingPortions,
+    Set<String> excludedUsers = const {},
   }) {
     final userServingsForMeal = <String, int>{};
     int totalConsumed = 0;
     for (final user in users) {
+      if (excludedUsers.contains(user.id)) continue; // déjà couvert par un leftover ce slot
       final (lunch, dinner) = servingsForRecipe[user.id] ?? (0, 0);
       final desired = mealType == MealType.lunch ? lunch : dinner;
       final remaining = remainingPortions[user.id]![mealType]!;
@@ -448,7 +609,6 @@ class MealPlanningService {
   /// - recencyPenaltyWeight : pénalise la récence d'utilisation
   /// - similarityPenaltyWeight : pénalise la similarité d'ingrédients
   /// - coverageBonusWeight : favorise la couverture des portions
-  /// - addExtraMealBonusWeight : favorise les recettes générant des restes
   /// - endOfPlanCoverageBoost : booste la couverture en fin de plan
   /// - cyclePenaltyWeight : pénalise la réutilisation avant d'avoir fait le tour
   static Recipe? _selectBestRecipe({
@@ -463,7 +623,6 @@ class MealPlanningService {
     required double recencyPenaltyWeight,
     required double similarityPenaltyWeight,
     required double coverageBonusWeight,
-    double addExtraMealBonusWeight = 30.0,
     double endOfPlanCoverageBoost = 1.5,
     double endOfPlanThresholdRatio = 0.2,
     bool useMaxPossibleCoverageNormalization = false,
@@ -476,8 +635,8 @@ class MealPlanningService {
     bool useAbsoluteCoverageBonus = false,
     Map<String, (double, Unit)> pantryRemaining = const <String, (double, Unit)>{},
     double pantryBonusWeight = 70.0,
-    bool canAddLeftover = true,
     int slotsRemaining = 1,
+    double wastePenaltyWeight = 0.0,
   }) {
     if (availableRecipes.isEmpty) return null;
 
@@ -522,13 +681,8 @@ class MealPlanningService {
       if (totalConsumed == 0) {
         continue;
       }
-      final servingsForRecipe = recipeUserServingsMap[recipe.id] ?? {};
       // --- Coverage ---
       final coverageScore = totalConsumed.toDouble();
-      final maxPossibleCoverage = maxPossibleCoverageMap[recipe.id]?[mealType] ?? 0.0;
-      double normalizedCoverage = maxPossibleCoverage > 0
-          ? (coverageScore / maxPossibleCoverage).clamp(0.0, 1.0)
-          : 0.0;
       double coverageComponent = -coverageScore * coverageBonusWeight;
       if (initialTotalPortions != null && initialTotalPortions > 0) {
         final ratio = totalRemainingPortions / initialTotalPortions;
@@ -566,9 +720,6 @@ class MealPlanningService {
         normalizedSimilarity = normalizedSimilarity.clamp(0.0, 1.0);
       }
       final similarityComponent = normalizedSimilarity * similarityPenaltyWeight;
-        final addExtraMealComponent = recipe.addExtraMeal && normalizedCoverage > 0 && canAddLeftover
-          ? -normalizedCoverage * addExtraMealBonusWeight
-          : 0.0;
       double cyclePenalty = 0.0;
       if (requireFullCycle && usedInCurrentCycle.contains(recipe.id)) {
         final cycleProgress = usedInCurrentCycle.length.toDouble() / availableRecipes.length;
@@ -608,8 +759,20 @@ class MealPlanningService {
           pantryComponent = -matchCount * pantryBonusWeight * urgencyFactor;
         }
       }
+      // --- Pénalité de gaspillage : préfère les recettes dont les portions cuisinées
+      // correspondent au plus près aux portions consommées (recipeMultiplier minimal).
+      // wasteRatio = 0 → recette parfaite, wasteRatio = 1 → tout gaspillé.
+      double wasteComponent = 0.0;
+      if (wastePenaltyWeight > 0.0 && totalConsumed > 0) {
+        final recipeMultiplier = (totalConsumed / recipe.servings).ceil();
+        final cookedServings = recipe.servings * recipeMultiplier;
+        final wasteRatio = cookedServings > 0
+            ? (cookedServings - totalConsumed) / cookedServings
+            : 0.0;
+        wasteComponent = wasteRatio.clamp(0.0, 1.0) * wastePenaltyWeight;
+      }
       final totalScore = usageComponent + recencyComponent + similarityComponent +
-          coverageComponent + addExtraMealComponent + cyclePenalty + pantryComponent;
+          coverageComponent + cyclePenalty + pantryComponent + wasteComponent;
       if (totalScore < bestScore - epsilon) {
         bestScore = totalScore;
         candidates.clear();

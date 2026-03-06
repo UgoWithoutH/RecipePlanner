@@ -19,11 +19,11 @@ class FirebaseShoppingListRepository {
     await _collection.doc(shoppingList.id).set(data);
   }
 
-  Future<ShoppingList?> getShoppingListByMealPlanId(String mealPlanId) async {
+  /// Retourne le document de liste de courses du groupe (un seul par groupe).
+  Future<ShoppingList?> getGroupShoppingList() async {
     final groupId = await _getGroupId();
     final querySnapshot = await _collection
         .where('groupId', isEqualTo: groupId)
-        .where('mealPlanId', isEqualTo: mealPlanId)
         .limit(1)
         .get();
 
@@ -32,6 +32,10 @@ class FirebaseShoppingListRepository {
       return ShoppingList.fromMap(doc.id, doc.data() as Map<String, dynamic>);
     }
     return null;
+  }
+
+  Future<ShoppingList?> getShoppingListByMealPlanId(String mealPlanId) async {
+    return getGroupShoppingList();
   }
   
   Stream<ShoppingList?> streamShoppingListByMealPlanId(String mealPlanId) async* {

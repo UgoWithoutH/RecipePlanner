@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -1196,15 +1198,23 @@ class _PlannerPageState extends State<PlannerPage> {
               setState(() => _generatedMealPlan = updatedPlan);
             }
           } else {
-            // Propagate leftover portions to next-day same-type slot
+            // Propagate leftover portions to next-day same-type slot (fair-share)
             var remainingLeft = leftoverServings;
             final leftoverUserServings = <String, int>{};
             int leftoverTotal = 0;
-            for (final entry in newMeal.userServings.entries) {
-              if (entry.value <= remainingLeft) {
-                leftoverUserServings[entry.key] = entry.value;
-                leftoverTotal += entry.value;
-                remainingLeft -= entry.value;
+            final sortedEntries = newMeal.userServings.entries.toList()
+              ..sort((a, b) => a.value.compareTo(b.value));
+            for (int idx = 0; idx < sortedEntries.length; idx++) {
+              if (remainingLeft <= 0) break;
+              final entry = sortedEntries[idx];
+              final portionsNeeded = entry.value;
+              final usersLeft = sortedEntries.length - idx;
+              final fairShare = max(1, remainingLeft ~/ usersLeft);
+              final toAssign = min(portionsNeeded, min(fairShare, remainingLeft));
+              if (toAssign > 0) {
+                leftoverUserServings[entry.key] = toAssign;
+                leftoverTotal += toAssign;
+                remainingLeft -= toAssign;
               }
             }
             if (leftoverTotal > 0) {

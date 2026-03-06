@@ -210,14 +210,21 @@ class MealPlanningService {
             final bIdx = currentUserOrder.indexOf(b.key);
             return (aIdx == -1 ? 999 : aIdx).compareTo(bIdx == -1 ? 999 : bIdx);
           });
-        for (final entry in sortedEntriesJ1) {
+        final eligibleEntriesJ1 = sortedEntriesJ1
+            .where((e) => !alreadyAssignedJ1.contains(e.key))
+            .toList();
+        for (int idx = 0; idx < eligibleEntriesJ1.length; idx++) {
+          if (remainingLeftJ1 <= 0) break;
+          final entry = eligibleEntriesJ1[idx];
           final userId = entry.key;
           final portionsNeeded = entry.value;
-          if (alreadyAssignedJ1.contains(userId)) continue;
-          if (portionsNeeded <= remainingLeftJ1) {
-            leftoverUserServingsJ1[userId] = portionsNeeded;
-            leftoverTotalJ1 += portionsNeeded;
-            remainingLeftJ1 -= portionsNeeded;
+          final usersLeft = eligibleEntriesJ1.length - idx;
+          final fairShare = max(1, remainingLeftJ1 ~/ usersLeft);
+          final toAssign = min(portionsNeeded, min(fairShare, remainingLeftJ1));
+          if (toAssign > 0) {
+            leftoverUserServingsJ1[userId] = toAssign;
+            leftoverTotalJ1 += toAssign;
+            remainingLeftJ1 -= toAssign;
           }
         }
         if (leftoverTotalJ1 == 0) continue;
@@ -391,14 +398,21 @@ class MealPlanningService {
           // Users déjà assignés à un leftover pour ce slot (depuis une autre recette)
           final alreadyAssignedLO = pendingLeftovers[nextSlot]
               ?.expand((m) => m.userServings.keys).toSet() ?? <String>{};
-          for (final entry in sortedEntriesLO) {
+          final eligibleEntriesLO = sortedEntriesLO
+              .where((e) => !alreadyAssignedLO.contains(e.key))
+              .toList();
+          for (int idx = 0; idx < eligibleEntriesLO.length; idx++) {
+            if (remainingLeftover <= 0) break;
+            final entry = eligibleEntriesLO[idx];
             final userId = entry.key;
             final portionsNeeded = entry.value;
-            if (alreadyAssignedLO.contains(userId)) continue;
-            if (portionsNeeded <= remainingLeftover) {
-              leftoverUserServings[userId] = portionsNeeded;
-              leftoverTotal += portionsNeeded;
-              remainingLeftover -= portionsNeeded;
+            final usersLeft = eligibleEntriesLO.length - idx;
+            final fairShare = max(1, remainingLeftover ~/ usersLeft);
+            final toAssign = min(portionsNeeded, min(fairShare, remainingLeftover));
+            if (toAssign > 0) {
+              leftoverUserServings[userId] = toAssign;
+              leftoverTotal += toAssign;
+              remainingLeftover -= toAssign;
             }
           }
           if (leftoverTotal == 0) break;
@@ -474,13 +488,18 @@ class MealPlanningService {
               final leftoverUserServingsUS = <String, int>{};
               int leftoverTotalUS = 0;
               final shuffledUSentries = meal.userServings.entries.toList()..shuffle();
-              for (final entry in shuffledUSentries) {
+              for (int idx = 0; idx < shuffledUSentries.length; idx++) {
+                if (remainingLeftUS <= 0) break;
+                final entry = shuffledUSentries[idx];
                 final userId = entry.key;
                 final portionsNeeded = entry.value;
-                if (portionsNeeded <= remainingLeftUS) {
-                  leftoverUserServingsUS[userId] = portionsNeeded;
-                  leftoverTotalUS += portionsNeeded;
-                  remainingLeftUS -= portionsNeeded;
+                final usersLeftUS = shuffledUSentries.length - idx;
+                final fairShareUS = max(1, remainingLeftUS ~/ usersLeftUS);
+                final toAssignUS = min(portionsNeeded, min(fairShareUS, remainingLeftUS));
+                if (toAssignUS > 0) {
+                  leftoverUserServingsUS[userId] = toAssignUS;
+                  leftoverTotalUS += toAssignUS;
+                  remainingLeftUS -= toAssignUS;
                 }
               }
               if (leftoverTotalUS == 0) break;

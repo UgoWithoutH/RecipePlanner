@@ -176,7 +176,10 @@ class _DataLoaderState extends State<_DataLoader> {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (_) => ForceUpdateDialog(storeUrl: result.storeUrl),
+        builder: (_) => ForceUpdateDialog(
+                  storeUrl: result.storeUrl,
+                  minBuildNumber: result.minBuildNumber,
+                ),
       );
     }
   }

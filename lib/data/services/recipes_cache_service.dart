@@ -1,9 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../repositories/group_repository.dart';
-import 'recipes_cache_data_1.dart';
-import 'recipes_cache_data_2.dart';
-import 'recipes_cache_data_3.dart';
+import 'recipes_cache_split/recipes_cache_data_1.dart';
+import 'recipes_cache_split/recipes_cache_data_2.dart';
+import 'recipes_cache_split/recipes_cache_data_3.dart';
+import 'recipes_cache_split/recipes_cache_data_4.dart';
+import 'recipes_cache_split/recipes_cache_data_5.dart';
 
 // Couleurs connues pour les catégories (clé en minuscules)
 const Map<String, int> _categoryColors = {
@@ -45,6 +47,8 @@ Future<void> seedRecipesCache() async {
     ...recipeCacheData1,
     ...recipeCacheData2,
     ...recipeCacheData3,
+    ...recipeCacheData4,
+    ...recipeCacheData5,
   ];
 
   // 1. Seed global recipes_cache if not already seeded.

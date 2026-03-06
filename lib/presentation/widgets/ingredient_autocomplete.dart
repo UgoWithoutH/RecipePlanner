@@ -2,45 +2,35 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../data/repositories/group_repository.dart';
 
+// In-memory cache: groupId → list of all ingredients for that group.
+// Avoids repeated Firestore reads while the user is typing.
+final Map<String, List<Map<String, String>>> _ingredientCache = {};
+
+Future<List<Map<String, String>>> _fetchAllIngredients(String groupId) async {
+  if (_ingredientCache.containsKey(groupId)) return _ingredientCache[groupId]!;
+  final snap = await FirebaseFirestore.instance
+      .collection('ingredients')
+      .where('groupId', isEqualTo: groupId)
+      .get();
+  final list = snap.docs
+      .map((doc) => {'id': doc.id, 'name': doc.get('name') as String})
+      .toList();
+  _ingredientCache[groupId] = list;
+  return list;
+}
 
 class IngredientAutocomplete extends StatefulWidget {
-  /// Static method to expose the suggestion logic for reuse in other widgets
+  /// Call this to invalidate the cache (e.g. after adding a new ingredient).
+  static void invalidateCache() => _ingredientCache.clear();
+
+  /// Static method to expose the suggestion logic for reuse in other widgets.
   static Future<List<Map<String, String>>> suggestIngredients(String query, {Set<String>? excludeIds}) async {
     if (query.isEmpty) return [];
     final groupId = await GroupRepository.instance.getCurrentGroupId();
     if (groupId == null) return [];
-    List<Map<String, String>> allResults = [];
-    if (query.length < 2) {
-      final snap = await FirebaseFirestore.instance
-          .collection('ingredients')
-          .where('groupId', isEqualTo: groupId)
-          .limit(50)
-          .get();
-      allResults = snap.docs.map((doc) => {'id': doc.id, 'name': doc.get('name') as String}).toList();
-    } else {
-      final snap = await FirebaseFirestore.instance
-          .collection('ingredients')
-          .where('groupId', isEqualTo: groupId)
-          .where('name', isGreaterThanOrEqualTo: query)
-          .where('name', isLessThanOrEqualTo: '$query\uf8ff')
-          .get();
-      allResults = snap.docs.map((doc) => {'id': doc.id, 'name': doc.get('name') as String}).toList();
-      if (allResults.length < 10) {
-        final snapAll = await FirebaseFirestore.instance
-            .collection('ingredients')
-            .where('groupId', isEqualTo: groupId)
-            .limit(50)
-            .get();
-        final extra = snapAll.docs.map((doc) => {'id': doc.id, 'name': doc.get('name') as String});
-        for (final ing in extra) {
-          if (!allResults.any((e) => e['id'] == ing['id'])) {
-            allResults.add(ing);
-          }
-        }
-      }
-    }
+    final all = await _fetchAllIngredients(groupId);
     final lower = query.toLowerCase();
-    return allResults
+    return all
         .where((ing) =>
             (excludeIds == null || !excludeIds.contains(ing['id'])) &&
             (ing['name'] ?? '').toLowerCase().contains(lower))
@@ -70,38 +60,9 @@ class _IngredientAutocompleteState extends State<IngredientAutocomplete> {
     if (query.isEmpty) return [];
     final groupId = await GroupRepository.instance.getCurrentGroupId();
     if (groupId == null) return [];
-    List<Map<String, String>> allResults = [];
-    if (query.length < 2) {
-      final snap = await FirebaseFirestore.instance
-          .collection('ingredients')
-          .where('groupId', isEqualTo: groupId)
-          .limit(50)
-          .get();
-      allResults = snap.docs.map((doc) => {'id': doc.id, 'name': doc.get('name') as String}).toList();
-    } else {
-      final snap = await FirebaseFirestore.instance
-          .collection('ingredients')
-          .where('groupId', isEqualTo: groupId)
-          .where('name', isGreaterThanOrEqualTo: query)
-          .where('name', isLessThanOrEqualTo: '$query\uf8ff')
-          .get();
-      allResults = snap.docs.map((doc) => {'id': doc.id, 'name': doc.get('name') as String}).toList();
-      if (allResults.length < 10) {
-        final snapAll = await FirebaseFirestore.instance
-            .collection('ingredients')
-            .where('groupId', isEqualTo: groupId)
-            .limit(50)
-            .get();
-        final extra = snapAll.docs.map((doc) => {'id': doc.id, 'name': doc.get('name') as String});
-        for (final ing in extra) {
-          if (!allResults.any((e) => e['id'] == ing['id'])) {
-            allResults.add(ing);
-          }
-        }
-      }
-    }
+    final all = await _fetchAllIngredients(groupId);
     final lower = query.toLowerCase();
-    return allResults
+    return all
         .where((ing) =>
             (widget.selectedIngredientIds == null || !widget.selectedIngredientIds!.contains(ing['id'])) &&
             (ing['name'] ?? '').toLowerCase().contains(lower))

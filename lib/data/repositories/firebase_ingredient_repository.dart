@@ -67,9 +67,18 @@ class FirebaseIngredientRepository {
     return doc.id;
   }
 
-  /// Create a new ingredient with a typeId
+  /// Returns the ID of an existing ingredient (case-insensitive), or creates it with the given typeId.
   Future<String> createIngredientWithType(String name, String? typeId) async {
     final groupId = await _getGroupId();
+    // Check if an ingredient with the same name (case-insensitive) already exists
+    final snap = await _ingredients
+        .where('groupId', isEqualTo: groupId)
+        .get();
+    final lowerName = name.trim().toLowerCase();
+    for (final doc in snap.docs) {
+      final docName = (doc.get('name') as String?)?.toLowerCase();
+      if (docName == lowerName) return doc.id;
+    }
     final data = <String, dynamic>{'name': name, 'groupId': groupId};
     if (typeId != null) {
       data['typeId'] = typeId;

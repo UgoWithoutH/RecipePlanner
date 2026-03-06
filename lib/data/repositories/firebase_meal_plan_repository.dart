@@ -85,7 +85,6 @@ class FirebaseMealPlanRepository {
                   ? [mealData['recipeCategory'] as String]
                   : []),
           rating: (mealData['recipeRating'] as num?)?.toDouble() ?? 0.0,
-          addExtraMeal: mealData['recipeAddExtraMeal'] as bool? ?? false,
           ingredients: const [],
           instructions: const [],
           createdAt: DateTime.now(),
@@ -133,6 +132,7 @@ class FirebaseMealPlanRepository {
           );
         }).toList(),
         selectedCategories: (data['selectedCategories'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+        leftoverUserOrder: (data['leftoverUserOrder'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
         meals: meals,
       );
     }).toList();
@@ -163,7 +163,6 @@ class FirebaseMealPlanRepository {
                 ? [mealData['recipeCategory'] as String]
                 : []),
         rating: (mealData['recipeRating'] as num?)?.toDouble() ?? 0.0,
-        addExtraMeal: mealData['recipeAddExtraMeal'] as bool? ?? false,
         ingredients: const [],
         instructions: const [],
         createdAt: DateTime.now(),
@@ -211,6 +210,7 @@ class FirebaseMealPlanRepository {
         );
       }).toList(),
       selectedCategories: (data['selectedCategories'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+      leftoverUserOrder: (data['leftoverUserOrder'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
       meals: meals,
     );
   }

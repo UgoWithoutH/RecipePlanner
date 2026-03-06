@@ -20,6 +20,8 @@ import 'presentation/providers/auth_state.dart';
 
 import 'data/repositories/notification_settings_repository.dart';
 import 'data/repositories/group_repository.dart';
+import 'data/services/force_update_service.dart';
+import 'presentation/widgets/force_update_dialog.dart';
 import 'firebase_options.dart';
 
 const bool useTestData = false;
@@ -162,6 +164,20 @@ class _DataLoaderState extends State<_DataLoader> {
         _hasGroup = groupId != null;
         _isLoading = false;
       });
+      // Vérification de mise à jour forcée — affichée après le chargement
+      _checkForceUpdate();
+    }
+  }
+
+  Future<void> _checkForceUpdate() async {
+    final result = await ForceUpdateService().checkForUpdate();
+    if (!mounted) return;
+    if (result.updateRequired) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => ForceUpdateDialog(storeUrl: result.storeUrl),
+      );
     }
   }
 

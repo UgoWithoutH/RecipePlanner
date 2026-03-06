@@ -63,6 +63,21 @@ class MealPlanningService {
       ...users.map((u) => u.id).where((uid) => !leftoverUserOrder.contains(uid)),
     ];
 
+    // Compteur de restes reçus par utilisateur (historique + plan en cours).
+    // Critère primaire pour équilibrer l'attribution des restes entre utilisateurs.
+    final leftoverCountPerUser = <String, int>{
+      for (final user in users) user.id: 0,
+    };
+    if (recentMeals != null) {
+      for (final meal in recentMeals) {
+        if (meal.isLeftoverMeal) {
+          for (final uid in meal.userServings.keys) {
+            leftoverCountPerUser[uid] = (leftoverCountPerUser[uid] ?? 0) + 1;
+          }
+        }
+      }
+    }
+
     // Initialize recentRecipes and recentRecipeDaysAgo before userSelectedMeals loop
     // Note: recentRecipes is used for tracking recent selections for diversity,
     // but recency decay is calculated via recentRecipeDaysAgo for exponential decay
@@ -186,10 +201,11 @@ class MealPlanningService {
         int leftoverTotalJ1 = 0;
         final sortedEntriesJ1 = meal.userServings.entries.toList()
           ..sort((a, b) {
-            final cmp = (remainingPortions[b.key]?[meal.type] ?? 0)
-                .compareTo(remainingPortions[a.key]?[meal.type] ?? 0);
-            if (cmp != 0) return cmp;
-            // Égalité : priorité selon l'ordre round-robin
+            // Primaire : moins de restes reçus (historique + plan) = priorité
+            final cmpLO = (leftoverCountPerUser[a.key] ?? 0)
+                .compareTo(leftoverCountPerUser[b.key] ?? 0);
+            if (cmpLO != 0) return cmpLO;
+            // Secondaire : round-robin
             final aIdx = currentUserOrder.indexOf(a.key);
             final bIdx = currentUserOrder.indexOf(b.key);
             return (aIdx == -1 ? 999 : aIdx).compareTo(bIdx == -1 ? 999 : bIdx);
@@ -205,8 +221,9 @@ class MealPlanningService {
           }
         }
         if (leftoverTotalJ1 == 0) continue;
-        // Rotation : les utilisateurs assignés passent en fin d'ordre
+        // Rotation : les utilisateurs assignés passent en fin d'ordre + compteur de restes
         for (final uid in leftoverUserServingsJ1.keys) {
+          leftoverCountPerUser[uid] = (leftoverCountPerUser[uid] ?? 0) + 1;
           currentUserOrder.remove(uid);
           currentUserOrder.add(uid);
         }
@@ -349,12 +366,24 @@ class MealPlanningService {
           final nextMealDate = startDate.add(Duration(days: nextSlot ~/ 2));
           final leftoverUserServings = <String, int>{};
           int leftoverTotal = 0;
-          final sortedEntriesLO = userServingsForMeal.entries.toList()
+          // On considère TOUS les utilisateurs ayant des portions configurées
+          // pour cette recette (pas seulement ceux du repas original) afin
+          // d'alterner équitablement les restes entre tous les utilisateurs.
+          final servingsForRecipeLO = recipeUserServingsMap[selectedRecipe.id] ?? {};
+          final sortedEntriesLO = users
+              .map((u) {
+                final (lunch, dinner) = servingsForRecipeLO[u.id] ?? (0, 0);
+                final portions = nextMealType == MealType.lunch ? lunch : dinner;
+                return MapEntry(u.id, portions);
+              })
+              .where((e) => e.value > 0)
+              .toList()
             ..sort((a, b) {
-              final cmp = (remainingPortions[b.key]?[nextMealType] ?? 0)
-                  .compareTo(remainingPortions[a.key]?[nextMealType] ?? 0);
-              if (cmp != 0) return cmp;
-              // Égalité : priorité selon l'ordre round-robin
+              // Primaire : moins de restes reçus (historique + plan) = priorité
+              final cmpLO = (leftoverCountPerUser[a.key] ?? 0)
+                  .compareTo(leftoverCountPerUser[b.key] ?? 0);
+              if (cmpLO != 0) return cmpLO;
+              // Secondaire : round-robin
               final aIdx = currentUserOrder.indexOf(a.key);
               final bIdx = currentUserOrder.indexOf(b.key);
               return (aIdx == -1 ? 999 : aIdx).compareTo(bIdx == -1 ? 999 : bIdx);
@@ -373,8 +402,9 @@ class MealPlanningService {
             }
           }
           if (leftoverTotal == 0) break;
-          // Rotation : les utilisateurs assignés passent en fin d'ordre
+          // Rotation : les utilisateurs assignés passent en fin d'ordre + compteur de restes
           for (final uid in leftoverUserServings.keys) {
+            leftoverCountPerUser[uid] = (leftoverCountPerUser[uid] ?? 0) + 1;
             currentUserOrder.remove(uid);
             currentUserOrder.add(uid);
           }

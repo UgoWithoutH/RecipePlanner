@@ -78,6 +78,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   final FirebaseIngredientTypeRepository _ingredientTypeRepo = FirebaseIngredientTypeRepository();
 
   bool _isAlreadyImported = false;
+  bool _wasModified = false;
 
   @override
   void initState() {
@@ -388,7 +389,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                       children: [
                         _headerCircleButton(
                           Icons.arrow_back_ios_new_rounded,
-                          () => Navigator.pop(context),
+                          () => Navigator.pop(context, _wasModified),
                         ),
                         const SizedBox(width: 40),
                         if (widget.isCatalogRecipe)
@@ -460,6 +461,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                   if (result is Recipe) {
                                     setState(() {
                                       _recipe = result;
+                                      _wasModified = true;
                                     });
                                     _loadUserServings();
                                     _loadCategories();

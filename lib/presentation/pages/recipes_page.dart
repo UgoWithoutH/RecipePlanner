@@ -204,7 +204,7 @@ class _RecipesPageState extends State<RecipesPage> {
   // NAVIGATION
   // =========================
   Future<void> _openRecipeDetail(Recipe recipe) async {
-    await Navigator.push(
+    final result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => RecipeDetailPage(
@@ -214,8 +214,10 @@ class _RecipesPageState extends State<RecipesPage> {
       ),
     );
 
-    // Always refresh when coming back, to ensure changes are reflected
-    _refreshRecipes();
+    // Only refresh if something was modified or deleted
+    if (result == true) {
+      _refreshRecipes();
+    }
   }
 
   Future<void> _openCategoriesPage() async {
@@ -797,7 +799,7 @@ class _RecipesPageState extends State<RecipesPage> {
     }).toList();
   }
 
-  void _openCatalogRecipeDetail(Map<String, dynamic> data) {
+  Future<void> _openCatalogRecipeDetail(Map<String, dynamic> data) async {
     final rawIngredients = (data['ingredients'] as List<dynamic>? ?? []);
     final ingredients = rawIngredients.map((i) {
       final name = i['name'] as String? ?? '';
@@ -829,7 +831,7 @@ class _RecipesPageState extends State<RecipesPage> {
       isFavorite: false,
       rating: 0.0,
     );
-    Navigator.push(
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => RecipeDetailPage(
@@ -839,6 +841,9 @@ class _RecipesPageState extends State<RecipesPage> {
         ),
       ),
     );
+
+    // Refresh group recipes and catalog import status after returning
+    _refreshRecipes();
   }
 
   Widget _buildCatalogListView() {

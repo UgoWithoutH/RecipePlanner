@@ -1009,7 +1009,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                 backgroundColor: const Color(0xFF6A5AE0).withOpacity(0.1),
                 radius: 20,
                 child: Text(
-                  s.userName.substring(0, 1).toUpperCase(),
+                  s.userName.isNotEmpty ? s.userName.substring(0, 1).toUpperCase() : '?',
                   style: GoogleFonts.poppins(
                     fontWeight: FontWeight.bold,
                     color: const Color(0xFF6A5AE0),

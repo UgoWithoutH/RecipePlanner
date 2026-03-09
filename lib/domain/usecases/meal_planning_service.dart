@@ -192,11 +192,36 @@ class MealPlanningService {
         final cookedJ1 = meal.recipe.servings * meal.recipeMultiplier;
         var remainingLeftJ1 = cookedJ1 - meal.totalServings;
         if (remainingLeftJ1 <= 0) continue;
+
+        // Soustraire les portions déjà attribuées comme restes dans le plan
+        // existant (passé via recentMeals). Sans ce check, lorsque l'on
+        // re-génère un slot en mode shuffle, l'algo voit des portions libres
+        // et les réattribue à quelqu'un d'autre, alors qu'elles sont déjà
+        // consommées par un leftover existant.
+        final alreadyInPlan = recentMeals.where((m) =>
+            m.date.year == startDate.year &&
+            m.date.month == startDate.month &&
+            m.date.day == startDate.day &&
+            m.type == meal.type &&
+            m.recipe.id == meal.recipe.id &&
+            m.isLeftoverMeal).toList();
+        final alreadyAllocatedPortions =
+            alreadyInPlan.fold(0, (s, m) => s + m.totalServings);
+        remainingLeftJ1 -= alreadyAllocatedPortions;
+        if (remainingLeftJ1 <= 0) continue;
+
+        final alreadyAssignedFromPlan =
+            alreadyInPlan.expand((m) => m.userServings.keys).toSet();
+
         // Determine which users can eat from leftover (greedy, prioritise users with more remaining portions)
         // Slot calculé en amont pour vérifier les doublons
         final slot = (meal.type == MealType.lunch) ? 0 : 1;
-        final alreadyAssignedJ1 = pendingLeftovers[slot]
-            ?.expand((m) => m.userServings.keys).toSet() ?? <String>{};
+        final alreadyAssignedJ1 = {
+          ...pendingLeftovers[slot]
+                  ?.expand((m) => m.userServings.keys).toSet() ??
+              <String>{},
+          ...alreadyAssignedFromPlan,
+        };
         final leftoverUserServingsJ1 = <String, int>{};
         int leftoverTotalJ1 = 0;
         final sortedEntriesJ1 = meal.userServings.entries.toList()

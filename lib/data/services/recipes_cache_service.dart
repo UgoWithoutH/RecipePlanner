@@ -16,8 +16,7 @@ const Map<String, int> _categoryColors = {
   'poisson': 0xFF4FC3F7,
   'salade': 0xFFAED581,
   'sandwich': 0xFFA1887F,
-  'boisson': 0xFF4DB6AC,
-  'petit-déjeuner': 0xFFFFB74D,
+  'boisson': 0xFF4DB6AC
 };
 
 // Couleurs connues pour les types d'ingrédients (clé en minuscules)

@@ -77,6 +77,13 @@ class _PlannerPageState extends State<PlannerPage> {
   /// Key: slot key (date_mealType), Value: set of banned recipe IDs.
   final Map<String, Set<String>> _autoChangeBannedRecipes = {};
 
+  /// Multi-shuffle mode: true when the user is selecting slots to keep.
+  bool _isMultiShuffleMode = false;
+
+  /// Slots selected to be KEPT during multi-shuffle.
+  /// Key: slot key (date_mealType_recipeId), identifies a specific Meal.
+  final Set<String> _multiShuffleKeptSlots = {};
+
   static const _kPrefKeyCategories = 'selected_category_ids';
   static const _kPrefKeyDuration = 'planner_duration_days';
 
@@ -974,11 +981,163 @@ class _PlannerPageState extends State<PlannerPage> {
   String _slotKey(DateTime date, MealType type) =>
       '${date.year}-${date.month}-${date.day}_${type.name}';
 
+  /// Clé unique pour identifier un Meal spécifique dans le multi-shuffle.
+  String _mealKey(Meal meal) =>
+      '${meal.date.year}-${meal.date.month}-${meal.date.day}_${meal.type.name}_${meal.recipe.id}_${meal.isLeftoverMeal}';
+
+  /// Lance le multi-shuffle : pour chaque slot non gardé, applique un shuffle
+  /// avec accumulation de bans (même logique que le shuffle unitaire).
+  Future<void> _launchMultiShuffle() async {
+    if (_generatedMealPlan == null) return;
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    // Collecte les repas à shuffler (non leftovers, non passés, non gardés).
+    final mealsToShuffle = _generatedMealPlan!.meals.where((m) {
+      if (m.isLeftoverMeal) return false;
+      final mealDay = DateTime(m.date.year, m.date.month, m.date.day);
+      if (mealDay.isBefore(today)) return false;
+      return !_multiShuffleKeptSlots.contains(_mealKey(m));
+    }).toList();
+
+    // Sort by date/type for deterministic order.
+    mealsToShuffle.sort((a, b) {
+      final d = a.date.compareTo(b.date);
+      if (d != 0) return d;
+      return a.type.index.compareTo(b.type.index);
+    });
+
+    setState(() {
+      _isMultiShuffleMode = false;
+      _multiShuffleKeptSlots.clear();
+      _isLoading = true;
+    });
+
+    try {
+      for (final meal in mealsToShuffle) {
+        // Re-check plan hasn't become null due to an error.
+        if (_generatedMealPlan == null) break;
+        await _autoChangeMealRecipe(
+          meal,
+          manageLoadingState: false,
+          suppressDialogs: true,
+          clearOtherSlotBans: false,
+        );
+      }
+      // After all shuffles, fill any slots that became empty because an old
+      // leftover was deleted and the new recipe doesn't produce one.
+      if (_generatedMealPlan != null) {
+        await _fillVacatedSlots();
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// Remplit les slots vides apparus après un multi-shuffle
+  /// (ex : restes supprimés dont le nouveau repas ne produit pas de restes).
+  /// Utilise l'algorithme de planification pour choisir la meilleure recette.
+  Future<void> _fillVacatedSlots() async {
+    if (_generatedMealPlan == null) return;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    // Charger recettes + servings une seule fois pour tous les slots vides.
+    final allRecipes = await _loadRecipes();
+    final allServings = await _loadServings();
+
+    final validSelectedCategories =
+        _selectedCategories.where((id) => _categoryDataById.containsKey(id)).toSet();
+    final filteredRecipes = validSelectedCategories.isEmpty
+        ? allRecipes
+        : allRecipes
+            .where((r) => r.categoryIds.any((c) => validSelectedCategories.contains(c)))
+            .toList();
+    if (filteredRecipes.isEmpty) return;
+
+    final users = allServings
+        .map((s) => s.userId)
+        .toSet()
+        .map((uid) => User(id: uid, name: uid))
+        .toList();
+    if (users.isEmpty) return;
+
+    final currentUserIds = allServings.map((s) => s.userId).toSet();
+
+    for (int i = 0; i < (_generatedMealPlan?.durationDays ?? 0); i++) {
+      if (_generatedMealPlan == null) break;
+      final day = _generatedMealPlan!.startDate.add(Duration(days: i));
+      final dayNorm = DateTime(day.year, day.month, day.day);
+      if (dayNorm.isBefore(today)) continue;
+
+      for (final mealType in [MealType.lunch, MealType.dinner]) {
+        if (_generatedMealPlan == null) break;
+        final hasMeal = _generatedMealPlan!.meals.any((m) =>
+            m.date.year == day.year &&
+            m.date.month == day.month &&
+            m.date.day == day.day &&
+            m.type == mealType);
+        if (hasMeal) continue;
+
+        // Slot vide détecté — choisir la meilleure recette.
+        final filteredHistory = _mealHistory.entries
+            .expand((e) => e.value)
+            .where((m) =>
+                m.userServings.isEmpty ||
+                m.userServings.keys.any((uid) => currentUserIds.contains(uid)))
+            .toList();
+
+        final otherPlanMeals = _generatedMealPlan!.meals
+            .where((m) => !(
+                m.date.year == day.year &&
+                m.date.month == day.month &&
+                m.date.day == day.day &&
+                m.type == mealType))
+            .toList();
+
+        final tempPlan = MealPlanningService.generateMealPlan(
+          recipes: filteredRecipes,
+          servings: allServings,
+          users: users,
+          startDate: day,
+          durationDays: 1,
+          recentMeals: [...filteredHistory, ...otherPlanMeals],
+          pantryItems: _pantryIngredients,
+          selectedCategories: _selectedCategories.toList(),
+          referenceDate: day,
+        );
+
+        final newMeal = tempPlan.meals
+            .where((m) => m.type == mealType)
+            .firstOrNull;
+        if (newMeal == null) continue;
+
+        // Insérer le repas dans le plan courant.
+        final updatedMeals = List<Meal>.from(_generatedMealPlan!.meals)
+          ..add(newMeal.copyWith(date: day));
+        final updatedPlan = _generatedMealPlan!.copyWith(meals: updatedMeals);
+        await _mealPlanRepo.saveMealPlan(updatedPlan);
+        await ShoppingListGenerator().generateAndSaveShoppingList(updatedPlan);
+        if (mounted) setState(() => _generatedMealPlan = updatedPlan);
+      }
+    }
+  }
+
   /// Automatically picks a new recipe for [mealToChange] using the planning
   /// algorithm, accumulating banned recipes on repeated presses.
-  Future<void> _autoChangeMealRecipe(Meal mealToChange) async {
+  /// 
+  /// [manageLoadingState] — if false, the caller manages _isLoading externally.
+  /// [suppressDialogs]    — if true, skip all confirmation/warning dialogs.
+  /// [clearOtherSlotBans] — if false, don't wipe bans for other slots (multi-shuffle).
+  Future<void> _autoChangeMealRecipe(
+    Meal mealToChange, {
+    bool manageLoadingState = true,
+    bool suppressDialogs = false,
+    bool clearOtherSlotBans = true,
+  }) async {
     if (_generatedMealPlan == null) return;
-    setState(() => _isLoading = true);
+    if (manageLoadingState) setState(() => _isLoading = true);
     try {
       final slotKey = _slotKey(mealToChange.date, mealToChange.type);
 
@@ -1014,7 +1173,7 @@ class _PlannerPageState extends State<PlannerPage> {
       // All recipes have been seen — clear the ban cache and notify user
       if (candidateRecipes.isEmpty) {
         banned.clear(); // Reset so the user can shuffle again from scratch
-        setState(() => _isLoading = false);
+        if (manageLoadingState) setState(() => _isLoading = false);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1037,12 +1196,19 @@ class _PlannerPageState extends State<PlannerPage> {
             elevation: 4,
           ),
         );
-        return;
+        // In multi-shuffle, retry with the cleared cache so the slot still gets a new recipe.
+        if (suppressDialogs) {
+          final retryRecipes = allRecipes.where((r) => !banned.contains(r.id)).toList();
+          if (retryRecipes.isEmpty) return;
+          // Use retryRecipes for the rest of the algorithm instead of returning.
+        } else {
+          return;
+        }
       }
 
       // If this meal has a leftover the next day, warn the user before replacing it.
       // Only show the dialog the first time (not on repeated shuffles after "Annuler").
-      if (!wasAlreadyBanned && !mealToChange.isLeftoverMeal) {
+      if (!suppressDialogs && !wasAlreadyBanned && !mealToChange.isLeftoverMeal) {
         final nextDay = mealToChange.date.add(const Duration(days: 1));
         final planEnd = _generatedMealPlan!.startDate.add(
             Duration(days: _generatedMealPlan!.durationDays - 1));
@@ -1129,11 +1295,19 @@ class _PlannerPageState extends State<PlannerPage> {
               m.userServings.keys.any((uid) => currentUserIds.contains(uid)))
           .toList();
 
-      final otherPlanMeals = _generatedMealPlan!.meals.where((m) =>
-          !(m.date.year == mealToChange.date.year &&
+      // On exclut uniquement le repas en cours de shuffle (non-leftover, même slot).
+      // Les leftovers sur ce même slot (ex : restes de la veille attribués à un
+      // autre utilisateur) sont CONSERVÉS dans recentMeals afin que l'algo sache
+      // que ces portions sont déjà allouées et ne les réattribue pas.
+      final otherPlanMeals = _generatedMealPlan!.meals.where((m) {
+        final sameSlot = m.date.year == mealToChange.date.year &&
             m.date.month == mealToChange.date.month &&
             m.date.day == mealToChange.date.day &&
-            m.type == mealToChange.type)).toList();
+            m.type == mealToChange.type;
+        if (!sameSlot) return true;
+        // Sur le même slot, garder les leftovers — ils ne sont pas remplacés.
+        return m.isLeftoverMeal;
+      }).toList();
 
       // Exclude banned recipes from recentMeals so the algo's historical leftover
       // injection cannot reinstate a banned recipe into the shuffled slot.
@@ -1160,10 +1334,13 @@ class _PlannerPageState extends State<PlannerPage> {
       final newMeal = tempPlan.meals.where((m) => m.type == mealToChange.type).firstOrNull;
       if (newMeal == null) return;
 
-      // Clear bans for all OTHER slots; keep accumulating for this slot
-      _autoChangeBannedRecipes.removeWhere((key, _) => key != slotKey);
+      // Clear bans for all OTHER slots; keep accumulating for this slot.
+      // In multi-shuffle mode we preserve bans for all slots.
+      if (clearOtherSlotBans) {
+        _autoChangeBannedRecipes.removeWhere((key, _) => key != slotKey);
+      }
 
-      setState(() => _isLoading = false);
+      if (manageLoadingState) setState(() => _isLoading = false);
       // On passe le Meal complet pour que userServings/totalServings/recipeMultiplier
       // calculés par l'algo (potentiellement pour un sous-ensemble d'users) soient conservés.
       await _changeMealRecipe(mealToChange, newMeal.recipe, showSnackbar: false, fullMeal: newMeal);
@@ -1246,11 +1423,9 @@ class _PlannerPageState extends State<PlannerPage> {
         }
       }
     } finally {
-      setState(() => _isLoading = false);
+      if (manageLoadingState) setState(() => _isLoading = false);
     }
   }
-
-  /// Navigue vers RecipeDetailPage avec l'ID de la recette.
   /// Auto-fills an empty meal slot by picking a recipe with the planning algorithm.
   Future<void> _autoFillEmptySlot(DateTime date, MealType type) async {
     if (!mounted) return;
@@ -2338,6 +2513,111 @@ class _PlannerPageState extends State<PlannerPage> {
                         _buildModernCalendar(),
                         const SizedBox(height: 24),
                         _buildMealDetails(),
+                        const SizedBox(height: 12),
+                        // ── Zone multi-shuffle ──
+                        if (!_isMultiShuffleMode)
+                          // Mode inactif : bouton "Regénérer plusieurs repas"
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () => setState(() => _isMultiShuffleMode = true),
+                              icon: const Icon(Icons.autorenew, size: 18),
+                              label: Text(
+                                'Regénérer plusieurs repas',
+                                style: GoogleFonts.poppins(
+                                    fontWeight: FontWeight.w600, fontSize: 13),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFFFF9800),
+                                side: BorderSide(color: const Color(0xFFFF9800).withOpacity(0.6)),
+                                padding: const EdgeInsets.symmetric(vertical: 11),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                              ),
+                            ),
+                          )
+                        else
+                          // Mode actif : carte avec instruction + boutons côte à côte
+                          Container(
+                            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF8F0),
+                              border: Border.all(
+                                  color: const Color(0xFFFF9800).withOpacity(0.5)),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Icon(Icons.touch_app_rounded,
+                                        color: Color(0xFFFF9800), size: 16),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        'Touchez les repas à conserver, puis regénérez les autres',
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 12,
+                                          color: Colors.grey[700],
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: OutlinedButton.icon(
+                                        onPressed: () => setState(() {
+                                          _isMultiShuffleMode = false;
+                                          _multiShuffleKeptSlots.clear();
+                                        }),
+                                        icon: const Icon(Icons.close_rounded, size: 15),
+                                        label: Text('Annuler',
+                                            style: GoogleFonts.poppins(
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 13)),
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: Colors.grey[700],
+                                          side: BorderSide(color: Colors.grey.shade400),
+                                          padding:
+                                              const EdgeInsets.symmetric(vertical: 11),
+                                          shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(12)),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      flex: 2,
+                                      child: ElevatedButton.icon(
+                                        onPressed: _launchMultiShuffle,
+                                        icon: const Icon(Icons.autorenew, size: 15),
+                                        label: Text('Regénérer les autres',
+                                            style: GoogleFonts.poppins(
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 13)),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFFFF9800),
+                                          foregroundColor: Colors.white,
+                                          padding:
+                                              const EdgeInsets.symmetric(vertical: 11),
+                                          elevation: 0,
+                                          shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(12)),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        const SizedBox(height: 24),
                       ],
                     ],
                   ),
@@ -2350,6 +2630,7 @@ class _PlannerPageState extends State<PlannerPage> {
               color: Colors.black38,
               child: Center(child: CircularProgressIndicator()),
             ),
+
         ],
       ),
     );
@@ -2770,17 +3051,33 @@ class _PlannerPageState extends State<PlannerPage> {
       ..sort((a, b) => _firstUserName(a).compareTo(_firstUserName(b)));
 
     Widget buildMealCard(Meal meal) {
+      final isKept = _multiShuffleKeptSlots.contains(_mealKey(meal));
+      final isSelectableMeal = _isMultiShuffleMode && !meal.isLeftoverMeal && !isPastDay;
+
       return Card(
         color: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         elevation: 2,
         clipBehavior: Clip.antiAlias,
         margin: const EdgeInsets.symmetric(vertical: 8),
-        child: Column(
-          children: [
-            // ── Main content (tap to open recipe) ──
-            InkWell(
-              onTap: () => _openRecipeDetail(meal),
+        child: GestureDetector(
+          onTap: isSelectableMeal
+              ? () => setState(() {
+                    final key = _mealKey(meal);
+                    if (_multiShuffleKeptSlots.contains(key)) {
+                      _multiShuffleKeptSlots.remove(key);
+                    } else {
+                      _multiShuffleKeptSlots.add(key);
+                    }
+                  })
+              : null,
+          child: Stack(
+            children: [
+              Column(
+                children: [
+                  // ── Main content (tap to open recipe) ──
+                  InkWell(
+                    onTap: isSelectableMeal ? null : () => _openRecipeDetail(meal),
               child: Stack(
                 children: [
                   Padding(
@@ -2873,7 +3170,8 @@ class _PlannerPageState extends State<PlannerPage> {
                 ],
               ),
             ),
-            // ── Action bar ──
+            // ── Action bar (hidden in multi-shuffle mode) ──
+            if (!_isMultiShuffleMode)
             Container(
               decoration: BoxDecoration(
                 color: Colors.grey.shade50,
@@ -2999,8 +3297,58 @@ class _PlannerPageState extends State<PlannerPage> {
                 ),
               ),
             ),
-          ],
-        ),
+                ], // Column children
+              ), // Column
+              // ── Selection overlay (multi-shuffle mode) ──
+              if (isSelectableMeal)
+                Positioned.fill(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    decoration: BoxDecoration(
+                      color: isKept
+                          ? Colors.green.withOpacity(0.18)
+                          : Colors.orange.withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: isKept
+                            ? Colors.green.withOpacity(0.7)
+                            : Colors.orange.withOpacity(0.4),
+                        width: 2,
+                      ),
+                    ),
+                    child: Align(
+                      alignment: Alignment.topRight,
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 150),
+                          child: isKept
+                              ? Container(
+                                  key: const ValueKey('kept'),
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: const BoxDecoration(
+                                    color: Colors.green,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.lock_rounded, color: Colors.white, size: 16),
+                                )
+                              : Container(
+                                  key: const ValueKey('shuffle'),
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.orange.withOpacity(0.8),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.shuffle_rounded, color: Colors.white, size: 16),
+                                ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ], // Stack children
+          ), // Stack
+        ), // GestureDetector
       );
     }
 
@@ -3031,10 +3379,24 @@ class _PlannerPageState extends State<PlannerPage> {
                 ..sort((a, b) => a.compareTo(b)))
             : <String>[];
 
-        return Stack(
+        final isKeptCompact = _multiShuffleKeptSlots.contains(_mealKey(meal));
+        final isSelectableCompact = _isMultiShuffleMode && !meal.isLeftoverMeal && !isPastDay;
+
+        return GestureDetector(
+          onTap: isSelectableCompact
+              ? () => setState(() {
+                    final key = _mealKey(meal);
+                    if (_multiShuffleKeptSlots.contains(key)) {
+                      _multiShuffleKeptSlots.remove(key);
+                    } else {
+                      _multiShuffleKeptSlots.add(key);
+                    }
+                  })
+              : null,
+          child: Stack(
           children: [
             InkWell(
-              onTap: () => _openRecipeDetail(meal),
+              onTap: isSelectableCompact ? null : () => _openRecipeDetail(meal),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 child: Row(
@@ -3099,10 +3461,11 @@ class _PlannerPageState extends State<PlannerPage> {
                         )),
                     const SizedBox(width: 4),
                     // Bouton Aléatoire (plan futur seulement)
-                    if (!isPastDay)
+                    if (!isPastDay && !_isMultiShuffleMode)
                       rowBtn(Icons.autorenew, Colors.grey.shade500,
                           () => _autoChangeMealRecipe(meal)),
                     // Bouton Chercher
+                    if (!_isMultiShuffleMode)
                     rowBtn(Icons.search, Colors.grey.shade500, () async {
                       final now2 = DateTime.now();
                       final today2 =
@@ -3182,6 +3545,7 @@ class _PlannerPageState extends State<PlannerPage> {
                           mealToUpdate: meal, requireConfirmation: false);
                     }),
                     // Bouton Supprimer
+                    if (!_isMultiShuffleMode)
                     rowBtn(Icons.delete_outline, Colors.red.shade300,
                         () => _deleteMeal(meal)),
                   ],
@@ -3195,8 +3559,55 @@ class _PlannerPageState extends State<PlannerPage> {
                   child: const Center(child: CircularProgressIndicator()),
                 ),
               ),
+            // Selection overlay for multi-shuffle
+            if (isSelectableCompact)
+              Positioned.fill(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  decoration: BoxDecoration(
+                    color: isKeptCompact
+                        ? Colors.green.withOpacity(0.18)
+                        : Colors.orange.withOpacity(0.06),
+                    border: Border.all(
+                      color: isKeptCompact
+                          ? Colors.green.withOpacity(0.7)
+                          : Colors.orange.withOpacity(0.4),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 150),
+                        child: isKeptCompact
+                            ? Container(
+                                key: const ValueKey('keptC'),
+                                padding: const EdgeInsets.all(3),
+                                decoration: const BoxDecoration(
+                                  color: Colors.green,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.lock_rounded, color: Colors.white, size: 14),
+                              )
+                            : Container(
+                                key: const ValueKey('shuffleC'),
+                                padding: const EdgeInsets.all(3),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withOpacity(0.8),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.shuffle_rounded, color: Colors.white, size: 14),
+                              ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           ],
-        );
+          ), // Stack
+        ); // GestureDetector
       }
 
       return Card(
@@ -3425,7 +3836,7 @@ class _PlannerPageState extends State<PlannerPage> {
         }
       },
       child: Padding(
-      padding: const EdgeInsets.only(bottom: 90),
+      padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

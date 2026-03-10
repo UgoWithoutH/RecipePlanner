@@ -2511,8 +2511,6 @@ class _PlannerPageState extends State<PlannerPage> {
                         _buildPlanMetadata(),
                         const SizedBox(height: 12),
                         _buildModernCalendar(),
-                        const SizedBox(height: 24),
-                        _buildMealDetails(),
                         const SizedBox(height: 12),
                         // ── Zone multi-shuffle ──
                         if (!_isMultiShuffleMode)
@@ -2617,6 +2615,8 @@ class _PlannerPageState extends State<PlannerPage> {
                               ],
                             ),
                           ),
+                        const SizedBox(height: 24),
+                        _buildMealDetails(),
                         const SizedBox(height: 24),
                       ],
                     ],

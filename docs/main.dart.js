@@ -115915,12 +115915,14 @@ m=i.x
 l=i.y
 k=i.Q
 j=i.z
-B.b.O(o,A.b([B.j7,A.dG(A.bca(k,i.as,i.gaqD(),new A.aRC(i),new A.aRD(i),new A.aRE(i),new A.aRF(i),j,l,m,n),h,h),B.j7],q))}if(i.at!=null){n=A.b([B.bt,i.ahq(),B.aQ,i.ahh(),B.ez,i.ahc(),B.aQ],q)
+B.b.O(o,A.b([B.j7,A.dG(A.bca(k,i.as,i.gaqD(),new A.aRC(i),new A.aRD(i),new A.aRE(i),new A.aRF(i),j,l,m,n),h,h),B.j7],q))}if(i.at!=null){n=A.b([B.bt,i.ahq(),B.aQ,i.ahh(),B.aQ],q)
 if(!i.dx){m=A.v("Reg\xe9n\xe9rer plusieurs repas",h,h,h,A.x().$2$fontSize$fontWeight(13,B.w),h,h,h)
 l=A.U(153,B.dN.l()>>>16&255,B.dN.l()>>>8&255,B.dN.l()&255)
 n.push(A.cz(A.at7(B.a3t,m,new A.aRG(i),A.Ys(h,h,h,h,h,h,h,h,h,B.dN,h,h,B.uH,h,new A.aY(A.V(12),B.l),new A.b_(l,1,B.F,-1),h,h,h,h)),h,1/0))}else{m=A.d6(A.U(B.d.aA(127.5),B.dN.l()>>>16&255,B.dN.l()>>>8&255,B.dN.l()&255),1)
 l=A.V(14)
 n.push(A.ab(h,A.aU(A.b([A.ao(A.b([B.a3R,B.dj,A.aT(A.v("Touchez les repas \xe0 conserver, puis reg\xe9n\xe9rez les autres",h,h,h,A.x().$3$color$fontSize$fontWeight(B.cS,12,B.T),h,h,h),1)],q),B.o,B.k,B.n,0,h,h),B.j6,A.ao(A.b([A.aT(A.at7(B.a3v,A.v("Annuler",h,h,h,A.x().$2$fontSize$fontWeight(13,B.w),h,h,h),new A.aRH(i),A.Ys(h,h,h,h,h,h,h,h,h,B.cS,h,h,B.uH,h,new A.aY(A.V(12),B.l),new A.b_(B.bc,1,B.F,-1),h,h,h,h)),1),B.j5,A.aT(A.aiQ(B.a3B,A.v("Reg\xe9n\xe9rer les autres",h,h,h,A.x().$2$fontSize$fontWeight(13,B.w),h,h,h),i.gaqC(),A.fT(h,h,B.dN,h,h,h,0,h,h,B.f,h,h,B.uH,h,new A.aY(A.V(12),B.l),h,h,h,h,h)),2)],q),B.o,B.k,B.n,0,h,h)],q),B.a_,B.k,B.S,0,B.z),B.i,h,h,new A.aa(B.a_V,h,m,l,h,h,B.y),h,h,h,h,B.a1v,h,h,h))}n.push(B.ez)
+n.push(i.ahc())
+n.push(B.ez)
 B.b.O(o,n)}r=A.b([r,A.qF(A.aU(A.b([p,new A.ad(B.uN,A.aU(o,B.a_,B.k,B.n,0,B.z),h)],q),B.o,B.k,B.n,0,B.z),h,h,B.aE)],q)
 if(i.as)r.push(B.a03)
 return A.iP(h,B.C,A.ei(B.b7,r,B.D,B.aV,h),h,s)},

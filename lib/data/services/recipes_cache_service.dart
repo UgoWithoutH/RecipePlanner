@@ -6,6 +6,7 @@ import 'recipes_cache_split/recipes_cache_data_2.dart';
 import 'recipes_cache_split/recipes_cache_data_3.dart';
 import 'recipes_cache_split/recipes_cache_data_4.dart';
 import 'recipes_cache_split/recipes_cache_data_5.dart';
+import 'recipes_cache_split/recipes_cache_data_6.dart';
 
 // Couleurs connues pour les catégories (clé en minuscules)
 const Map<String, int> _categoryColors = {
@@ -16,7 +17,12 @@ const Map<String, int> _categoryColors = {
   'poisson': 0xFF4FC3F7,
   'salade': 0xFFAED581,
   'sandwich': 0xFFA1887F,
-  'boisson': 0xFF4DB6AC
+  'boisson': 0xFF4DB6AC,
+  'hiver': 0xFF90A4AE,        // bleu-gris froid
+  'été': 0xFFFFF176,          // jaune clair, solaire
+  'plat rapide': 0xFFB0BEC5,  // gris neutre, rapide/simple
+  'principal': 0xFFBCAAA4     // brun clair, neutre
+  // Les autres catégories spécifiques (ex: 'apéritif', 'dessert') sont ignorées car non utilisées
 };
 
 // Couleurs connues pour les types d'ingrédients (clé en minuscules)
@@ -30,7 +36,9 @@ const Map<String, int> _ingredientTypeColors = {
   'fruit': 0xFFFFB74D,
   'oeuf': 0xFF90CAF9,
   'herbe': 0xFF66BB6A,
+  'ail': 0xFFB0B48A,
   'autre': 0xFFB0BEC5,
+  'garniture': 0xFFBCAAA4
 };
 
 const int _defaultColor = 0xFFB0BEC5;
@@ -48,6 +56,7 @@ Future<void> seedRecipesCache() async {
     ...recipeCacheData3,
     ...recipeCacheData4,
     ...recipeCacheData5,
+    ...recipeCacheData6,
   ];
 
   // 1. Seed global recipes_cache if not already seeded.

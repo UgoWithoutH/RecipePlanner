@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
 
 import '../providers/auth_notifier.dart';
+import '../providers/auth_state.dart';
 
 import '../../core/constants/unit.dart';
 import '../../data/repositories/firebase_meal_plan_repository.dart';
@@ -31,6 +32,7 @@ import '../../data/repositories/group_repository.dart';
 
 import 'recipe_detail_page.dart';
 import 'meal_plan_notifications_page.dart';
+import 'admin_page.dart';
 import '../widgets/recipe_selector.dart';
 import '../widgets/pantry_input_dialog.dart';
 
@@ -2352,32 +2354,66 @@ class _PlannerPageState extends State<PlannerPage> {
                           ),
                         ),
                         Tooltip(
-                            message: 'Notifications du plan',
-                            child: Material(
-                              color: const Color(0xFF6A5AE0),
+                          message: 'Notifications du plan',
+                          child: Material(
+                            color: const Color(0xFF6A5AE0),
+                            borderRadius: BorderRadius.circular(14),
+                            child: InkWell(
                               borderRadius: BorderRadius.circular(14),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(14),
-                                onTap: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (_) => MealPlanNotificationsPage(
-                                        mealPlan: _generatedMealPlan,
-                                      ),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => MealPlanNotificationsPage(
+                                      mealPlan: _generatedMealPlan,
                                     ),
-                                  );
-                                },
-                                child: const Padding(
-                                  padding: EdgeInsets.all(10),
-                                  child: Icon(
-                                    Icons.notifications_outlined,
-                                    color: Colors.white,
-                                    size: 24,
                                   ),
+                                );
+                              },
+                              child: const Padding(
+                                padding: EdgeInsets.all(10),
+                                child: Icon(
+                                  Icons.notifications_outlined,
+                                  color: Colors.white,
+                                  size: 24,
                                 ),
                               ),
                             ),
                           ),
+                        ),
+                        const SizedBox(width: 8),
+                        Consumer(
+                          builder: (context, ref, _) {
+                            final authState = ref.watch(authNotifierProvider);
+                            if (authState is AuthAuthenticated && authState.user.role == 'admin') {
+                              return Tooltip(
+                                message: 'Administration',
+                                child: Material(
+                                  color: Colors.orange.shade700,
+                                  borderRadius: BorderRadius.circular(14),
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(14),
+                                    onTap: () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) => const AdminPage(),
+                                        ),
+                                      );
+                                    },
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(10),
+                                      child: Icon(
+                                        Icons.admin_panel_settings_outlined,
+                                        color: Colors.white,
+                                        size: 24,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }
+                            return const SizedBox.shrink();
+                          },
+                        ),
                         const SizedBox(width: 8),
                         Consumer(
                           builder: (context, ref, _) => Tooltip(

@@ -160,14 +160,20 @@ class GoogleAuthService {
     if (existingQuery.docs.isNotEmpty) {
       // Pre-existing user (e.g. seeded doc) – update name, keep document ID
       userRef = existingQuery.docs.first.reference;
+      // On ne modifie pas le rôle existant
+      await userRef.set({
+        'email': email,
+        'name': firebaseUser.displayName ?? '',
+      }, SetOptions(merge: true));
     } else {
-      // New user – create at users/{uid}
+      // New user – create at users/{uid} avec role 'user' par défaut
       userRef = _firestore.collection('users').doc(firebaseUser.uid);
+      await userRef.set({
+        'email': email,
+        'name': firebaseUser.displayName ?? '',
+        'role': 'user',
+      }, SetOptions(merge: true));
     }
-    await userRef.set({
-      'email': email,
-      'name': firebaseUser.displayName ?? '',
-    }, SetOptions(merge: true));
 
     // Step 3 – return AppUser
     final doc = await userRef.get();

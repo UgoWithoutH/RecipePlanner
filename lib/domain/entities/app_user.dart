@@ -6,11 +6,13 @@ class AppUser {
   final String uid;
   final String email;
   final String name;
+  final String role;
 
   const AppUser({
     required this.uid,
     required this.email,
     required this.name,
+    this.role = 'user',
   });
 
   /// [uid] is both the Firestore document ID and the Firebase Auth UID.
@@ -19,6 +21,7 @@ class AppUser {
       uid: uid,
       email: data['email'] as String? ?? '',
       name: data['name'] as String? ?? '',
+      role: data['role'] as String? ?? 'user',
     );
   }
 

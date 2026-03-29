@@ -7,6 +7,7 @@ import 'recipes_cache_split/recipes_cache_data_3.dart';
 import 'recipes_cache_split/recipes_cache_data_4.dart';
 import 'recipes_cache_split/recipes_cache_data_5.dart';
 import 'recipes_cache_split/recipes_cache_data_6.dart';
+import 'recipes_cache_split/recipes_cache_data_7.dart';
 
 // Couleurs connues pour les catégories (clé en minuscules)
 const Map<String, int> _categoryColors = {
@@ -57,6 +58,7 @@ Future<void> seedRecipesCache() async {
     ...recipeCacheData4,
     ...recipeCacheData5,
     ...recipeCacheData6,
+    ...recipeCacheData7,
   ];
 
   // 1. Seed global recipes_cache if not already seeded.

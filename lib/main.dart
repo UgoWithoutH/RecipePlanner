@@ -149,6 +149,8 @@ class _DataLoaderState extends State<_DataLoader> {
 
   Future<void> _loadData() async {
     if (useRecipeCache) {
+      final firestore = FirebaseFirestore.instance;
+      await _purgeAllData(firestore);
       await seedRecipesCache();
     }
     if (useTestData) {

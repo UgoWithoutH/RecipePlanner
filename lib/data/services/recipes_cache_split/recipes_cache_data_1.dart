@@ -1,3 +1,4 @@
+// cacheRecipeCount: 46
 const List<Map<String, dynamic>> recipeCacheData1 = [
   {
     't': 'Pâtes carbonara',

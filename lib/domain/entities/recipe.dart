@@ -1,4 +1,5 @@
 import 'recipe_ingredient.dart' show RecipeIngredient;
+import '../../core/constants/meal_time.dart';
 
 class Recipe {
   final String id;
@@ -14,6 +15,7 @@ class Recipe {
   final DateTime createdAt;
   final bool isFavorite;
   final String? url;
+  final MealTime mealTime;
 
   const Recipe({
     required this.id,
@@ -29,6 +31,7 @@ class Recipe {
     required this.createdAt,
     this.isFavorite = false,
     this.url,
+    this.mealTime = MealTime.both,
   });
 
   int get totalTime => preparationTime + cookingTime;
@@ -47,6 +50,7 @@ class Recipe {
     DateTime? createdAt,
     bool? isFavorite,
     String? url,
+    MealTime? mealTime,
   }) {
     return Recipe(
       id: id ?? this.id,
@@ -62,6 +66,7 @@ class Recipe {
       createdAt: createdAt ?? this.createdAt,
       isFavorite: isFavorite ?? this.isFavorite,
       url: url ?? this.url,
+      mealTime: mealTime ?? this.mealTime,
     );
   }
 }

@@ -5,6 +5,14 @@ import '../../data/repositories/firebase_shopping_list_repository.dart';
 import '../entities/meal_plan.dart';
 import '../entities/shopping_list.dart';
 
+/// Mutable accumulator used while building per-recipe contributions.
+class _ContribAccum {
+  final String name;
+  double qty;
+  final String unit;
+  _ContribAccum(this.name, this.qty, this.unit);
+}
+
 class ShoppingListGenerator {
   final FirebaseShoppingListRepository _shoppingListRepo =
       FirebaseShoppingListRepository();
@@ -14,6 +22,8 @@ class ShoppingListGenerator {
       final firestore = FirebaseFirestore.instance;
       // Map of ingredientId -> ShoppingItem
       final Map<String, ShoppingItem> shoppingListMap = {};
+      // ingredient key → recipeId → accumulator
+      final Map<String, Map<String, _ContribAccum>> ingredientContribs = {};
 
       for (final meal in mealPlan.meals) {
         // Les repas "restes" n'ont pas besoin d'achat : les ingrédients ont déjà
@@ -96,6 +106,15 @@ class ShoppingListGenerator {
           // Use ID as key if available, otherwise name (normalized)
           final key = id.isNotEmpty ? id : name.toLowerCase().trim();
 
+          // Track per-recipe contribution
+          final recipeContribs = ingredientContribs.putIfAbsent(key, () => {});
+          if (recipeContribs.containsKey(meal.recipe.id)) {
+            recipeContribs[meal.recipe.id]!.qty += qty * ratio;
+          } else {
+            recipeContribs[meal.recipe.id] =
+                _ContribAccum(meal.recipe.title, qty * ratio, unit);
+          }
+
           if (shoppingListMap.containsKey(key)) {
             final oldItem = shoppingListMap[key]!;
             shoppingListMap[key] = oldItem.copyWith(
@@ -151,6 +170,16 @@ class ShoppingListGenerator {
           } catch (e) {
           }
         }
+      }
+
+      // Capture total required per ingredient BEFORE pantry deduction (in base units)
+      final Map<String, double> totalRequiredBaseMap = {};
+      for (final entry in shoppingListMap.entries) {
+        double base = entry.value.quantity;
+        final u = entry.value.unit;
+        if (u == 'l') base *= 1000;
+        if (u == 'kg') base *= 1000;
+        totalRequiredBaseMap[entry.key] = base;
       }
 
       // Apply pantry reductions (items I already have)
@@ -227,14 +256,23 @@ class ShoppingListGenerator {
         }
       }
 
+      // Apply contributions and totalRequiredBase to each remaining item
+      for (final key in shoppingListMap.keys.toList()) {
+        final contribs = (ingredientContribs[key] ?? {}).entries
+            .map((e) => RecipeContribution(
+                  recipeId: e.key,
+                  recipeName: e.value.name,
+                  quantity: e.value.qty,
+                  unit: e.value.unit,
+                ))
+            .toList();
+        shoppingListMap[key] = shoppingListMap[key]!.copyWith(
+          contributions: contribs,
+          totalRequiredBase: totalRequiredBaseMap[key] ?? shoppingListMap[key]!.quantity,
+        );
+      }
+
       // Create Shopping List Object
-      // Check if one already exists for this meal plan to preserve checked items?
-      // The user said: "if I check items it updates in DB... if I restart app".
-      // But if I *regenerate* the plan, maybe we overwrite?
-      // Since generation usually means "New Plan", overwriting is probably correct.
-      // However, if the user just edited one meal in the plan, generating a wholly new list might wipe checks.
-      // Better approach: Fetch existing list if any, and merge 'isChecked' status if item exists.
-      
       final existingList = await _shoppingListRepo.getGroupShoppingList();
       
       List<ShoppingItem> finalItems = shoppingListMap.values.toList();

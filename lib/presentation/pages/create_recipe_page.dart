@@ -7,6 +7,8 @@ import 'package:recipe_planner/domain/entities/category.dart';
 import 'package:recipe_planner/presentation/widgets/ingredient_autocomplete.dart'
     show IngredientAutocomplete;
 import '../../core/constants/unit.dart' show Unit;
+import '../../core/constants/meal_time.dart';
+import '../../core/utils/qty_format.dart';
 import '../../domain/entities/ingredient.dart';
 import '../../domain/entities/recipe.dart';
 import '../../domain/entities/recipe_ingredient.dart';
@@ -65,6 +67,9 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   List<Category> _categories = [];
   List<String> _selectedCategoryIds = [];
 
+  // Meal time preference
+  MealTime _selectedMealTime = MealTime.both;
+
   // Ingredient Types
   List<IngredientType> _ingredientTypes = [];
   final FirebaseIngredientTypeRepository _ingredientTypeRepo =
@@ -114,6 +119,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
         setState(() => _selectedCategoryIds = List.from(r.categoryIds));
       _ingredients.addAll(r.ingredients);
       _instructions.addAll(r.instructions);
+      _selectedMealTime = r.mealTime;
       _loadExistingServings();
     }
   }
@@ -304,7 +310,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
         final pending = PendingIngredient(
           name: inputName,
           typeId: selectedTypeId,
-          quantity: double.parse(_ingredientQuantityController.text),
+          quantity: parseQty(_ingredientQuantityController.text),
           unit: _selectedIngredientUnit!,
           notes: _ingredientNotesController.text.isEmpty
               ? null
@@ -352,7 +358,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
             name: nameToUse,
             typeId: existingTypeId,
           ),
-          quantity: double.parse(_ingredientQuantityController.text),
+          quantity: parseQty(_ingredientQuantityController.text),
           unit: _selectedIngredientUnit!,
           notes: _ingredientNotesController.text.isEmpty
               ? null
@@ -373,7 +379,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   Future<void> _showEditIngredientDialog(int index) async {
     final ingredient = _ingredients[index];
     final nameController = TextEditingController(text: ingredient.ingredient.name);
-    final qtyController = TextEditingController(text: ingredient.quantity.toString());
+    final qtyController = TextEditingController(text: fmtQty(ingredient.quantity));
     final notesController = TextEditingController(text: ingredient.notes ?? '');
     Unit selectedUnit = ingredient.unit;
     String resolvedId = ingredient.ingredient.id;
@@ -500,7 +506,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                               decimal: true),
                           formatters: [
                             FilteringTextInputFormatter.allow(
-                                RegExp(r'^\d+\.?\d{0,2}'))
+                                RegExp(r'[0-9.,]'))
                           ],
                         ),
                       ),
@@ -551,8 +557,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                 TextButton(
                   onPressed: () {
                     final newName = nameController.text.trim();
-                    final newQty = double.tryParse(qtyController.text) ??
-                        ingredient.quantity;
+                    final newQty = parseQty(qtyController.text, fallback: ingredient.quantity);
                     if (newName.isEmpty) return;
                     setState(() {
                       _ingredients[index] = RecipeIngredient(
@@ -806,8 +811,12 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
 
     // Vérifier que la somme des portions utilisateurs ne dépasse pas le nombre de portions de la recette (midi et soir séparément)
     final int recipeServings = int.tryParse(_servingsController.text) ?? 0;
-    final int totalLunch = _userServings.values.fold(0, (sum, s) => sum + s.lunchServings);
-    final int totalDinner = _userServings.values.fold(0, (sum, s) => sum + s.dinnerServings);
+    final int totalLunch = _selectedMealTime == MealTime.dinnerOnly
+        ? 0
+        : _userServings.values.fold(0, (sum, s) => sum + s.lunchServings);
+    final int totalDinner = _selectedMealTime == MealTime.lunchOnly
+        ? 0
+        : _userServings.values.fold(0, (sum, s) => sum + s.dinnerServings);
     if (totalLunch > recipeServings || totalDinner > recipeServings) {
       final List<String> overflowParts = [];
       if (totalLunch > recipeServings) {
@@ -865,6 +874,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
         ingredients: _ingredients,
         instructions: _instructions,
         createdAt: widget.recipe?.createdAt ?? DateTime.now(),
+        mealTime: _selectedMealTime,
       );
 
       if (widget.recipe == null) {
@@ -1307,7 +1317,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                                     ],
                                     const SizedBox(width: 8),
                                     Text(
-                                      '- ${ingredient.quantity} ${ingredient.unit.label}',
+                                      '- ${fmtQty(ingredient.quantity)} ${ingredient.unit.label}',
                                       style: GoogleFonts.poppins(
                                         color: Colors.grey[600],
                                       ),
@@ -1378,9 +1388,9 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   }) {
     List<TextInputFormatter>? inputFormatters;
     if (inputType == TextInputType.number) {
-      // Allow decimals for ingredient quantity
+      // Allow decimals with comma or dot for ingredient quantity
       inputFormatters = [
-        FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
+        FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
       ];
     }
     return Container(
@@ -1516,6 +1526,80 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     );
   }
 
+  Widget _buildMealTimeSelectorSection() {
+    const purple = Color(0xFF6A5AE0);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 32),
+        Text(
+          'Moment du repas',
+          style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Définit quand cette recette peut être planifiée',
+          style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[500]),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: MealTime.values.map((mt) {
+            final selected = _selectedMealTime == mt;
+            final icon = mt == MealTime.lunchOnly
+                ? Icons.wb_sunny_rounded
+                : mt == MealTime.dinnerOnly
+                    ? Icons.nights_stay_rounded
+                    : Icons.today_rounded;
+            final color = mt == MealTime.lunchOnly
+                ? Colors.orange.shade700
+                : mt == MealTime.dinnerOnly
+                    ? const Color(0xFF5C6BC0)
+                    : purple;
+            return Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _selectedMealTime = mt;
+                    });
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: selected ? color.withOpacity(0.12) : Colors.grey[50],
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: selected ? color : Colors.grey.shade200,
+                        width: selected ? 1.8 : 1,
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        Icon(icon, size: 20, color: selected ? color : Colors.grey[400]),
+                        const SizedBox(height: 4),
+                        Text(
+                          mt.shortLabel,
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.poppins(
+                            fontSize: 11,
+                            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                            color: selected ? color : Colors.grey[500],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
   Widget _buildUserServingsSection() {
     if (_users.isEmpty) return const SizedBox.shrink();
 
@@ -1532,8 +1616,12 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
           children: _users.map((user) {
             // Si la recette est en création (pas d'id), on met 1 par défaut
             final isNewRecipe = widget.recipe == null;
-            final lunchDefault = isNewRecipe ? 1 : (_userServings[user.id]?.lunchServings ?? 0);
-            final dinnerDefault = isNewRecipe ? 1 : (_userServings[user.id]?.dinnerServings ?? 0);
+            final lunchDefault = _selectedMealTime == MealTime.dinnerOnly
+                ? 0
+                : isNewRecipe ? 1 : (_userServings[user.id]?.lunchServings ?? 0);
+            final dinnerDefault = _selectedMealTime == MealTime.lunchOnly
+                ? 0
+                : isNewRecipe ? 1 : (_userServings[user.id]?.dinnerServings ?? 0);
             final lunchController = TextEditingController(
               text: lunchDefault.toString(),
             );
@@ -1550,8 +1638,8 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
               _userServings[user.id] = UserRecipeServing(
                 userId: user.id,
                 recipeId: '',
-                lunchServings: 1,
-                dinnerServings: 1,
+                lunchServings: _selectedMealTime == MealTime.dinnerOnly ? 0 : 1,
+                dinnerServings: _selectedMealTime == MealTime.lunchOnly ? 0 : 1,
                 userName: user.name,
                 recipeTitle: _titleController.text.trim(),
               );
@@ -1597,41 +1685,53 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                   ),
 
                   // Lunch Input
-                  _buildServingInput(
-                    lunchController,
-                    Icons.wb_sunny_rounded,
-                    Colors.orange,
-                    (v) {
-                      final existing = _userServings[user.id];
-                      _userServings[user.id] = UserRecipeServing(
-                        userId: user.id,
-                        recipeId: widget.recipe?.id ?? '',
-                        lunchServings:
-                            int.tryParse(v) ?? existing?.lunchServings ?? 1,
-                        dinnerServings: existing?.dinnerServings ?? 1,
-                        userName: user.name,
-                        recipeTitle: _titleController.text.trim(),
-                      );
-                    },
+                  Opacity(
+                    opacity: _selectedMealTime == MealTime.dinnerOnly ? 0.3 : 1.0,
+                    child: IgnorePointer(
+                      ignoring: _selectedMealTime == MealTime.dinnerOnly,
+                      child: _buildServingInput(
+                        lunchController,
+                        Icons.wb_sunny_rounded,
+                        Colors.orange,
+                        (v) {
+                          final existing = _userServings[user.id];
+                          _userServings[user.id] = UserRecipeServing(
+                            userId: user.id,
+                            recipeId: widget.recipe?.id ?? '',
+                            lunchServings:
+                                int.tryParse(v) ?? existing?.lunchServings ?? 1,
+                            dinnerServings: existing?.dinnerServings ?? 1,
+                            userName: user.name,
+                            recipeTitle: _titleController.text.trim(),
+                          );
+                        },
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 8),
                   // Dinner Input
-                  _buildServingInput(
-                    dinnerController,
-                    Icons.nights_stay_rounded,
-                    const Color(0xFF5C6BC0),
-                    (v) {
-                      final existing = _userServings[user.id];
-                      _userServings[user.id] = UserRecipeServing(
-                        userId: user.id,
-                        recipeId: widget.recipe?.id ?? '',
-                        lunchServings: existing?.lunchServings ?? 1,
-                        dinnerServings:
-                            int.tryParse(v) ?? existing?.dinnerServings ?? 1,
-                        userName: user.name,
-                        recipeTitle: _titleController.text.trim(),
-                      );
-                    },
+                  Opacity(
+                    opacity: _selectedMealTime == MealTime.lunchOnly ? 0.3 : 1.0,
+                    child: IgnorePointer(
+                      ignoring: _selectedMealTime == MealTime.lunchOnly,
+                      child: _buildServingInput(
+                        dinnerController,
+                        Icons.nights_stay_rounded,
+                        const Color(0xFF5C6BC0),
+                        (v) {
+                          final existing = _userServings[user.id];
+                          _userServings[user.id] = UserRecipeServing(
+                            userId: user.id,
+                            recipeId: widget.recipe?.id ?? '',
+                            lunchServings: existing?.lunchServings ?? 1,
+                            dinnerServings:
+                                int.tryParse(v) ?? existing?.dinnerServings ?? 1,
+                            userName: user.name,
+                            recipeTitle: _titleController.text.trim(),
+                          );
+                        },
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -1797,6 +1897,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                               _buildIngredientsSection(),
                               const SizedBox(height: 32),
                               _buildInstructionsSection(),
+                              _buildMealTimeSelectorSection(),
                               _buildUserServingsSection(),
                             ],
                           ),

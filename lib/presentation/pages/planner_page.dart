@@ -10,14 +10,12 @@ import 'package:table_calendar/table_calendar.dart';
 import '../providers/auth_notifier.dart';
 import '../providers/auth_state.dart';
 
-import '../../core/constants/unit.dart';
 import '../../data/repositories/firebase_meal_plan_repository.dart';
 import '../../data/repositories/firebase_meal_history_repository.dart';
 import '../../data/repositories/firebase_user_recipe_serving_repository.dart';
 import '../../data/repositories/notification_settings_repository.dart';
 import '../../data/services/notification_service.dart';
 
-import '../../domain/entities/ingredient.dart';
 import '../../domain/entities/meal_plan.dart';
 import '../../domain/entities/recipe.dart';
 import '../../domain/entities/recipe_ingredient.dart';
@@ -28,7 +26,11 @@ import '../../domain/usecases/shopping_list_generator.dart';
 import '../../core/utils/ingredient_name_cache.dart';
 import '../../data/repositories/firebase_recipe_repository.dart';
 import '../../data/repositories/firebase_user_repository.dart';
+import '../../data/repositories/firebase_pantry_repository.dart';
+import '../../data/repositories/firebase_pantry_snapshot_repository.dart';
 import '../../data/repositories/group_repository.dart';
+import '../../domain/entities/pantry_item.dart';
+import '../../core/utils/qty_format.dart';
 
 import 'recipe_detail_page.dart';
 import 'meal_plan_notifications_page.dart';
@@ -49,6 +51,7 @@ class _PlannerPageState extends State<PlannerPage> {
   final FirebaseMealPlanRepository _mealPlanRepo = FirebaseMealPlanRepository();
   final FirebaseMealHistoryRepository _historyRepo =
       FirebaseMealHistoryRepository();
+  final FirebaseRecipeRepository _recipeRepo = FirebaseRecipeRepository();
 
   int _maxHistoryDays = 30; // Default value, recalculated based on recipe count
 
@@ -56,6 +59,8 @@ class _PlannerPageState extends State<PlannerPage> {
   int? _selectedDuration = 7;
   Set<String> _selectedCategories = {}; // category IDs
   List<RecipeIngredient> _pantryIngredients = [];
+  Set<String> _urgentPantryNames = {};
+  List<PantrySnapshotItem> _pantrySnapshot = [];
   
   // Stores ID -> {name, color}
   Map<String, Map<String, dynamic>> _categoryDataById = {};
@@ -95,6 +100,24 @@ class _PlannerPageState extends State<PlannerPage> {
     _loadAllCategories();
     _loadSavedPreferences();
     _loadMostRecentMealPlanAndHistory();
+    _loadPantryFromRepository();
+  }
+
+  Future<void> _loadPantryFromRepository() async {
+    try {
+      final items = await FirebasePantryRepository.instance.getAll();
+      if (!mounted) return;
+      setState(() {
+        _pantryIngredients =
+            items.map((i) => i.toRecipeIngredient()).toList();
+        _urgentPantryNames = items
+            .where((i) => i.isUrgent)
+            .map((i) => i.name)
+            .toSet();
+      });
+    } catch (_) {
+      // Silently fall back to plan-stored items if repository is unavailable.
+    }
   }
 
   Future<void> _loadAllCategories() async {
@@ -191,9 +214,9 @@ class _PlannerPageState extends State<PlannerPage> {
         if (loadedPlan.selectedCategories.isNotEmpty) {
           _selectedCategories = loadedPlan.selectedCategories.toSet();
         }
-        if (loadedPlan.pantryItems.isNotEmpty) {
-          _pantryIngredients = List.from(loadedPlan.pantryItems);
-        }
+        // Note: pantry items are loaded from the dedicated pantry repository
+        // (_loadPantryFromRepository), not from the plan snapshot, so that
+        // the header always reflects the current fridge/pantry state.
 
         // Set today as selected if it is within the plan range
         final today = DateTime.now();
@@ -202,9 +225,15 @@ class _PlannerPageState extends State<PlannerPage> {
           Duration(days: _generatedMealPlan!.durationDays - 1),
         );
         if (!today.isBefore(planStart) && !today.isAfter(planEnd)) {
+          // Aujourd'hui est dans la plage du plan
           _selectedMealDate = today;
           _focusedDay = today;
+        } else if (today.isAfter(planEnd)) {
+          // Plan terminé - se positionner sur le dernier jour
+          _selectedMealDate = planEnd;
+          _focusedDay = planEnd;
         } else {
+          // Plan pas encore démarré - se positionner sur le premier jour
           _selectedMealDate = planStart;
           _focusedDay = planStart;
         }
@@ -216,10 +245,23 @@ class _PlannerPageState extends State<PlannerPage> {
         );
         // Planifie silencieusement les notifications (pour tous les utilisateurs)
         _autoScheduleNotifications(loadedPlan).ignore();
+
+        // Charger le snapshot frigo/placard figé de ce plan
+        try {
+          final snapshot = await FirebasePantrySnapshotRepository.instance.get();
+          if (mounted) setState(() => _pantrySnapshot = snapshot);
+        } catch (_) {}
       }
       // Load history into state (stubs are fine here; detail page lazy-loads)
       final rawHistory = await _historyRepo.getHistory();
       _mealHistory = rawHistory;
+      // History-only mode: if no plan loaded, initialise selected date from history
+      if (_generatedMealPlan == null && rawHistory.isNotEmpty && _selectedMealDate == null) {
+        final sortedDates = rawHistory.keys.toList()..sort((a, b) => b.compareTo(a));
+        _selectedMealDate = sortedDates.first;
+        _focusedDay = sortedDates.first;
+        _calendarFormat = CalendarFormat.month;
+      }
       setState(() {});
     } finally {
       setState(() => _isLoading = false);
@@ -610,6 +652,313 @@ class _PlannerPageState extends State<PlannerPage> {
     }
   }
 
+  void _showPantrySnapshotDialog() {
+    if (_pantrySnapshot.isEmpty) return;
+
+    // Grouper par catégorie, urgents d'abord
+    final urgent = _pantrySnapshot.where((i) => i.isUrgent).toList();
+    final normal = _pantrySnapshot.where((i) => !i.isUrgent).toList();
+
+    Map<String, List<PantrySnapshotItem>> _group(List<PantrySnapshotItem> items) {
+      final m = <String, List<PantrySnapshotItem>>{};
+      for (final i in items) {
+        final k = i.typeName.isNotEmpty ? i.typeName : 'Autre';
+        m.putIfAbsent(k, () => []).add(i);
+      }
+      for (final k in m.keys) {
+        m[k]!.sort((a, b) => a.name.compareTo(b.name));
+      }
+      return m;
+    }
+
+    List<String> _sortedKeys(Map<String, List<PantrySnapshotItem>> g) =>
+        g.keys.toList()
+          ..sort((a, b) {
+            if (a == 'Autre') return 1;
+            if (b == 'Autre') return -1;
+            return a.compareTo(b);
+          });
+
+    final urgentGroups = _group(urgent);
+    final normalGroups = _group(normal);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.55,
+        minChildSize: 0.35,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (_, controller) => Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    const Icon(Icons.kitchen_rounded, color: Color(0xFF6A5AE0), size: 22),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Frigo / Placard de ce plan',
+                      style: GoogleFonts.poppins(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF1A1A1A),
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${_pantrySnapshot.length} article${_pantrySnapshot.length > 1 ? 's' : ''}',
+                        style: GoogleFonts.poppins(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF6A5AE0),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 4),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  'Snapshot figé au moment de la génération du plan',
+                  style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[400]),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView(
+                  controller: controller,
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                  children: [
+                      if (urgent.isNotEmpty) ...[
+                      _buildSnapshotSuperLabel('🔥 Urgents', Colors.orange.shade700),
+                      for (final key in _sortedKeys(urgentGroups)) ...[
+                        _buildSnapshotCategoryLabel(key),
+                        ...urgentGroups[key]!.map(_buildSnapshotItemRow),
+                      ],
+                      const SizedBox(height: 8),
+                    ],
+                    if (normal.isNotEmpty) ...[
+                      if (urgent.isNotEmpty)
+                        _buildSnapshotSuperLabel('Normaux', const Color(0xFF6A5AE0)),
+                      for (final key in _sortedKeys(normalGroups)) ...[
+                        _buildSnapshotCategoryLabel(key),
+                        ...normalGroups[key]!.map(_buildSnapshotItemRow),
+                      ],
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Affiche le contenu ACTUEL du pantry (utilisé depuis la modale nouveau plan).
+  void _showCurrentPantryDialog() {
+    final items = _pantryIngredients;
+    if (items.isEmpty) return;
+
+    final urgentNames = _urgentPantryNames;
+
+    final urgentList = items.where((i) => urgentNames.contains(i.ingredient.name)).toList()
+      ..sort((a, b) => a.ingredient.name.compareTo(b.ingredient.name));
+    final normalList = items.where((i) => !urgentNames.contains(i.ingredient.name)).toList()
+      ..sort((a, b) => a.ingredient.name.compareTo(b.ingredient.name));
+
+    Widget buildRow(RecipeIngredient item, bool isUrgent) => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+      child: Row(
+        children: [
+          if (isUrgent)
+            const Text('🔥', style: TextStyle(fontSize: 13))
+          else
+            Icon(Icons.circle, size: 6, color: Colors.grey[300]),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              item.ingredient.name,
+              style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w500),
+            ),
+          ),
+          Text(
+            '${fmtQty(item.quantity)} ${item.unit.label}',
+            style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[500]),
+          ),
+        ],
+      ),
+    );
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.55,
+        minChildSize: 0.35,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (_, controller) => Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    const Icon(Icons.kitchen_rounded, color: Color(0xFF6A5AE0), size: 22),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Frigo / Placard',
+                      style: GoogleFonts.poppins(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF1A1A1A),
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${items.length} article${items.length > 1 ? 's' : ''}',
+                        style: GoogleFonts.poppins(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF6A5AE0),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 4),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  'État actuel du frigo/placard',
+                  style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[400]),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView(
+                  controller: controller,
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                  children: [
+                    if (urgentList.isNotEmpty) ...[
+                      _buildSnapshotSuperLabel('🔥 Urgents', Colors.orange.shade700),
+                      ...urgentList.map((i) => buildRow(i, true)),
+                      const SizedBox(height: 8),
+                    ],
+                    if (normalList.isNotEmpty) ...[
+                      if (urgentList.isNotEmpty)
+                        _buildSnapshotSuperLabel('Normaux', const Color(0xFF6A5AE0)),
+                      ...normalList.map((i) => buildRow(i, false)),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSnapshotSuperLabel(String label, Color color) => Padding(
+    padding: const EdgeInsets.only(top: 4, bottom: 6),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.35)),
+      ),
+      child: Text(
+        label,
+        style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w700, color: color),
+      ),
+    ),
+  );
+
+  Widget _buildSnapshotCategoryLabel(String label) => Padding(
+    padding: const EdgeInsets.only(left: 4, top: 8, bottom: 6),
+    child: Row(
+      children: [
+        Container(width: 3, height: 13, decoration: BoxDecoration(color: const Color(0xFF6A5AE0), borderRadius: BorderRadius.circular(2))),
+        const SizedBox(width: 8),
+        Text(label, style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: const Color(0xFF6A5AE0))),
+      ],
+    ),
+  );
+
+  Widget _buildSnapshotItemRow(PantrySnapshotItem item) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+    child: Row(
+      children: [
+        if (item.isUrgent)
+          const Text('🔥', style: TextStyle(fontSize: 13))
+        else
+          Icon(Icons.circle, size: 6, color: Colors.grey[300]),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            item.name,
+            style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w500),
+          ),
+        ),
+        Text(
+          '${fmtQty(item.quantity)} ${item.unit.label}',
+          style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[500]),
+        ),
+      ],
+    ),
+  );
+
   Future<void> _pickPantryItems({VoidCallback? onUpdated}) async {
     final result = await showDialog<List<RecipeIngredient>>(
       context: context,
@@ -621,9 +970,32 @@ class _PlannerPageState extends State<PlannerPage> {
       setState(() {
         _pantryIngredients = result;
       });
+      // Sync changes back to the pantry repository.
+      _syncPantryToRepository(result).ignore();
       if (onUpdated != null) {
         onUpdated();
       }
+    }
+  }
+
+  /// Replaces all pantry items in the repository with the provided list.
+  Future<void> _syncPantryToRepository(List<RecipeIngredient> items) async {
+    try {
+      final repo = FirebasePantryRepository.instance;
+      await repo.deleteAll();
+      for (final ri in items) {
+        await repo.save(PantryItem(
+          id: '',
+          name: ri.ingredient.name,
+          ingredientId: ri.ingredient.id,
+          quantity: ri.quantity,
+          unit: ri.unit,
+          isUrgent: false,
+          updatedAt: DateTime.now(),
+        ));
+      }
+    } catch (_) {
+      // Sync is best-effort; do not disrupt the planning flow.
     }
   }
 
@@ -785,6 +1157,141 @@ class _PlannerPageState extends State<PlannerPage> {
     );
   }
 
+  Future<void> _deletePlan() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+        contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.delete_outline_rounded, color: Colors.red, size: 22),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Supprimer le plan',
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Le plan de repas actuel sera supprimé définitivement. L\'historique ne sera pas affecté.',
+          style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            style: TextButton.styleFrom(foregroundColor: Colors.black54),
+            child: Text('Annuler', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              elevation: 0,
+            ),
+            child: Text('Supprimer', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    setState(() => _isLoading = true);
+    try {
+      await _mealPlanRepo.deleteMealPlan(_generatedMealPlan!.id);
+      await FirebasePantrySnapshotRepository.instance.delete();
+      final historyDates = _mealHistory.keys.toList()..sort((a, b) => b.compareTo(a));
+      setState(() {
+        _generatedMealPlan = null;
+        _pantrySnapshot = [];
+        _calendarFormat = null;
+        _selectedMealDate = historyDates.isNotEmpty ? historyDates.first : null;
+        _focusedDay = historyDates.isNotEmpty ? historyDates.first : DateTime.now();
+      });
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _deleteHistory() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+        contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.history_toggle_off_rounded, color: Colors.red, size: 22),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Supprimer l\'historique',
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Tout l\'historique des repas passés sera supprimé définitivement.',
+          style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            style: TextButton.styleFrom(foregroundColor: Colors.black54),
+            child: Text('Annuler', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              elevation: 0,
+            ),
+            child: Text('Supprimer', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    setState(() => _isLoading = true);
+    try {
+      await _historyRepo.clearAllHistory();
+      setState(() {
+        _mealHistory = {};
+        if (_generatedMealPlan == null) {
+          _selectedMealDate = null;
+        }
+      });
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _launchPlanning() async {
     if (_selectedStartDate == null || _selectedDuration == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -900,6 +1407,7 @@ class _PlannerPageState extends State<PlannerPage> {
         durationDays: _selectedDuration!,
         recentMeals: filteredHistoryMeals,
         pantryItems: _pantryIngredients,
+        urgentPantryIngredientNames: _urgentPantryNames,
         selectedCategories: _selectedCategories.toList(),
         leftoverUserOrder: _generatedMealPlan?.leftoverUserOrder ?? [],
       );
@@ -913,6 +1421,17 @@ class _PlannerPageState extends State<PlannerPage> {
 
       // Automatic plan saving
       final savedId = await _saveMealPlan(plan);
+
+      // Figer le snapshot frigo/placard pour ce plan
+      final currentPantryItems = await FirebasePantryRepository.instance.getAll();
+      await FirebasePantrySnapshotRepository.instance.save(currentPantryItems);
+      if (mounted) {
+        setState(() {
+          _pantrySnapshot = currentPantryItems
+              .map(PantrySnapshotItem.fromPantryItem)
+              .toList();
+        });
+      }
 
       // Update the plan with the saved ID
       setState(() {
@@ -1550,7 +2069,180 @@ class _PlannerPageState extends State<PlannerPage> {
     }
   }
 
+  /// Affiche un dialog de confirmation pour modifier le frigo/placard.
+  /// Retourne true si l'utilisateur accepte, false/null sinon.
+  Future<bool?> _showPantryModificationDialog({
+    required String title,
+    required String message,
+    required String confirmLabel,
+    required IconData icon,
+    required Color color,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+        contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color, size: 22),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                title,
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          message,
+          style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            style: TextButton.styleFrom(foregroundColor: Colors.black54),
+            child: Text('Non', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: color,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              elevation: 0,
+            ),
+            child: Text(confirmLabel, style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _deleteMeal(Meal mealToDelete) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final mealDate = DateTime(
+        mealToDelete.date.year, mealToDelete.date.month, mealToDelete.date.day);
+    final isHistory = mealDate.isBefore(today);
+
+    if (isHistory) {
+      // ── Suppression d'un repas historisé ──
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+          contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF6A5AE0).withOpacity(0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.delete_outline, color: Color(0xFF6A5AE0), size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Supprimer de l\'historique ?',
+                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            'Voulez-vous retirer "${mealToDelete.recipe.title}" de l\'historique ?',
+            style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              style: TextButton.styleFrom(foregroundColor: Colors.black54),
+              child: Text('Annuler', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF6A5AE0),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                elevation: 0,
+              ),
+              child: Text('Supprimer', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+
+      setState(() => _isLoading = true);
+      try {
+        // Mettre à jour l'historique local + Firestore
+        final historyMeals = List<Meal>.from(_mealHistory[mealDate] ?? []);
+        historyMeals.removeWhere((m) =>
+            m.date.year == mealToDelete.date.year &&
+            m.date.month == mealToDelete.date.month &&
+            m.date.day == mealToDelete.date.day &&
+            m.type == mealToDelete.type &&
+            m.recipe.id == mealToDelete.recipe.id);
+
+        if (historyMeals.isEmpty) {
+          _mealHistory.remove(mealDate);
+          await _historyRepo.deleteDayFromHistory(mealDate);
+        } else {
+          _mealHistory[mealDate] = historyMeals;
+          await _historyRepo.addDayToHistory(mealDate, historyMeals);
+        }
+        setState(() {});
+      } finally {
+        setState(() => _isLoading = false);
+      }
+
+      if (!mounted) return;
+      // Proposer de remettre les ingrédients dans le frigo/placard
+      final restorePantry = await _showPantryModificationDialog(
+        title: 'Remettre dans le frigo/placard ?',
+        message:
+            'Ce plat n\'a pas été cuisiné. Voulez-vous remettre les ingrédients de "${mealToDelete.recipe.title}" dans le frigo/placard ?',
+        confirmLabel: 'Oui, remettre',
+        icon: Icons.kitchen_rounded,
+        color: const Color(0xFF6A5AE0),
+      );
+
+      if (restorePantry == true) {
+        setState(() => _isLoading = true);
+        try {
+          final fullRecipe =
+              await _recipeRepo.fetchRecipeById(mealToDelete.recipe.id);
+          if (fullRecipe != null) {
+            final mealWithIngredients = mealToDelete.copyWith(recipe: fullRecipe);
+            await FirebasePantryRepository.instance
+                .restoreFromMeals([mealWithIngredients]);
+            await _loadPantryFromRepository();
+          }
+        } finally {
+          setState(() => _isLoading = false);
+        }
+      }
+      return;
+    }
+
     if (_generatedMealPlan == null) return;
 
     // Vérifie si une deuxième occurrence (restes) existe le lendemain
@@ -1781,6 +2473,39 @@ class _PlannerPageState extends State<PlannerPage> {
             elevation: 4,
           ),
         );
+
+        // Proposer de déduire les ingrédients du nouveau plat du frigo/placard
+        if (!mounted) return;
+        final deductPantry = await _showPantryModificationDialog(
+          title: 'Déduire du frigo/placard ?',
+          message:
+              'Voulez-vous déduire les ingrédients de "${newRecipe.title}" du frigo/placard ? (vous avez cuisiné ce plat à la place)',
+          confirmLabel: 'Oui, déduire',
+          icon: Icons.kitchen_rounded,
+          color: const Color(0xFF6A5AE0),
+        );
+        if (deductPantry == true) {
+          setState(() => _isLoading = true);
+          try {
+            final fullRecipe = await _recipeRepo.fetchRecipeById(newRecipe.id);
+            if (fullRecipe != null) {
+              final newMeal = Meal(
+                recipe: fullRecipe,
+                date: mealToUpdate.date,
+                type: mealToUpdate.type,
+                totalServings: fullRecipe.servings,
+                userServings: {},
+                recipeMultiplier: 1,
+                isLeftoverMeal: false,
+                userSelected: true,
+              );
+              await FirebasePantryRepository.instance.deductFromMeals([newMeal]);
+              await _loadPantryFromRepository();
+            }
+          } finally {
+            setState(() => _isLoading = false);
+          }
+        }
         return;
       }
 
@@ -2201,52 +2926,50 @@ class _PlannerPageState extends State<PlannerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      floatingActionButton: _generatedMealPlan == null
-          ? null
-          : Padding(
-              padding: const EdgeInsets.only(bottom: 16, right: 16),
-              child: Material(
-                elevation: 6,
-                borderRadius: BorderRadius.circular(24),
-                child: InkWell(
-                  onTap: () {
-                    showModalBottomSheet(
-                      context: context,
-                      isScrollControlled: true,
-                      backgroundColor: Colors.transparent,
-                      builder: (_) => StatefulBuilder(
-                        builder: (builderContext, setModalState) => Container(
-                          padding: EdgeInsets.only(
-                            bottom: MediaQuery.of(
-                              builderContext,
-                            ).viewInsets.bottom,
-                          ),
-                          decoration: const BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.only(
-                              topLeft: Radius.circular(24),
-                              topRight: Radius.circular(24),
-                            ),
-                          ),
-                          child: SingleChildScrollView(
-                            padding: const EdgeInsets.all(24),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Center(
-                                        child: Container(
-                                          width: 40,
-                                          height: 4,
-                                          decoration: BoxDecoration(
-                                            color: Colors.grey[300],
-                                            borderRadius: BorderRadius.circular(2),
-                                          ),
-                                        ),
-                                      ),
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 16, right: 16),
+        child: Material(
+          elevation: 6,
+          borderRadius: BorderRadius.circular(24),
+          child: InkWell(
+            onTap: () {
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: Colors.transparent,
+                builder: (_) => StatefulBuilder(
+                  builder: (builderContext, setModalState) => Container(
+                    padding: EdgeInsets.only(
+                      bottom: MediaQuery.of(
+                        builderContext,
+                      ).viewInsets.bottom,
+                    ),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(24),
+                        topRight: Radius.circular(24),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Center(
+                                  child: Container(
+                                    width: 40,
+                                    height: 4,
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey[300],
+                                      borderRadius: BorderRadius.circular(2),
                                     ),
+                                  ),
+                                ),
+                              ),
                                     IconButton(
                                       icon: const Icon(Icons.close_rounded, color: Colors.black45),
                                       onPressed: () => Navigator.pop(builderContext),
@@ -2259,7 +2982,13 @@ class _PlannerPageState extends State<PlannerPage> {
                                   selectedDuration: _selectedDuration,
                                   selectedCategories: _selectedCategories,
                                   categoryDataById: _categoryDataById,
-                                  pantryIngredients: _pantryIngredients,
+                                  pantryCount: _pantryIngredients.length,
+                                  urgentCount: _urgentPantryNames.length,
+                                  pantrySnapshot: _pantrySnapshot,
+                                  onViewPantrySnapshot: () {
+                                    Navigator.pop(context);
+                                    _showCurrentPantryDialog();
+                                  },
                                   onPickStartDate: () {
                                     _pickStartDate(onDatePicked: () => setModalState(() {}));
                                   },
@@ -2270,9 +2999,6 @@ class _PlannerPageState extends State<PlannerPage> {
                                   },
                                   onPickCategories: () {
                                     _pickCategories(onUpdated: () => setModalState(() {}));
-                                  },
-                                  onPickPantry: () {
-                                    _pickPantryItems(onUpdated: () => setModalState(() {}));
                                   },
                                   onLaunchPlanning: () {
                                     Navigator.pop(context);
@@ -2516,14 +3242,21 @@ class _PlannerPageState extends State<PlannerPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (_generatedMealPlan == null && !_isLoading) ...[
-                        const SizedBox(height: 40),
-                        Center(
-                          child: _ModernPlannerHeader(
+                        SizedBox(height: _mealHistory.isEmpty ? 40 : 16),
+                        Builder(builder: (context) {
+                          final header = _ModernPlannerHeader(
                             selectedStartDate: _selectedStartDate,
                             selectedDuration: _selectedDuration,
                             selectedCategories: _selectedCategories,
                             categoryDataById: _categoryDataById,
-                            pantryIngredients: _pantryIngredients,
+                            pantryCount: _pantryIngredients.length,
+                            urgentCount: _urgentPantryNames.length,
+                            pantrySnapshot: _pantrySnapshot,
+                            onViewPantrySnapshot: _pantrySnapshot.isNotEmpty
+                                ? _showPantrySnapshotDialog
+                                : _pantryIngredients.isNotEmpty
+                                    ? _showCurrentPantryDialog
+                                    : null,
                             onPickStartDate: () {
                               _pickStartDate(onDatePicked: () => setState(() {}));
                             },
@@ -2533,125 +3266,174 @@ class _PlannerPageState extends State<PlannerPage> {
                             onPickCategories: () {
                               _pickCategories(onUpdated: () => setState(() {}));
                             },
-                            onPickPantry: () {
-                              _pickPantryItems(onUpdated: () => setState(() {}));
-                            },
                             onLaunchPlanning: _launchPlanning,
                             isLoading: _isLoading,
-                          ),
-                        ),
-                        const SizedBox(height: 40),
+                          );
+                          return _mealHistory.isEmpty ? Center(child: header) : header;
+                        }),
+                        SizedBox(height: _mealHistory.isEmpty ? 40 : 12),
                       ],
-                      if (_generatedMealPlan != null) ...[
+                      if (_generatedMealPlan != null || _mealHistory.isNotEmpty) ...[
                         const SizedBox(height: 16),
-                        _buildPlanMetadata(),
-                        const SizedBox(height: 12),
+                        if (_generatedMealPlan != null) ...[
+                          _buildPlanMetadata(),
+                          const SizedBox(height: 12),
+                        ],
                         _buildModernCalendar(),
                         const SizedBox(height: 12),
-                        // ── Zone multi-shuffle ──
-                        if (!_isMultiShuffleMode)
-                          // Mode inactif : bouton "Regénérer plusieurs repas"
-                          SizedBox(
-                            width: double.infinity,
-                            child: OutlinedButton.icon(
-                              onPressed: () => setState(() => _isMultiShuffleMode = true),
-                              icon: const Icon(Icons.autorenew, size: 18),
-                              label: Text(
-                                'Regénérer plusieurs repas',
-                                style: GoogleFonts.poppins(
-                                    fontWeight: FontWeight.w600, fontSize: 13),
-                              ),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: const Color(0xFFFF9800),
-                                side: BorderSide(color: const Color(0xFFFF9800).withOpacity(0.6)),
-                                padding: const EdgeInsets.symmetric(vertical: 11),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12)),
-                              ),
-                            ),
-                          )
-                        else
-                          // Mode actif : carte avec instruction + boutons côte à côte
-                          Container(
-                            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFFF8F0),
-                              border: Border.all(
-                                  color: const Color(0xFFFF9800).withOpacity(0.5)),
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Row(
-                                  children: [
-                                    const Icon(Icons.touch_app_rounded,
-                                        color: Color(0xFFFF9800), size: 16),
-                                    const SizedBox(width: 6),
-                                    Expanded(
-                                      child: Text(
-                                        'Touchez les repas à conserver, puis regénérez les autres',
-                                        style: GoogleFonts.poppins(
-                                          fontSize: 12,
-                                          color: Colors.grey[700],
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                        // ── Boutons supprimer ──
+                        Row(
+                          children: [
+                            if (_generatedMealPlan != null) ...[
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: _deletePlan,
+                                  icon: const Icon(Icons.delete_outline_rounded, size: 15),
+                                  label: Text(
+                                    'Supprimer le plan',
+                                    style: GoogleFonts.poppins(
+                                        fontWeight: FontWeight.w600, fontSize: 13),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.red.shade600,
+                                    side: BorderSide(color: Colors.red.shade200),
+                                    padding: const EdgeInsets.symmetric(vertical: 11),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12)),
+                                  ),
                                 ),
-                                const SizedBox(height: 10),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: OutlinedButton.icon(
-                                        onPressed: () => setState(() {
-                                          _isMultiShuffleMode = false;
-                                          _multiShuffleKeptSlots.clear();
-                                        }),
-                                        icon: const Icon(Icons.close_rounded, size: 15),
-                                        label: Text('Annuler',
-                                            style: GoogleFonts.poppins(
-                                                fontWeight: FontWeight.w600,
-                                                fontSize: 13)),
-                                        style: OutlinedButton.styleFrom(
-                                          foregroundColor: Colors.grey[700],
-                                          side: BorderSide(color: Colors.grey.shade400),
-                                          padding:
-                                              const EdgeInsets.symmetric(vertical: 11),
-                                          shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(12)),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      flex: 2,
-                                      child: ElevatedButton.icon(
-                                        onPressed: _launchMultiShuffle,
-                                        icon: const Icon(Icons.autorenew, size: 15),
-                                        label: Text('Regénérer les autres',
-                                            style: GoogleFonts.poppins(
-                                                fontWeight: FontWeight.w600,
-                                                fontSize: 13)),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(0xFFFF9800),
-                                          foregroundColor: Colors.white,
-                                          padding:
-                                              const EdgeInsets.symmetric(vertical: 11),
-                                          elevation: 0,
-                                          shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(12)),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                              ),
+                              if (_mealHistory.isNotEmpty) const SizedBox(width: 8),
+                            ],
+                            if (_mealHistory.isNotEmpty)
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: _deleteHistory,
+                                  icon: const Icon(Icons.history_toggle_off_rounded, size: 15),
+                                  label: Text(
+                                    'Supprimer l\'historique',
+                                    style: GoogleFonts.poppins(
+                                        fontWeight: FontWeight.w600, fontSize: 13),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.red.shade600,
+                                    side: BorderSide(color: Colors.red.shade200),
+                                    padding: const EdgeInsets.symmetric(vertical: 11),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12)),
+                                  ),
                                 ),
-                              ],
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        // ── Zone multi-shuffle (plan uniquement) ──
+                        if (_generatedMealPlan != null) ...[
+                          if (!_isMultiShuffleMode)
+                            // Mode inactif : bouton "Regénérer plusieurs repas"
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                onPressed: () => setState(() => _isMultiShuffleMode = true),
+                                icon: const Icon(Icons.autorenew, size: 18),
+                                label: Text(
+                                  'Regénérer plusieurs repas',
+                                  style: GoogleFonts.poppins(
+                                      fontWeight: FontWeight.w600, fontSize: 13),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFFFF9800),
+                                  side: BorderSide(color: const Color(0xFFFF9800).withOpacity(0.6)),
+                                  padding: const EdgeInsets.symmetric(vertical: 11),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12)),
+                                ),
+                              ),
+                            )
+                          else
+                            // Mode actif : carte avec instruction + boutons côte à côte
+                            Container(
+                              padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFF8F0),
+                                border: Border.all(
+                                    color: const Color(0xFFFF9800).withOpacity(0.5)),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.touch_app_rounded,
+                                          color: Color(0xFFFF9800), size: 16),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          'Touchez les repas à conserver, puis regénérez les autres',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 12,
+                                            color: Colors.grey[700],
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          onPressed: () => setState(() {
+                                            _isMultiShuffleMode = false;
+                                            _multiShuffleKeptSlots.clear();
+                                          }),
+                                          icon: const Icon(Icons.close_rounded, size: 15),
+                                          label: Text('Annuler',
+                                              style: GoogleFonts.poppins(
+                                                  fontWeight: FontWeight.w600,
+                                                  fontSize: 13)),
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: Colors.grey[700],
+                                            side: BorderSide(color: Colors.grey.shade400),
+                                            padding:
+                                                const EdgeInsets.symmetric(vertical: 11),
+                                            shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(12)),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        flex: 2,
+                                        child: ElevatedButton.icon(
+                                          onPressed: _launchMultiShuffle,
+                                          icon: const Icon(Icons.autorenew, size: 15),
+                                          label: Text('Regénérer les autres',
+                                              style: GoogleFonts.poppins(
+                                                  fontWeight: FontWeight.w600,
+                                                  fontSize: 13)),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color(0xFFFF9800),
+                                            foregroundColor: Colors.white,
+                                            padding:
+                                                const EdgeInsets.symmetric(vertical: 11),
+                                            elevation: 0,
+                                            shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(12)),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        const SizedBox(height: 24),
+                          const SizedBox(height: 16),
+                        ],
+                        const SizedBox(height: 8),
                         _buildMealDetails(),
                         const SizedBox(height: 24),
                       ],
@@ -2674,241 +3456,158 @@ class _PlannerPageState extends State<PlannerPage> {
 
   Widget _buildPlanMetadata() {
     if (_generatedMealPlan == null) return const SizedBox();
+    if (_pantrySnapshot.isEmpty) return const SizedBox();
 
-    // Use _selectedCategories if populated, otherwise use what's in the plan directly
-    final categoryIds = _selectedCategories.isNotEmpty 
-        ? _selectedCategories
-        : _generatedMealPlan!.selectedCategories;
+    final urgentCount = _pantrySnapshot.where((i) => i.isUrgent).length;
+    final normalCount = _pantrySnapshot.where((i) => !i.isUrgent).length;
 
-    final categories = categoryIds.map((id) => _categoryDataById[id]).where((c) => c != null).toList();
-    
-    // Use _pantryIngredients if populated, or from plan
-    final pantryItems = _pantryIngredients.isNotEmpty 
-        ? _pantryIngredients 
-        : _generatedMealPlan!.pantryItems;
-
-    if (categories.isEmpty && pantryItems.isEmpty) return const SizedBox();
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      margin: const EdgeInsets.only(bottom: 4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Theme(
-        data: Theme.of(context).copyWith(
-          dividerColor: Colors.transparent,
-          splashColor: Colors.transparent,
-          highlightColor: Colors.transparent,
-          hoverColor: Colors.transparent,
-          focusColor: Colors.transparent,
+    return GestureDetector(
+      onTap: _showPantrySnapshotDialog,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        margin: const EdgeInsets.only(bottom: 4),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
-        child: ExpansionTile(
-              title: Text(
-                'Paramètres du plan',
-                style: GoogleFonts.poppins(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF1A1A1A),
-                ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                shape: BoxShape.circle,
               ),
-              subtitle: Text(
-                'Voir les catégories et ingrédients utilisés',
-                style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]),
-              ),
-              leading: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF6A5AE0).withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.tune_rounded, size: 16, color: Color(0xFF6A5AE0)),
-              ),
-              shape: const Border(), 
-              collapsedShape: const Border(),
-              childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              tilePadding: EdgeInsets.zero,
-              children: [
-          
-              if (categories.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Catégories filtrées :',
-                  style: GoogleFonts.poppins(
-                    fontSize: 12, 
-                    fontWeight: FontWeight.w500,
-                    color: Colors.grey[600]
+              child: const Icon(Icons.kitchen_rounded, size: 16, color: Color(0xFF6A5AE0)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Frigo / Placard de ce plan',
+                    style: GoogleFonts.poppins(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF1A1A1A),
+                    ),
                   ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: categories.map((cat) {
-                    final name = cat!['name'] as String;
-                    final colorVal = cat['color'] as int;
-                    final baseColor = Color(colorVal);
-
-                    // Use the new HSL contrast logic we standardized earlier
-                    final hsl = HSLColor.fromColor(baseColor);
-                    final startLightness = hsl.lightness;
-                    final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
-                    final textColor = hsl.withLightness(textLightness).toColor();
-
-                    return Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: baseColor.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        name,
-                        style: GoogleFonts.poppins(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: textColor,
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
-            
-            if (pantryItems.isNotEmpty) ...[
-               Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Ingrédients du frigo pris en compte :',
-                  style: GoogleFonts.poppins(
-                    fontSize: 12, 
-                    fontWeight: FontWeight.w500,
-                    color: Colors.grey[600]
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    ...pantryItems.take(5).map((item) {
-                      return Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.green.withOpacity(0.2)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.kitchen, size: 14, color: Colors.green),
-                            const SizedBox(width: 6),
-                            Text(
-                              '${item.quantity % 1 == 0 ? item.quantity.toInt() : item.quantity} ${item.unit.label} ${item.ingredient.name}',
-                              style: GoogleFonts.poppins(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.green[800],
-                              ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      if (normalCount > 0) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '$normalCount normaux',
+                            style: GoogleFonts.poppins(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF6A5AE0),
                             ),
-                          ],
-                        ),
-                      );
-                    }),
-                    if (pantryItems.length > 5)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          '+ ${pantryItems.length - 5} autres',
-                          style: GoogleFonts.poppins(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.grey[700],
                           ),
                         ),
-                      ),
-                  ],
-                ),
+                        const SizedBox(width: 6),
+                      ],
+                      if (urgentCount > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '🔥 $urgentCount urgents',
+                            style: GoogleFonts.poppins(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.orange[800],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
               ),
-            ],
-        ],
+            ),
+            const Icon(Icons.chevron_right_rounded, color: Color(0xFF6A5AE0), size: 20),
+          ],
+        ),
       ),
-    ));
+    );
   }
 
   Widget _buildModernCalendar() {
+    final historyDates = _mealHistory.keys.toList();
+    final historyMin = historyDates.isNotEmpty
+        ? historyDates.reduce((a, b) => a.isBefore(b) ? a : b)
+        : null;
+    final historyMax = historyDates.isNotEmpty
+        ? historyDates.reduce((a, b) => a.isAfter(b) ? a : b)
+        : null;
+
     // Automatically choose calendar format based on plan duration (only on first load)
     if (_calendarFormat == null) {
-      final startDate = _generatedMealPlan!.startDate;
-      final durationDays = _generatedMealPlan!.durationDays;
-      final endDate = startDate.add(Duration(days: durationDays - 1));
+      if (_generatedMealPlan != null) {
+        final startDate = _generatedMealPlan!.startDate;
+        final durationDays = _generatedMealPlan!.durationDays;
+        final endDate = startDate.add(Duration(days: durationDays - 1));
 
-      // Count how many calendar weeks are spanned by checking for Mondays in the range
-      // (excluding the start date itself)
-      bool crossesIntoNewWeek = false;
-      DateTime currentDate = startDate.add(const Duration(days: 1));
-
-      while (currentDate.isBefore(endDate) ||
-          currentDate.isAtSameMomentAs(endDate)) {
-        if (currentDate.weekday == DateTime.monday) {
-          crossesIntoNewWeek = true;
-          break;
+        bool crossesIntoNewWeek = false;
+        DateTime currentDate = startDate.add(const Duration(days: 1));
+        while (currentDate.isBefore(endDate) ||
+            currentDate.isAtSameMomentAs(endDate)) {
+          if (currentDate.weekday == DateTime.monday) {
+            crossesIntoNewWeek = true;
+            break;
+          }
+          currentDate = currentDate.add(const Duration(days: 1));
         }
-        currentDate = currentDate.add(const Duration(days: 1));
-      }
 
-      if (durationDays <= 7 && !crossesIntoNewWeek) {
-        // 7 days or less within the same calendar week
-        _calendarFormat = CalendarFormat.week;
-      } else if (durationDays <= 14) {
-        // 8-14 days or 7 days spanning 2 calendar weeks
-        _calendarFormat = CalendarFormat.twoWeeks;
+        if (durationDays <= 7 && !crossesIntoNewWeek) {
+          _calendarFormat = CalendarFormat.week;
+        } else if (durationDays <= 14) {
+          _calendarFormat = CalendarFormat.twoWeeks;
+        } else {
+          _calendarFormat = CalendarFormat.month;
+        }
       } else {
         _calendarFormat = CalendarFormat.month;
       }
     }
 
     // Calculate the min/max range between history and plan
-    DateTime planStart = _generatedMealPlan!.startDate;
-    DateTime planEnd = planStart.add(
-      Duration(days: _generatedMealPlan!.durationDays - 1),
-    );
-    final historyDates = _mealHistory.keys.toList();
-    DateTime? historyMin = historyDates.isNotEmpty
-        ? historyDates.reduce((a, b) => a.isBefore(b) ? a : b)
-        : null;
-    DateTime? historyMax = historyDates.isNotEmpty
-        ? historyDates.reduce((a, b) => a.isAfter(b) ? a : b)
-        : null;
-    final firstDay = historyMin != null && historyMin.isBefore(planStart)
-        ? historyMin
-        : planStart;
-    final lastDay = historyMax != null && historyMax.isAfter(planEnd)
-        ? historyMax
-        : planEnd;
+    final DateTime firstDay;
+    final DateTime lastDay;
+    if (_generatedMealPlan != null) {
+      final planStart = _generatedMealPlan!.startDate;
+      final planEnd = planStart.add(
+        Duration(days: _generatedMealPlan!.durationDays - 1),
+      );
+      firstDay = historyMin != null && historyMin.isBefore(planStart)
+          ? historyMin
+          : planStart;
+      lastDay = historyMax != null && historyMax.isAfter(planEnd)
+          ? historyMax
+          : planEnd;
+    } else {
+      // History-only mode
+      firstDay = historyMin ?? DateTime.now();
+      lastDay = historyMax ?? DateTime.now();
+    }
 
     return GestureDetector(
       onHorizontalDragEnd: (details) {
@@ -3924,13 +4623,14 @@ class _ModernPlannerHeader extends StatelessWidget {
   // ID -> {id, name, color}
   final Map<String, Map<String, dynamic>> categoryDataById;
   
-  // Use explicit list instead of count
-  final List<RecipeIngredient> pantryIngredients;
+  final int pantryCount;
+  final int urgentCount;
+  final List<PantrySnapshotItem> pantrySnapshot;
+  final VoidCallback? onViewPantrySnapshot;
 
   final VoidCallback onPickStartDate;
   final VoidCallback onPickDuration;
   final VoidCallback onPickCategories;
-  final VoidCallback onPickPantry;
   final VoidCallback onLaunchPlanning;
   final bool isLoading;
 
@@ -3939,11 +4639,13 @@ class _ModernPlannerHeader extends StatelessWidget {
     required this.selectedDuration,
     required this.selectedCategories,
     required this.categoryDataById,
-    required this.pantryIngredients, // Changed
+    required this.pantryCount,
+    required this.urgentCount,
+    required this.pantrySnapshot,
+    this.onViewPantrySnapshot,
     required this.onPickStartDate,
     required this.onPickDuration,
     required this.onPickCategories,
-    required this.onPickPantry,
     required this.onLaunchPlanning,
     required this.isLoading,
   });
@@ -4098,80 +4800,80 @@ class _ModernPlannerHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          InkWell(
-            onTap: onPickPantry,
-            borderRadius: BorderRadius.circular(16),
+          GestureDetector(
+            onTap: (pantrySnapshot.isNotEmpty || pantryCount > 0) ? onViewPantrySnapshot : null,
             child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF5F7FA),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: pantryIngredients.isNotEmpty
-                      ? const Color(0xFF6A5AE0).withOpacity(0.5)
-                      : Colors.grey.withOpacity(0.15),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.kitchen, color: Color(0xFF6A5AE0), size: 18),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Ingrédients disponibles',
-                          style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[600]),
-                        ),
-                        const SizedBox(height: 4),
-                        if (pantryIngredients.isEmpty)
-                          Text(
-                            'Aucun (Optionnel)',
-                            style: GoogleFonts.poppins(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: const Color(0xFF2D2D2D),
-                            ),
-                          )
-                        else
-                          Wrap(
-                            spacing: 6,
-                            runSpacing: 4,
-                            children: pantryIngredients.map((item) {
-                              return Container(
-                                padding: const EdgeInsets.symmetric( horizontal: 8, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.green.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.green.withOpacity(0.2)),
-                                ),
-                                child: Text(
-                                  '${item.quantity % 1 == 0 ? item.quantity.toInt() : item.quantity} ${item.unit.label} ${item.ingredient.name}',
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.green[800],
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                      ],
-                    ),
-                  ),
-                  Icon(Icons.chevron_right_rounded, color: Colors.grey[400]),
-                ],
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F7FA),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: urgentCount > 0
+                    ? Colors.orange.withOpacity(0.5)
+                    : pantryCount > 0
+                        ? const Color(0xFF6A5AE0).withOpacity(0.3)
+                        : Colors.grey.withOpacity(0.15),
               ),
             ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.kitchen_rounded,
+                    color: urgentCount > 0 ? Colors.orange[700] : const Color(0xFF6A5AE0),
+                    size: 18,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Frigo / Placard',
+                        style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[600]),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        pantryCount == 0
+                            ? 'Aucun article renseigné'
+                            : urgentCount > 0
+                                ? '$pantryCount article${pantryCount > 1 ? 's' : ''} · $urgentCount urgent${urgentCount > 1 ? 's' : ''} 🔥'
+                                : '$pantryCount article${pantryCount > 1 ? 's' : ''} disponible${pantryCount > 1 ? 's' : ''}',
+                        style: GoogleFonts.poppins(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: urgentCount > 0
+                              ? Colors.orange[800]
+                              : const Color(0xFF2D2D2D),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        pantrySnapshot.isNotEmpty
+                            ? 'Appuyez pour voir le frigo de ce plan'
+                            : 'Gérez votre stock dans l\'onglet Frigo / Placard',
+                        style: GoogleFonts.poppins(
+                          fontSize: 10,
+                          color: Colors.grey[400],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (pantrySnapshot.isNotEmpty)
+                  Icon(Icons.chevron_right_rounded, color: Colors.grey[400], size: 18)
+                else
+                  const Icon(Icons.lock_outline_rounded, color: Colors.black12, size: 16),
+              ],
+            ),
+          ),
           ),
           const SizedBox(height: 24),
           ModernGradientButton(

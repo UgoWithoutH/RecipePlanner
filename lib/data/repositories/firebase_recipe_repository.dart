@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/constants/unit.dart' show Unit;
+import '../../core/constants/meal_time.dart';
 import '../../domain/entities/ingredient.dart' show Ingredient;
 import '../../domain/entities/recipe.dart';
 import '../../domain/entities/recipe_ingredient.dart';
@@ -57,6 +58,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
         isFavorite: data['isFavorite'] ?? false,
         rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
         url: data['url'],
+        mealTime: MealTime.fromString(data['mealTime'] as String?),
       );
     }
     // Fallback: try by doc id
@@ -94,6 +96,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
         isFavorite: data['isFavorite'] ?? false,
         rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
         url: data['url'],
+        mealTime: MealTime.fromString(data['mealTime'] as String?),
       );
     }
     return null;
@@ -206,6 +209,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
         createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
         isFavorite: data['isFavorite'] ?? false,
         rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
+        mealTime: MealTime.fromString(data['mealTime'] as String?),
       );
     }).toList();
   }
@@ -257,6 +261,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
         createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
         isFavorite: data['isFavorite'] ?? false,
         rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
+        mealTime: MealTime.fromString(data['mealTime'] as String?),
       );
     }).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -288,6 +293,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
       'url': (recipe.url != null && recipe.url!.trim().isNotEmpty)
           ? recipe.url
           : null,
+      'mealTime': recipe.mealTime.name,
     };
   }
 }

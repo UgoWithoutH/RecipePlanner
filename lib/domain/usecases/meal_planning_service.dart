@@ -5,6 +5,7 @@ import '../entities/meal_plan.dart';
 import 'dart:math';
 import '../entities/recipe_ingredient.dart';
 import '../../core/constants/unit.dart';
+import '../../core/constants/meal_time.dart';
 
 /// Service for meal planning
 /// 
@@ -42,6 +43,7 @@ class MealPlanningService {
     List<Meal>? recentMeals,
     List<Meal>? userSelectedMeals,
     List<RecipeIngredient> pantryItems = const [],
+    Set<String> urgentPantryIngredientNames = const {},
     List<String> selectedCategories = const [],
     DateTime? referenceDate,
     double wastePenaltyWeight = 0.0,
@@ -151,7 +153,10 @@ class MealPlanningService {
         }
       }
     }
-
+    // Noms normalisés (minuscule) des ingrédients urgents transmis au moteur de scoring.
+    final urgentPantrySet = urgentPantryIngredientNames
+        .map((n) => n.toLowerCase().trim())
+        .toSet();
     // Historique : recettes mangées récemment (toutes passées en paramètre)
     // Map recipeId -> daysAgo (plus petit daysAgo si plusieurs repas)
     // referenceDate allows computing distances relative to a pivot (e.g. the shuffled meal)
@@ -317,6 +322,65 @@ class MealPlanningService {
         // other days / other types instead of stopping the whole plan.
         continue;
       }
+      // Lookahead : avant de sélectionner le déjeuner, anticiper la meilleure
+      // recette du dîner et l'injecter temporairement dans le contexte de récence.
+      // Le composant de similarité pénalisera ainsi les candidats au déjeuner trop
+      // proches du dîner prévu (ex : deux recettes avec pâtes le même jour).
+      Recipe? peekedDinner;
+      bool peekedDinnerAdded = false;
+      if (mealType == MealType.lunch && i + 1 < numMeals && meals[i + 1] == null) {
+        peekedDinner = _selectBestRecipe(
+          availableRecipes: recipes,
+          recipeUserServingsMap: recipeUserServingsMap,
+          users: users,
+          usedRecipes: usedRecipes,
+          mealType: MealType.dinner,
+          remainingPortions: remainingPortions,
+          similarityCache: similarityCache,
+          usagePenaltyWeight: usagePenaltyWeight,
+          recencyPenaltyWeight: recencyPenaltyWeight,
+          similarityPenaltyWeight: similarityPenaltyWeight,
+          coverageBonusWeight: coverageBonusWeight,
+          endOfPlanCoverageBoost: endOfPlanCoverageBoost,
+          endOfPlanThresholdRatio: endOfPlanThresholdRatio,
+          useMaxPossibleCoverageNormalization: useMaxPossibleCoverageNormalization,
+          requireFullCycle: requireFullCycle,
+          usedInCurrentCycle: usedInCurrentCycle,
+          recentRecipeDaysAgo: recentRecipeDaysAgo,
+          initialTotalPortions: users.length * durationDays * 2,
+          recencyDecayFactor: recencyDecayFactor,
+          useAbsoluteCoverageBonus: useAbsoluteCoverageBonus,
+          pantryRemaining: pantryRemaining,
+          urgentPantryNames: urgentPantrySet,
+          slotsRemaining: numMeals - i - 1,
+          wastePenaltyWeight: wastePenaltyWeight,
+        );
+        if (peekedDinner != null && !recentRecipeDaysAgo.containsKey(peekedDinner.id)) {
+          recentRecipeDaysAgo[peekedDinner.id] = 0;
+          peekedDinnerAdded = true;
+        }
+      }
+      // Si le dîner prévu couvre des items urgents, on relâche la contrainte dure
+      // urgente pour le déjeuner en simulant leur consommation (copie locale du
+      // placard). Ainsi le déjeuner n'est plus forcé de choisir la même famille
+      // d'ingrédients que le dîner (ex : éviter deux repas aux pâtes le même jour).
+      var pantryForLunchSelection = pantryRemaining;
+      if (peekedDinner != null && urgentPantrySet.isNotEmpty) {
+        final coveredUrgentNames = <String>{};
+        for (final ing in peekedDinner.ingredients) {
+          final name = ing.ingredient.name.toLowerCase().trim();
+          if (urgentPantrySet.contains(name) && (pantryRemaining[name]?.$1 ?? 0.0) > 0.0) {
+            coveredUrgentNames.add(name);
+          }
+        }
+        if (coveredUrgentNames.isNotEmpty) {
+          pantryForLunchSelection = Map.of(pantryRemaining);
+          for (final name in coveredUrgentNames) {
+            final entry = pantryForLunchSelection[name]!;
+            pantryForLunchSelection[name] = (0.0, entry.$2);
+          }
+        }
+      }
       final selectedRecipe = _selectBestRecipe(
         availableRecipes: recipes,
         recipeUserServingsMap: recipeUserServingsMap,
@@ -338,10 +402,13 @@ class MealPlanningService {
         initialTotalPortions: users.length * durationDays * 2,
         recencyDecayFactor: recencyDecayFactor,
         useAbsoluteCoverageBonus: useAbsoluteCoverageBonus,
-        pantryRemaining: pantryRemaining,
+        pantryRemaining: pantryForLunchSelection,
+        urgentPantryNames: urgentPantrySet,
         slotsRemaining: numMeals - i,
         wastePenaltyWeight: wastePenaltyWeight,
       ); // wastePenaltyWeight non passé par défaut (les restes du plan complet sont utiles)
+      // Retire l'entrée temporaire du lookahead pour ne pas biaiser le dîner
+      if (peekedDinnerAdded) recentRecipeDaysAgo.remove(peekedDinner!.id);
       if (selectedRecipe == null) {
         meals[i] = null;
         continue;
@@ -660,6 +727,7 @@ class MealPlanningService {
     bool useAbsoluteCoverageBonus = false,
     Map<String, (double, Unit)> pantryRemaining = const <String, (double, Unit)>{},
     double pantryBonusWeight = 70.0,
+    Set<String> urgentPantryNames = const {},
     int slotsRemaining = 1,
     double wastePenaltyWeight = 0.0,
   }) {
@@ -700,6 +768,19 @@ class MealPlanningService {
         maxPossibleCoverageMap[recipe.id]![type] = maxCoverage;
       }
     }
+
+    // Contrainte dure : si des ingrédients urgents sont encore disponibles ET qu'au
+    // moins une recette les utilise, on exclut les recettes qui n'en utilisent aucun.
+    final bool hasUrgentConstraint = urgentPantryNames.isNotEmpty &&
+        urgentPantryNames.any((name) {
+          final entry = pantryRemaining[name];
+          return entry != null && entry.$1 > 0.0;
+        }) &&
+        availableRecipes.any((r) => r.ingredients.any((ing) {
+          final n = ing.ingredient.name.toLowerCase().trim();
+          return urgentPantryNames.contains(n) &&
+              (pantryRemaining[n]?.$1 ?? 0.0) > 0.0;
+        }));
 
     for (final recipe in availableRecipes) {
       final totalConsumed = candidateTotalConsumed[recipe.id]!;
@@ -750,14 +831,28 @@ class MealPlanningService {
         final cycleProgress = usedInCurrentCycle.length.toDouble() / availableRecipes.length;
         cyclePenalty = cyclePenaltyWeight * cycleProgress.clamp(0.0, 1.0);
       }
+      // --- Contrainte mealTime : recette réservée midi ou soir uniquement ---
+      if (mealType == MealType.lunch && recipe.mealTime == MealTime.dinnerOnly) continue;
+      if (mealType == MealType.dinner && recipe.mealTime == MealTime.lunchOnly) continue;
+      // --- Contrainte dure ingrédients urgents ---
+      // Si des ingrédients urgents sont disponibles et que cette recette n'en
+      // utilise aucun, on l'exclut du calcul pour ce slot.
+      if (hasUrgentConstraint) {
+        final usesUrgent = recipe.ingredients.any((ing) {
+          final n = ing.ingredient.name.toLowerCase().trim();
+          return urgentPantryNames.contains(n) &&
+              (pantryRemaining[n]?.$1 ?? 0.0) > 0.0;
+        });
+        if (!usesUrgent) continue;
+      }
       // --- Bonus frigo/placard avec urgence dynamique ---
-      // Pour chaque ingrédient en stock correspondant, on calcule combien de fois
-      // la recette doit encore être cuisinée pour épuiser le stock restant.
-      // Plus l'urgence est grande (peu de slots restants vs beaucoup de stock),
-      // plus le bonus est fort — peut surpasser la pénalité de récence.
+      // Ingrédients normaux : urgencyFactor dynamique 1.0 → 3.0.
+      // Ingrédients urgents (marqués par l'utilisateur) : bonus fixe 8× pour
+      // garantir leur consommation prioritaire même sans contrainte dure.
       double pantryComponent = 0.0;
       if (pantryRemaining.isNotEmpty && recipe.ingredients.isNotEmpty) {
-        int matchCount = 0;
+        int normalMatchCount = 0;
+        int urgentMatchCount = 0;
         int maxUsesNeeded = 0;
         for (final ingredient in recipe.ingredients) {
           final name = ingredient.ingredient.name.toLowerCase().trim();
@@ -765,7 +860,11 @@ class MealPlanningService {
           if (pantryEntry != null) {
             final (pantryQty, pantryBaseUnit) = pantryEntry;
             if (pantryBaseUnit == _baseUnit(ingredient.unit) && pantryQty > 0.0) {
-              matchCount++;
+              if (urgentPantryNames.contains(name)) {
+                urgentMatchCount++;
+              } else {
+                normalMatchCount++;
+              }
               final normalizedIngQty = _toNormalized(ingredient.quantity, ingredient.unit);
               if (normalizedIngQty > 0) {
                 final usesNeeded = (pantryQty / normalizedIngQty).ceil();
@@ -774,14 +873,22 @@ class MealPlanningService {
             }
           }
         }
-        if (matchCount > 0) {
-          // urgencyFactor : 1.0 (temps suffisant) → 3.0 (dernier moment)
+        if (normalMatchCount + urgentMatchCount > 0) {
+          // urgencyFactor dynamique pour les ingrédients normaux
           double urgencyFactor = 1.0;
           if (slotsRemaining > 0 && maxUsesNeeded > 0) {
             final urgency = (maxUsesNeeded / slotsRemaining).clamp(0.0, 2.0);
             urgencyFactor = 1.0 + urgency * 2.0;
           }
-          pantryComponent = -matchCount * pantryBonusWeight * urgencyFactor;
+          final normalBonus = normalMatchCount > 0
+              ? -normalMatchCount * pantryBonusWeight * urgencyFactor
+              : 0.0;
+          // Bonus urgent fixe (8×) : surpasse toutes les autres pénalités
+          const urgentBonusMultiplier = 8.0;
+          final urgentBonus = urgentMatchCount > 0
+              ? -urgentMatchCount * pantryBonusWeight * urgentBonusMultiplier
+              : 0.0;
+          pantryComponent = normalBonus + urgentBonus;
         }
       }
       // --- Pénalité de gaspillage : préfère les recettes dont les portions cuisinées

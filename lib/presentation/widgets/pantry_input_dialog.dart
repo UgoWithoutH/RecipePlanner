@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../core/constants/unit.dart';
 import '../../../domain/entities/ingredient.dart';
 import '../../../domain/entities/recipe_ingredient.dart';
+import '../../../core/utils/qty_format.dart';
 import 'ingredient_autocomplete.dart';
 
 class PantryInputDialog extends StatefulWidget {
@@ -48,7 +49,7 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
     final name = _nameController.text.trim();
     if (name.isEmpty) return;
 
-    final quantity = double.tryParse(_quantityController.text) ?? 1.0;
+    final quantity = parseQty(_quantityController.text, fallback: 1.0);
     
     final newItem = RecipeIngredient(
       ingredient: Ingredient(id: _selectedId, name: name),
@@ -80,7 +81,7 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
       _editingIndex = index;
       _nameController.text = item.ingredient.name;
       _selectedId = item.ingredient.id;
-      _quantityController.text = item.quantity.toString().replaceAll(RegExp(r'\.0$'), '');
+      _quantityController.text = fmtQty(item.quantity);
       _selectedUnit = item.unit;
     });
   }
@@ -333,7 +334,7 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
                                           decimal: true),
                                   inputFormatters: [
                                     FilteringTextInputFormatter.allow(
-                                        RegExp(r'^\d+\.?\d{0,2}')),
+                                        RegExp(r'[0-9.,]')),
                                   ],
                                   decoration: InputDecoration(
                                     labelText: 'Qté',
@@ -474,8 +475,7 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
                         itemBuilder: (context, index) {
                           final item = _items[index];
                           // Format quantity nicely (remove .0 if integer)
-                          final qtyStr =
-                              item.quantity.toString().replaceAll(RegExp(r'\.0$'), '');
+                          final qtyStr = fmtQty(item.quantity);
                           
                           return Container(
                             decoration: BoxDecoration(
@@ -567,7 +567,7 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
                     if (pendingName.isNotEmpty && _editingIndex == null) {
                       // Auto-add the pending item
                       final qty =
-                          double.tryParse(_quantityController.text) ?? 1.0;
+                          parseQty(_quantityController.text, fallback: 1.0);
                       allItems.add(RecipeIngredient(
                         ingredient:
                             Ingredient(id: _selectedId, name: pendingName),

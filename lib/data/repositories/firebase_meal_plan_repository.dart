@@ -4,6 +4,7 @@ import '../../domain/entities/recipe.dart';
 import '../../domain/entities/recipe_ingredient.dart';
 import '../../domain/entities/ingredient.dart';
 import '../../core/constants/unit.dart';
+import '../../core/constants/meal_time.dart';
 import 'group_repository.dart';
 
 class FirebaseMealPlanRepository {
@@ -88,6 +89,7 @@ class FirebaseMealPlanRepository {
           ingredients: const [],
           instructions: const [],
           createdAt: DateTime.now(),
+          mealTime: MealTime.fromString(mealData['mealTime'] as String?),
         );
 
         final typeStr = mealData['type'] as String? ?? 'lunch';
@@ -166,6 +168,7 @@ class FirebaseMealPlanRepository {
         ingredients: const [],
         instructions: const [],
         createdAt: DateTime.now(),
+        mealTime: MealTime.fromString(mealData['mealTime'] as String?),
       );
 
       final typeStr = mealData['type'] as String? ?? 'lunch';

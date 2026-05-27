@@ -7,6 +7,8 @@ import '../../domain/entities/user_recipe_serving.dart';
 import '../../domain/entities/category.dart';
 import '../../core/utils/ingredient_name_cache.dart';
 import '../../core/constants/unit.dart';
+import '../../core/constants/meal_time.dart';
+import '../../core/utils/qty_format.dart';
 import '../../domain/entities/ingredient.dart';
 import '../../domain/entities/recipe_ingredient.dart';
 import '../../data/repositories/firebase_recipe_repository.dart';
@@ -16,6 +18,7 @@ import '../../data/repositories/group_repository.dart';
 import 'create_recipe_page.dart';
 import '../../domain/entities/ingredient_type.dart';
 import '../../data/repositories/firebase_ingredient_type_repository.dart';
+import '../../data/repositories/firebase_stats_repository.dart';
 
 
 class RecipeDetailPage extends StatefulWidget {
@@ -79,6 +82,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   bool _isAlreadyImported = false;
   bool _wasModified = false;
+  int _usageCount = 0;
 
   @override
   void initState() {
@@ -99,7 +103,14 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
         _loadUserServings();
         _loadCategories();
       }
+      _loadUsageCount();
     }
+  }
+
+  Future<void> _loadUsageCount() async {
+    final counts = await FirebaseStatsRepository.instance.getRecipeUsageCounts();
+    final id = widget.recipeId;
+    if (mounted) setState(() => _usageCount = counts[id] ?? 0);
   }
 
   Future<void> _checkIfAlreadyImported() async {
@@ -268,6 +279,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
           isFavorite: data['isFavorite'] as bool? ?? currentRecipe?.isFavorite ?? false,
           rating:
             (data['rating'] as num?)?.toDouble() ?? currentRecipe?.rating ?? 0.0,
+          mealTime: MealTime.fromString(data['mealTime'] as String?),
         );
         // Update displayed category name once the full recipe is loaded
         if (_categories.isNotEmpty && _recipe != null) {
@@ -646,6 +658,32 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                 'Portions',
                                 const Color(0xFF66BB6A),
                               ),
+                              ...[
+                                Container(width: 1, height: 40, color: Colors.grey[200]),
+                                _buildModernStatItem(
+                                  currentRecipe.mealTime == MealTime.lunchOnly
+                                      ? Icons.wb_sunny_rounded
+                                      : currentRecipe.mealTime == MealTime.dinnerOnly
+                                          ? Icons.nights_stay_rounded
+                                          : Icons.sunny_snowing,
+                                  currentRecipe.mealTime.shortLabel,
+                                  'Repas',
+                                  currentRecipe.mealTime == MealTime.lunchOnly
+                                      ? Colors.orange.shade700
+                                      : currentRecipe.mealTime == MealTime.dinnerOnly
+                                          ? const Color(0xFF5C6BC0)
+                                          : const Color(0xFF6A5AE0),
+                                ),
+                              ],
+                              if (!widget.isCatalogRecipe && _usageCount > 0) ...[
+                                Container(width: 1, height: 40, color: Colors.grey[200]),
+                                _buildModernStatItem(
+                                  Icons.restaurant_menu_rounded,
+                                  '$_usageCount',
+                                  _usageCount == 1 ? 'fois mangé' : 'fois mangé',
+                                  const Color(0xFF26A69A),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -781,7 +819,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                     ),
                                   ),
                                   Text(
-                                    '${item.quantity} ${item.unit.label}',
+                                    '${fmtQty(item.quantity)} ${item.unit.label}',
                                     style: GoogleFonts.poppins(
                                       fontSize: 15,
                                       fontWeight: FontWeight.w600,
@@ -1030,9 +1068,12 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                   ),
                 ),
               ),
-              _buildServingBadge(Icons.wb_sunny_rounded, '${s.lunchServings}', Colors.orange),
-              const SizedBox(width: 8),
-              _buildServingBadge(Icons.nights_stay_rounded, '${s.dinnerServings}', const Color(0xFF5C6BC0)),
+              if (_recipe?.mealTime != MealTime.dinnerOnly)
+                _buildServingBadge(Icons.wb_sunny_rounded, '${s.lunchServings}', Colors.orange),
+              if (_recipe?.mealTime != MealTime.lunchOnly && _recipe?.mealTime != MealTime.dinnerOnly)
+                const SizedBox(width: 8),
+              if (_recipe?.mealTime != MealTime.lunchOnly)
+                _buildServingBadge(Icons.nights_stay_rounded, '${s.dinnerServings}', const Color(0xFF5C6BC0)),
             ],
           ),
         );

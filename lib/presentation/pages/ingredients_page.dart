@@ -5,6 +5,7 @@ import '../../core/utils/ingredient_name_cache.dart';
 import 'recipe_detail_page.dart';
 import '../../domain/entities/recipe.dart';
 import '../../core/constants/unit.dart' show Unit;
+import '../../core/constants/meal_time.dart';
 import '../../domain/entities/ingredient.dart';
 import '../../domain/entities/recipe_ingredient.dart';
 import 'ingredient_types_page.dart';
@@ -12,6 +13,7 @@ import '../../domain/entities/ingredient_type.dart';
 import '../../data/repositories/firebase_ingredient_type_repository.dart';
 import '../../data/repositories/firebase_shopping_list_repository.dart';
 import '../../data/repositories/group_repository.dart';
+import '../../data/repositories/firebase_stats_repository.dart';
 
 class IngredientsPage extends StatefulWidget {
   const IngredientsPage({super.key});
@@ -28,6 +30,9 @@ class _IngredientsPageState extends State<IngredientsPage> {
   List<String> _selectedTypeIds = [];
   final _typeRepo = FirebaseIngredientTypeRepository();
   final _shoppingListRepo = FirebaseShoppingListRepository();
+  Map<String, int> _ingredientCounts = {};
+  Map<String, int> _catalogCounts = {};
+  String _sortMode = 'alpha'; // 'alpha' | 'usage' | 'unused'
 
   @override
   void initState() {
@@ -67,11 +72,54 @@ class _IngredientsPageState extends State<IngredientsPage> {
         ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
       _isLoading = false;
     });
+
+    // Compte les recettes du groupe et du catalogue utilisant chaque ingrédient (sans bloquer l’UI)
+    _loadGroupCounts();
+    _loadCatalogCounts();
   }
 
   Future<void> _loadIngredients() async {
     // Helper to just reload ingredients (and types to be safe)
     await _loadData();
+  }
+
+  Future<void> _loadGroupCounts() async {
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) return;
+    final snap = await FirebaseFirestore.instance
+        .collection('recipes')
+        .where('groupId', isEqualTo: groupId)
+        .get();
+    final counts = <String, int>{};
+    for (final doc in snap.docs) {
+      final data = doc.data() as Map<String, dynamic>;
+      final ingredients = data['ingredients'] as List<dynamic>? ?? [];
+      final seen = <String>{};
+      for (final i in ingredients) {
+        final iId = i['ingredientId'] as String? ?? '';
+        if (iId.isNotEmpty && seen.add(iId)) {
+          counts[iId] = (counts[iId] ?? 0) + 1;
+        }
+      }
+    }
+    if (mounted) setState(() => _ingredientCounts = counts);
+  }
+
+  Future<void> _loadCatalogCounts() async {
+    final snap = await FirebaseFirestore.instance.collection('recipes_cache').get();
+    final counts = <String, int>{};
+    for (final doc in snap.docs) {
+      final data = doc.data() as Map<String, dynamic>;
+      final ingredients = data['ingredients'] as List<dynamic>? ?? [];
+      final seen = <String>{};
+      for (final i in ingredients) {
+        final iName = (i['name'] as String? ?? '').toLowerCase().trim();
+        if (iName.isNotEmpty && seen.add(iName)) {
+          counts[iName] = (counts[iName] ?? 0) + 1;
+        }
+      }
+    }
+    if (mounted) setState(() => _catalogCounts = counts);
   }
 
   Future<void> _addIngredient() async {
@@ -434,6 +482,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
           createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
           isFavorite: data['isFavorite'] ?? false,
           rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
+          mealTime: MealTime.fromString(data['mealTime'] as String?),
         ));
       }
     }
@@ -474,6 +523,34 @@ class _IngredientsPageState extends State<IngredientsPage> {
         catalogRecipes: catalogRecipes,
         initialChildSize: initial,
         maxChildSize: maxFraction,
+      ),
+    );
+  }
+
+  Widget _buildSortChip(IconData icon, String label, bool selected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF6A5AE0) : const Color(0xFF6A5AE0).withOpacity(0.1),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: selected ? Colors.white : const Color(0xFF6A5AE0)),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: GoogleFonts.poppins(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: selected ? Colors.white : const Color(0xFF6A5AE0),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -654,6 +731,27 @@ class _IngredientsPageState extends State<IngredientsPage> {
                     ),
                   ),
 
+                // SORT & FILTRE STATS
+                if (!_isLoading)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          _buildSortChip(Icons.sort_by_alpha_rounded, 'A-Z', _sortMode == 'alpha',
+                              () => setState(() => _sortMode = 'alpha')),
+                          const SizedBox(width: 8),
+                          _buildSortChip(Icons.bar_chart_rounded, 'Plus utilisés', _sortMode == 'usage',
+                              () => setState(() => _sortMode = 'usage')),
+                          const SizedBox(width: 8),
+                          _buildSortChip(Icons.new_releases_rounded, 'Jamais utilisés', _sortMode == 'unused',
+                              () => setState(() => _sortMode = _sortMode == 'unused' ? 'alpha' : 'unused')),
+                        ],
+                      ),
+                    ),
+                  ),
+
                 // List
                 Expanded(
                   child: _isLoading
@@ -668,6 +766,15 @@ class _IngredientsPageState extends State<IngredientsPage> {
                                   .toList();
                           if (_selectedTypeIds.isNotEmpty) {
                             filtered = filtered.where((ing) => ing['typeId'] != null && _selectedTypeIds.contains(ing['typeId'])).toList();
+                          }
+                          if (_sortMode == 'unused') {
+                            filtered = filtered.where((ing) => (_ingredientCounts[ing['id'] as String] ?? 0) == 0).toList();
+                          }
+                          if (_sortMode == 'usage') {
+                            filtered.sort((a, b) {
+                              final diff = (_ingredientCounts[b['id'] as String] ?? 0).compareTo(_ingredientCounts[a['id'] as String] ?? 0);
+                              return diff != 0 ? diff : (a['name'] as String).compareTo(b['name'] as String);
+                            });
                           }
                           if (filtered.isEmpty) {
                             return Center(
@@ -752,6 +859,52 @@ class _IngredientsPageState extends State<IngredientsPage> {
                                                         ),
                                                       );
                                                     },
+                                                  ),
+                                                if ((_ingredientCounts[id] ?? 0) > 0)
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(0xFF26A69A).withOpacity(0.12),
+                                                      borderRadius: BorderRadius.circular(20),
+                                                    ),
+                                                    child: Row(
+                                                      mainAxisSize: MainAxisSize.min,
+                                                      children: [
+                                                        const Icon(Icons.group_rounded, size: 12, color: Color(0xFF26A69A)),
+                                                        const SizedBox(width: 3),
+                                                        Text(
+                                                          '${_ingredientCounts[id]}×',
+                                                          style: GoogleFonts.poppins(
+                                                            fontSize: 11,
+                                                            fontWeight: FontWeight.w700,
+                                                            color: const Color(0xFF26A69A),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                if ((_catalogCounts[name.toLowerCase().trim()] ?? 0) > 0)
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(0xFF5C6BC0).withOpacity(0.12),
+                                                      borderRadius: BorderRadius.circular(20),
+                                                    ),
+                                                    child: Row(
+                                                      mainAxisSize: MainAxisSize.min,
+                                                      children: [
+                                                        const Icon(Icons.menu_book_rounded, size: 12, color: Color(0xFF5C6BC0)),
+                                                        const SizedBox(width: 3),
+                                                        Text(
+                                                          '${_catalogCounts[name.toLowerCase().trim()]}×',
+                                                          style: GoogleFonts.poppins(
+                                                            fontSize: 11,
+                                                            fontWeight: FontWeight.w700,
+                                                            color: const Color(0xFF5C6BC0),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
                                                   ),
                                               ],
                                             ),
@@ -1001,6 +1154,7 @@ class _RecipesForIngredientSheet extends StatelessWidget {
                                       createdAt: DateTime.now(),
                                       isFavorite: false,
                                       rating: 0.0,
+                                      mealTime: MealTime.fromString(recipe['mealTime'] as String?),
                                     );
                                     Navigator.push(
                                       context,

@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:recipe_planner/presentation/widgets/ingredient_autocomplete.dart' show IngredientAutocomplete;
 
 import '../../core/constants/unit.dart' show Unit;
+import '../../core/constants/meal_time.dart';
 import '../../domain/entities/ingredient.dart';
 import '../../domain/entities/recipe.dart';
 import '../../domain/entities/recipe_ingredient.dart';
@@ -13,6 +14,7 @@ import 'recipe_detail_page.dart';
 import 'categories_page.dart';
 import 'create_recipe_page.dart';
 import '../../data/repositories/group_repository.dart';
+import '../../data/repositories/firebase_stats_repository.dart';
 
 class RecipesPage extends StatefulWidget {
   const RecipesPage({super.key});
@@ -39,6 +41,9 @@ class _RecipesPageState extends State<RecipesPage> {
     Set<String> _groupRecipeTitles = {};
     String _catalogImportFilter = 'notImported'; // 'all', 'imported', 'notImported'
 
+  Map<String, int> _recipeCounts = {};
+  String _sortMode = 'alpha'; // 'alpha' | 'usage' | 'unused'
+
   late Future<List<Recipe>> _recipesFuture;
 
   @override
@@ -55,6 +60,8 @@ class _RecipesPageState extends State<RecipesPage> {
     _fetchCategories();
     // Fetch catalog recipes
     _fetchCatalogRecipes();
+    // Load recipe usage stats from history
+    _loadRecipeCounts();
   }
   
   Future<void> _fetchCategories() async {
@@ -182,9 +189,16 @@ class _RecipesPageState extends State<RecipesPage> {
               DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
           isFavorite: data['isFavorite'] ?? false,
           rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
+          mealTime: MealTime.fromString(data['mealTime'] as String?),
         );
       }),
     ).then((list) => list..sort((a, b) => a.title.compareTo(b.title)));
+  }
+
+  Future<void> _loadRecipeCounts() async {
+    final counts = await FirebaseStatsRepository.instance
+        .getRecipeUsageCounts();
+    if (mounted) setState(() => _recipeCounts = counts);
   }
 
   // =========================
@@ -434,6 +448,27 @@ class _RecipesPageState extends State<RecipesPage> {
                     ),
                   ),
 
+                // SORT & FILTRE STATS (groupe seulement)
+                if (!_showCatalog)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          _buildSortChip(Icons.sort_by_alpha_rounded, 'A-Z', _sortMode == 'alpha',
+                              () => setState(() => _sortMode = 'alpha')),
+                          const SizedBox(width: 8),
+                          _buildSortChip(Icons.bar_chart_rounded, 'Plus cuisinées', _sortMode == 'usage',
+                              () => setState(() => _sortMode = 'usage')),
+                          const SizedBox(width: 8),
+                          _buildSortChip(Icons.new_releases_rounded, 'Jamais cuisinées', _sortMode == 'unused',
+                              () => setState(() => _sortMode = _sortMode == 'unused' ? 'alpha' : 'unused')),
+                        ],
+                      ),
+                    ),
+                  ),
+
                 // FILTRES TEXTE & INGRÉDIENTS
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
@@ -511,12 +546,19 @@ class _RecipesPageState extends State<RecipesPage> {
                       return const SizedBox.shrink();
                     }
                     final recipes = snapshot.data ?? [];
-                    final filteredRecipes = recipes.where((recipe) {
+                    var filteredRecipes = recipes.where((recipe) {
                       final matchesTitle = _titleFilter.isEmpty || recipe.title.toLowerCase().contains(_titleFilter.toLowerCase());
                       final matchesIngredients = _selectedIngredientIds.isEmpty || recipe.ingredients.any((ri) => _selectedIngredientIds.contains(ri.ingredient.id));
                       final matchesCategory = _selectedCategoryIds.isEmpty || recipe.categoryIds.any((cId) => _selectedCategoryIds.contains(cId));
-                      return matchesTitle && matchesIngredients && matchesCategory;
+                      final matchesUsage = _sortMode != 'unused' || (_recipeCounts[recipe.id] ?? 0) == 0;
+                      return matchesTitle && matchesIngredients && matchesCategory && matchesUsage;
                     }).toList();
+                    if (_sortMode == 'usage') {
+                      filteredRecipes.sort((a, b) {
+                        final diff = (_recipeCounts[b.id] ?? 0).compareTo(_recipeCounts[a.id] ?? 0);
+                        return diff != 0 ? diff : a.title.compareTo(b.title);
+                      });
+                    }
                     return Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
                       child: Text(
@@ -545,13 +587,20 @@ class _RecipesPageState extends State<RecipesPage> {
 
                       final recipes = snapshot.data ?? [];
 
-                      // Filtrage par titre et ingrédients
-                      final filteredRecipes = recipes.where((recipe) {
+                      // Filtrage par titre, ingrédients et statistiques
+                      var filteredRecipes = recipes.where((recipe) {
                         final matchesTitle = _titleFilter.isEmpty || recipe.title.toLowerCase().contains(_titleFilter.toLowerCase());
                         final matchesIngredients = _selectedIngredientIds.isEmpty || recipe.ingredients.any((ri) => _selectedIngredientIds.contains(ri.ingredient.id));
                         final matchesCategory = _selectedCategoryIds.isEmpty || recipe.categoryIds.any((cId) => _selectedCategoryIds.contains(cId));
-                        return matchesTitle && matchesIngredients && matchesCategory;
+                        final matchesUsage = _sortMode != 'unused' || (_recipeCounts[recipe.id] ?? 0) == 0;
+                        return matchesTitle && matchesIngredients && matchesCategory && matchesUsage;
                       }).toList();
+                      if (_sortMode == 'usage') {
+                        filteredRecipes.sort((a, b) {
+                          final diff = (_recipeCounts[b.id] ?? 0).compareTo(_recipeCounts[a.id] ?? 0);
+                          return diff != 0 ? diff : a.title.compareTo(b.title);
+                        });
+                      }
 
                       if (filteredRecipes.isEmpty) {
                         return const Center(
@@ -669,19 +718,22 @@ class _RecipesPageState extends State<RecipesPage> {
                                                 _buildStatItem(
                                                   Icons.access_time_rounded,
                                                   '${recipe.preparationTime + recipe.cookingTime} min',
-                                                  const Color(
-                                                    0xFF5C6BC0,
-                                                  ), // Soft indigo
+                                                  const Color(0xFF5C6BC0),
                                                 ),
                                                 const SizedBox(width: 24),
                                                 _buildStatItem(
-                                                  Icons
-                                                      .pie_chart_rounded, // "part" icon
+                                                  Icons.pie_chart_rounded,
                                                   '${recipe.servings} portions',
-                                                  const Color(
-                                                    0xFFFF8A65,
-                                                  ), // Soft deep orange
+                                                  const Color(0xFFFF8A65),
                                                 ),
+                                                if ((_recipeCounts[recipe.id] ?? 0) > 0) ...[  
+                                                  const SizedBox(width: 24),
+                                                  _buildStatItem(
+                                                    Icons.restaurant_menu_rounded,
+                                                    '${_recipeCounts[recipe.id]}×',
+                                                    const Color(0xFF26A69A),
+                                                  ),
+                                                ],
                                               ],
                                             ),
                                           ],
@@ -750,6 +802,34 @@ class _RecipesPageState extends State<RecipesPage> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSortChip(IconData icon, String label, bool selected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF6A5AE0) : const Color(0xFF6A5AE0).withOpacity(0.1),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: selected ? Colors.white : const Color(0xFF6A5AE0)),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: GoogleFonts.poppins(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: selected ? Colors.white : const Color(0xFF6A5AE0),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -830,6 +910,7 @@ class _RecipesPageState extends State<RecipesPage> {
       createdAt: DateTime.now(),
       isFavorite: false,
       rating: 0.0,
+      mealTime: MealTime.fromString(data['mealTime'] as String?),
     );
     await Navigator.push(
       context,

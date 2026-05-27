@@ -1,6 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:recipe_planner/domain/entities/recipe.dart' show Recipe;
 import '../../domain/entities/meal_plan.dart';
+import '../../core/constants/meal_time.dart';
+import 'firebase_pantry_repository.dart';
+import 'firebase_stats_repository.dart';
 import 'group_repository.dart';
 
 class FirebaseMealHistoryRepository {
@@ -19,6 +22,8 @@ class FirebaseMealHistoryRepository {
   /// Each day is stored as a separate document with the date as ID
   Future<void> addDayToHistory(DateTime date, List<Meal> mealsForDay) async {
     if (mealsForDay.isEmpty) return;
+
+    final groupId = await _getGroupId();
 
     // Normalize the date locally (remove the time)
     final normalizedDate = DateTime(date.year, date.month, date.day);
@@ -43,9 +48,31 @@ class FirebaseMealHistoryRepository {
     }).toList();
 
     await _history.doc(dateKey).set({
+      'groupId': groupId,
       'date': '${normalizedDate.year}-${normalizedDate.month.toString().padLeft(2, '0')}-${normalizedDate.day.toString().padLeft(2, '0')}',
       'meals': mealsData,
     });
+
+    // Incrémente usageCount dans les documents recette et ingrédient
+    final db = FirebaseFirestore.instance;
+    final batch = db.batch();
+    for (final m in mealsForDay) {
+      if (m.isLeftoverMeal) continue;
+      batch.update(
+        db.collection('recipes').doc(m.recipe.id),
+        {'usageCount': FieldValue.increment(1)},
+      );
+      for (final ing in m.recipe.ingredients) {
+        if (ing.ingredient.id.isNotEmpty) {
+          batch.update(
+            db.collection('ingredients').doc(ing.ingredient.id),
+            {'usageCount': FieldValue.increment(1)},
+          );
+        }
+      }
+    }
+    await batch.commit();
+    FirebaseStatsRepository.instance.invalidateCache();
   }
 
   /// Get all history days, ordered by date descending (most recent first)
@@ -84,6 +111,7 @@ class FirebaseMealHistoryRepository {
           ingredients: const [],
           instructions: const [],
           createdAt: DateTime.now(),
+          mealTime: MealTime.fromString(mealData['mealTime'] as String?),
         );
         final typeStr = mealData['type'] as String? ?? 'lunch';
         final mealType = MealType.values.firstWhere(
@@ -178,11 +206,32 @@ class FirebaseMealHistoryRepository {
       
       if (!isAlreadyInHistory) {
         await addDayToHistory(dateKey, entry.value);
+        // Déduire les ingrédients consommés du frigo/placard
+        await FirebasePantryRepository.instance.deductFromMeals(entry.value);
       }
     }
     
     // Clean up old history to respect maxDays limit
     await cleanOldHistory(maxDays);
+  }
+
+  /// Supprime tout l'historique du groupe
+  Future<void> clearAllHistory() async {
+    final groupId = await _getGroupId();
+    final snapshot = await _history
+        .where('groupId', isEqualTo: groupId)
+        .get();
+    for (final doc in snapshot.docs) {
+      await doc.reference.delete();
+    }
+  }
+
+  /// Supprime un jour entier de l'historique
+  Future<void> deleteDayFromHistory(DateTime date) async {
+    final dateKey = _formatDateKey(
+      DateTime(date.year, date.month, date.day),
+    );
+    await _history.doc(dateKey).delete();
   }
 
   /// Check if a specific date is already in history

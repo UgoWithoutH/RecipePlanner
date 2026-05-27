@@ -12,6 +12,7 @@ import 'presentation/pages/recipes_page.dart';
 import 'presentation/pages/planner_page.dart';
 import 'presentation/pages/ingredients_page.dart';
 import 'presentation/pages/shopping_list_page.dart';
+import 'presentation/pages/fridge_pantry_page.dart';
 import 'presentation/pages/login_page.dart';
 import 'presentation/pages/access_denied_page.dart';
 import 'presentation/pages/no_group_page.dart';
@@ -210,11 +211,12 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
 
-  static const int _pageCount = 4;
+  static const int _pageCount = 5;
   final List<Widget> _pages = const [
     PlannerPage(),
     ShoppingListPage(),
     RecipesPage(),
+    FridgePantryPage(),
     IngredientsPage(),
   ];
 
@@ -240,6 +242,10 @@ class _HomePageState extends State<HomePage> {
           BottomNavigationBarItem(
             icon: Icon(Icons.list),
             label: 'Recettes',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.kitchen_rounded),
+            label: 'Frigo / Placard',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.kitchen),

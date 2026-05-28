@@ -135,16 +135,21 @@ class FirebaseMealHistoryRepository {
     final snapshot = await _history
         .where('groupId', isEqualTo: groupId)
         .get();
-    
+    return _parseHistoryDocs(snapshot.docs);
+  }
+
+  /// Parse a list of Firestore history docs into a [DateTime → List<Meal>] map.
+  /// Extracted to avoid re-reading Firestore when the snapshot is already loaded.
+  Map<DateTime, List<Meal>> _parseHistoryDocs(List<dynamic> docs) {
     final Map<DateTime, List<Meal>> history = {};
-    
-    for (var doc in snapshot.docs) {
+
+    for (var doc in docs) {
       final data = doc.data() as Map<String, dynamic>;
       final parsedDate = DateTime.parse(data['date'] as String);
       // Normalize the date locally without time to avoid timezone issues
       final date = DateTime(parsedDate.year, parsedDate.month, parsedDate.day);
       final mealsData = (data['meals'] as List<dynamic>?) ?? [];
-      
+
       final meals = mealsData.map((m) {
         final mealData = m as Map<String, dynamic>;
         final recipeId = mealData['recipeId'] as String? ?? '';
@@ -197,62 +202,74 @@ class FirebaseMealHistoryRepository {
           userSelected: mealData['userSelected'] as bool? ?? false,
         );
       }).toList();
-      
+
       history[date] = meals;
     }
-    
+
     return history;
   }
 
-  /// Remove history days older than the specified number of days
-  Future<void> cleanOldHistory(int maxDays) async {
-    final groupId = await _getGroupId();
-    // Retrieve all history days for this group, sorted by ascending date
-    final snapshot = await _history
-        .where('groupId', isEqualTo: groupId)
-        .get();
-    final docs = snapshot.docs.toList()
+  /// Remove history days older than [maxDays], reusing [docs] already loaded
+  /// from Firestore to avoid an extra read.
+  Future<void> _cleanOldHistoryFromDocs(List<dynamic> docs, int maxDays) async {
+    final sorted = docs.toList()
       ..sort((a, b) {
         final aDate = (a.data() as Map<String, dynamic>)['date'] as String? ?? '';
         final bDate = (b.data() as Map<String, dynamic>)['date'] as String? ?? '';
         return aDate.compareTo(bDate); // ascending, oldest first
       });
-    // If there are more than maxDays, delete the oldest ones
-    if (docs.length > maxDays) {
-      final toDelete = docs.take(docs.length - maxDays);
-      for (var doc in toDelete) {
+    if (sorted.length > maxDays) {
+      final toDelete = sorted.take(sorted.length - maxDays);
+      for (final doc in toDelete) {
         await doc.reference.delete();
       }
     }
   }
 
-  /// Update history from the current meal plan
-  /// Adds past days from the plan to history, respects maxDays limit
-  Future<void> updateHistoryFromPlan(MealPlan? plan, int maxDays) async {
-    if (plan == null) return;
+  /// Remove history days older than the specified number of days
+  Future<void> cleanOldHistory(int maxDays) async {
+    final groupId = await _getGroupId();
+    final snapshot = await _history
+        .where('groupId', isEqualTo: groupId)
+        .get();
+    await _cleanOldHistoryFromDocs(snapshot.docs, maxDays);
+  }
+
+  /// Update history from the current meal plan.
+  /// Adds past days from the plan to history, respects maxDays limit.
+  /// Returns the final history map (avoids a redundant [getHistory] call by
+  /// the caller — the snapshot is read only once internally).
+  Future<Map<DateTime, List<Meal>>> updateHistoryFromPlan(MealPlan? plan, int maxDays) async {
+    final groupId = await _getGroupId();
+
+    // Single read of the entire history collection for this group.
+    final snapshot = await _history
+        .where('groupId', isEqualTo: groupId)
+        .get();
+    final existingHistory = _parseHistoryDocs(snapshot.docs);
+
+    if (plan == null) return existingHistory;
 
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    
+
     // Get all meals from the plan that are before today
     final pastMeals = plan.meals.where((meal) {
       final mealDate = DateTime(meal.date.year, meal.date.month, meal.date.day);
       return mealDate.isBefore(today);
     }).toList();
     
-    if (pastMeals.isEmpty) return;
-    
+    if (pastMeals.isEmpty) return existingHistory;
+
     // Group meals by date
     final Map<DateTime, List<Meal>> mealsByDate = {};
     for (var meal in pastMeals) {
       final dateKey = DateTime(meal.date.year, meal.date.month, meal.date.day);
       mealsByDate.putIfAbsent(dateKey, () => []).add(meal);
     }
-    
-    // Get existing history to check what's already saved
-    final existingHistory = await getHistory();
-    
+
     // Add new days to history (only if not already present)
+    bool addedNew = false;
     for (var entry in mealsByDate.entries) {
       final dateKey = entry.key;
       final isAlreadyInHistory = existingHistory.keys.any((historyDate) {
@@ -260,7 +277,7 @@ class FirebaseMealHistoryRepository {
                historyDate.month == dateKey.month &&
                historyDate.day == dateKey.day;
       });
-      
+
       if (!isAlreadyInHistory) {
         // Enrichir les repas avec les ingrédients complets AVANT d'appeler
         // addDayToHistory, afin que usageCount des ingrédients soit bien incrémenté.
@@ -292,6 +309,8 @@ class FirebaseMealHistoryRepository {
 
         // Sauvegarder en historique avec les repas enrichis (ingrédients présents)
         await addDayToHistory(dateKey, enrichedMeals);
+        existingHistory[dateKey] = enrichedMeals;
+        addedNew = true;
 
         // Déduire les ingrédients consommés du frigo/placard
         final nonLeftovers = enrichedMeals.where((m) => !m.isLeftoverMeal).toList();
@@ -300,9 +319,20 @@ class FirebaseMealHistoryRepository {
         }
       }
     }
-    
-    // Clean up old history to respect maxDays limit
-    await cleanOldHistory(maxDays);
+
+    // Clean up old history to respect maxDays limit.
+    // Si de nouvelles entrées ont été ajoutées, on relit pour avoir le bon compte.
+    // Sinon on réutilise le snapshot déjà chargé (cas courant, 0 lectures supplémentaires).
+    if (addedNew) {
+      final updatedSnap = await _history
+          .where('groupId', isEqualTo: groupId)
+          .get();
+      await _cleanOldHistoryFromDocs(updatedSnap.docs, maxDays);
+    } else {
+      await _cleanOldHistoryFromDocs(snapshot.docs, maxDays);
+    }
+
+    return existingHistory;
   }
 
   /// Supprime tout l'historique du groupe

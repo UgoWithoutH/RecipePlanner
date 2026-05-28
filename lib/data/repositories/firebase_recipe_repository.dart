@@ -21,85 +21,43 @@ class FirebaseRecipeRepository implements RecipeRepository {
   /// Fetch a single recipe by its ID
   Future<Recipe?> fetchRecipeById(String id) async {
     if (id.isEmpty) return null;
-    // Try to find document by stored 'id' field first
-    final query = await _recipes.where('id', isEqualTo: id).limit(1).get();
-    if (query.docs.isNotEmpty) {
-      final doc = query.docs.first;
-      final data = doc.data() as Map<String, dynamic>;
-      final ingredients = (data['ingredients'] as List<dynamic>? ?? []).map((
-        i,
-      ) {
-        return RecipeIngredient(
-          ingredient: Ingredient(id: i['ingredientId'], name: ''),
-          quantity: (i['quantity'] as num).toDouble(),
-          unit: Unit.values.firstWhere(
-            (u) => u.label == i['unit'],
-            orElse: () => Unit.g,
-          ),
-          notes: i['notes'],
-        );
-      }).toList();
-      return Recipe(
-        id: doc.id,
-        title: data['title'] ?? '',
-        description: data['description'] ?? '',
-        preparationTime: (data['preparationTime'] as num?)?.toInt() ?? 0,
-        cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
-        servings: (data['servings'] as num?)?.toInt() ?? 1,
-        categoryIds: (data['categoryIds'] as List<dynamic>?)
-                ?.map((e) => e.toString())
-                .toList() ??
-            (data['category'] != null && (data['category'] as String).isNotEmpty
-                ? [data['category'] as String]
-                : []),
-        ingredients: ingredients,
-        instructions: List<String>.from(data['instructions'] ?? []),
-        createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
-        isFavorite: data['isFavorite'] ?? false,
-        rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
-        url: data['url'],
-        mealTime: MealTime.fromString(data['mealTime'] as String?),
+    // Le doc ID est toujours égal au champ 'id' (voir createRecipe).
+    // On va directement au document par son ID — une seule lecture Firestore.
+    final snapshot = await _recipes.doc(id).get();
+    if (!snapshot.exists) return null;
+    final data = snapshot.data() as Map<String, dynamic>;
+    final ingredients = (data['ingredients'] as List<dynamic>? ?? []).map((i) {
+      return RecipeIngredient(
+        ingredient: Ingredient(id: i['ingredientId'], name: ''),
+        quantity: (i['quantity'] as num).toDouble(),
+        unit: Unit.values.firstWhere(
+          (u) => u.label == i['unit'],
+          orElse: () => Unit.g,
+        ),
+        notes: i['notes'],
       );
-    }
-    // Fallback: try by doc id
-    final docRef = _recipes.doc(id);
-    final snapshot = await docRef.get();
-    if (snapshot.exists) {
-      final data = snapshot.data() as Map<String, dynamic>;
-      final ingredients = (data['ingredients'] as List<dynamic>? ?? []).map((
-        i,
-      ) {
-        return RecipeIngredient(
-          ingredient: Ingredient(id: i['ingredientId'], name: ''),
-          quantity: (i['quantity'] as num).toDouble(),
-          unit: Unit.values.firstWhere(
-            (u) => u.label == i['unit'],
-            orElse: () => Unit.g,
-          ),
-          notes: i['notes'],
-        );
-      }).toList();
-      return Recipe(
-        id: snapshot.id,
-        title: data['title'] ?? '',
-        description: data['description'] ?? '',
-        preparationTime: (data['preparationTime'] as num?)?.toInt() ?? 0,
-        cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
-        servings: (data['servings'] as num?)?.toInt() ?? 1,
-        categoryIds: (data['categoryIds'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
-            (data['category'] != null && (data['category'] as String).isNotEmpty
-                ? [data['category'] as String]
-                : []),
-        ingredients: ingredients,
-        instructions: List<String>.from(data['instructions'] ?? []),
-        createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
-        isFavorite: data['isFavorite'] ?? false,
-        rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
-        url: data['url'],
-        mealTime: MealTime.fromString(data['mealTime'] as String?),
-      );
-    }
-    return null;
+    }).toList();
+    return Recipe(
+      id: snapshot.id,
+      title: data['title'] ?? '',
+      description: data['description'] ?? '',
+      preparationTime: (data['preparationTime'] as num?)?.toInt() ?? 0,
+      cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
+      servings: (data['servings'] as num?)?.toInt() ?? 1,
+      categoryIds: (data['categoryIds'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          (data['category'] != null && (data['category'] as String).isNotEmpty
+              ? [data['category'] as String]
+              : []),
+      ingredients: ingredients,
+      instructions: List<String>.from(data['instructions'] ?? []),
+      createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
+      isFavorite: data['isFavorite'] ?? false,
+      rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
+      url: data['url'],
+      mealTime: MealTime.fromString(data['mealTime'] as String?),
+    );
   }
 
   @override

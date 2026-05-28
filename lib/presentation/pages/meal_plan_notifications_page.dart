@@ -754,32 +754,38 @@ class _MealPlanNotificationsPageState
             style: GoogleFonts.poppins(fontSize: 12, color: Colors.black45),
           ),
           Expanded(
-            child: Text(
-              title,
-              style: GoogleFonts.poppins(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Colors.black87,
-              ),
-              overflow: TextOverflow.ellipsis,
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    title,
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black87,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (isLeftover)
+                  Container(
+                    margin: const EdgeInsets.only(left: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: Colors.orange[50],
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.orange[200]!),
+                    ),
+                    child: Text(
+                      'Restes',
+                      style: GoogleFonts.poppins(
+                          fontSize: 10, color: Colors.orange[700]),
+                    ),
+                  ),
+              ],
             ),
           ),
-          if (isLeftover)
-            Container(
-              margin: const EdgeInsets.only(left: 4),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(
-                color: Colors.orange[50],
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: Colors.orange[200]!),
-              ),
-              child: Text(
-                'Restes',
-                style: GoogleFonts.poppins(
-                    fontSize: 10, color: Colors.orange[700]),
-              ),
-            ),
         ],
       ),
     );

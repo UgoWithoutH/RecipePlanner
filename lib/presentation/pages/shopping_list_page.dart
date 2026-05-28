@@ -640,42 +640,11 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
                               decorationColor: Colors.grey[400],
                             ),
                           ),
-                          if (!item.isChecked && widget.contributions.isNotEmpty) ...[  
-                            const SizedBox(height: 5),
-                            Wrap(
-                              spacing: 5,
-                              runSpacing: 4,
-                              children: widget.contributions.map((c) {
-                                final label = c.quantity > 0 && c.unit.isNotEmpty
-                                    ? '${c.recipeName} · ${fmtQty(c.quantity)} ${Unit.labelOf(c.unit)}'
-                                    : c.recipeName;
-                                return Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 7, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF6A5AE0).withOpacity(0.08),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Icon(Icons.restaurant_menu_rounded,
-                                          size: 9, color: Color(0xFF6A5AE0)),
-                                      const SizedBox(width: 3),
-                                      Text(label,
-                                          style: GoogleFonts.poppins(
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.w500,
-                                              color: const Color(0xFF6A5AE0))),
-                                    ],
-                                  ),
-                                );
-                              }).toList(),
-                            ),
-                          ],
+
                         ],
                       ),
                     ),
+
                     if (item.quantity > 0)
                       Container(
                         padding: const EdgeInsets.symmetric(

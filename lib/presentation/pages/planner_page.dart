@@ -2013,26 +2013,12 @@ class _PlannerPageState extends State<PlannerPage> {
   }
 
   void _openRecipeDetail(Meal meal) {
-    // Show x2 ingredients if this meal has a leftover on the next day
-    int? ingredientMultiplier;
-    if (!meal.isLeftoverMeal && _generatedMealPlan != null) {
-      final nextDay = meal.date.add(const Duration(days: 1));
-      final hasLeftoverNextDay = _generatedMealPlan!.meals.any((m) =>
-          m.recipe.id == meal.recipe.id &&
-          m.date.year == nextDay.year &&
-          m.date.month == nextDay.month &&
-          m.date.day == nextDay.day &&
-          m.isLeftoverMeal);
-      if (hasLeftoverNextDay) ingredientMultiplier = 2;
-    }
-
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => RecipeDetailPage(
           recipeId: meal.recipe.id,
           initialRecipe: meal.recipe,
-          ingredientMultiplier: ingredientMultiplier,
         ),
       ),
     ).then((_) {
@@ -3515,7 +3501,7 @@ class _PlannerPageState extends State<PlannerPage> {
                         ],
                         const SizedBox(height: 8),
                         _buildMealDetails(),
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 88),
                       ],
                     ],
                   ),

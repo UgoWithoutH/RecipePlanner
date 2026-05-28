@@ -3284,7 +3284,26 @@ class _PlannerPageState extends State<PlannerPage> {
                         // ── Boutons supprimer ──
                         Row(
                           children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: _mealHistory.isNotEmpty ? _deleteHistory : null,
+                                icon: const Icon(Icons.history_toggle_off_rounded, size: 15),
+                                label: Text(
+                                  'Supprimer l\'historique',
+                                  style: GoogleFonts.poppins(
+                                      fontWeight: FontWeight.w600, fontSize: 13),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.red.shade600,
+                                  side: BorderSide(color: Colors.red.shade200),
+                                  padding: const EdgeInsets.symmetric(vertical: 11),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12)),
+                                ),
+                              ),
+                            ),
                             if (_generatedMealPlan != null) ...[
+                              const SizedBox(width: 8),
                               Expanded(
                                 child: OutlinedButton.icon(
                                   onPressed: _deletePlan,
@@ -3303,27 +3322,7 @@ class _PlannerPageState extends State<PlannerPage> {
                                   ),
                                 ),
                               ),
-                              if (_mealHistory.isNotEmpty) const SizedBox(width: 8),
                             ],
-                            if (_mealHistory.isNotEmpty)
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: _deleteHistory,
-                                  icon: const Icon(Icons.history_toggle_off_rounded, size: 15),
-                                  label: Text(
-                                    'Supprimer l\'historique',
-                                    style: GoogleFonts.poppins(
-                                        fontWeight: FontWeight.w600, fontSize: 13),
-                                  ),
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.red.shade600,
-                                    side: BorderSide(color: Colors.red.shade200),
-                                    padding: const EdgeInsets.symmetric(vertical: 11),
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12)),
-                                  ),
-                                ),
-                              ),
                           ],
                         ),
                         const SizedBox(height: 8),

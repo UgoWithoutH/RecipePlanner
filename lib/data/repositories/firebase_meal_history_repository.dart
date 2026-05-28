@@ -80,7 +80,6 @@ class FirebaseMealHistoryRepository {
     final groupId = await _getGroupId();
     final snapshot = await _history
         .where('groupId', isEqualTo: groupId)
-        .orderBy('date', descending: true)
         .get();
     
     final Map<DateTime, List<Meal>> history = {};
@@ -157,9 +156,13 @@ class FirebaseMealHistoryRepository {
     // Retrieve all history days for this group, sorted by ascending date
     final snapshot = await _history
         .where('groupId', isEqualTo: groupId)
-        .orderBy('date', descending: false)
         .get();
-    final docs = snapshot.docs;
+    final docs = snapshot.docs.toList()
+      ..sort((a, b) {
+        final aDate = (a.data() as Map<String, dynamic>)['date'] as String? ?? '';
+        final bDate = (b.data() as Map<String, dynamic>)['date'] as String? ?? '';
+        return aDate.compareTo(bDate); // ascending, oldest first
+      });
     // If there are more than maxDays, delete the oldest ones
     if (docs.length > maxDays) {
       final toDelete = docs.take(docs.length - maxDays);

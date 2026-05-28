@@ -55,6 +55,10 @@ class _PlannerPageState extends State<PlannerPage> {
 
   int _maxHistoryDays = 30; // Default value, recalculated based on recipe count
 
+  /// Cache des recettes pour la durée de la session (évite les lectures répétées).
+  /// Invalidé uniquement si l'utilisateur ajoute/modifie/supprime une recette.
+  List<Recipe>? _cachedRecipes;
+
   DateTime? _selectedStartDate = DateTime.now();
   int? _selectedDuration = 7;
   Set<String> _selectedCategories = {}; // category IDs
@@ -175,6 +179,8 @@ class _PlannerPageState extends State<PlannerPage> {
   /// Charge les noms des utilisateurs du groupe dans [_userNames].
   /// Indépendant des autres chargements pour être résilient aux exceptions.
   Future<void> _loadUserNames() async {
+    // Garde : si les noms sont déjà chargés, pas besoin de relire Firestore.
+    if (_userNames.isNotEmpty) return;
     try {
       final realUsers = await FirebaseUserRepository().getUsers();
       for (final u in realUsers) {
@@ -199,7 +205,7 @@ class _PlannerPageState extends State<PlannerPage> {
     await _loadUserNames();
     try {
       // Load recipe count to calculate the history window size
-      final allRecipes = await _loadRecipes();
+      final allRecipes = await _loadRecipes(forceRefresh: true);
       _maxHistoryDays = allRecipes.length;
 
       final plans = await _mealPlanRepo.getAllMealPlans();
@@ -238,11 +244,13 @@ class _PlannerPageState extends State<PlannerPage> {
           _focusedDay = planStart;
         }
         _calendarFormat = null; // Reset to recalculate format
-        // Update history from loaded plan
-        await _historyRepo.updateHistoryFromPlan(
+        // Update history from loaded plan.
+        // La méthode retourne l'historique final — pas besoin de rappeler getHistory().
+        final updatedHistory = await _historyRepo.updateHistoryFromPlan(
           _generatedMealPlan,
           _maxHistoryDays,
         );
+        _mealHistory = updatedHistory;
         // Planifie silencieusement les notifications (pour tous les utilisateurs)
         _autoScheduleNotifications(loadedPlan).ignore();
 
@@ -251,13 +259,13 @@ class _PlannerPageState extends State<PlannerPage> {
           final snapshot = await FirebasePantrySnapshotRepository.instance.get();
           if (mounted) setState(() => _pantrySnapshot = snapshot);
         } catch (_) {}
+      } else {
+        // Pas de plan — charger uniquement l'historique
+        _mealHistory = await _historyRepo.getHistory();
       }
-      // Load history into state (stubs are fine here; detail page lazy-loads)
-      final rawHistory = await _historyRepo.getHistory();
-      _mealHistory = rawHistory;
       // History-only mode: if no plan loaded, initialise selected date from history
-      if (_generatedMealPlan == null && rawHistory.isNotEmpty && _selectedMealDate == null) {
-        final sortedDates = rawHistory.keys.toList()..sort((a, b) => b.compareTo(a));
+      if (_generatedMealPlan == null && _mealHistory.isNotEmpty && _selectedMealDate == null) {
+        final sortedDates = _mealHistory.keys.toList()..sort((a, b) => b.compareTo(a));
         _selectedMealDate = sortedDates.first;
         _focusedDay = sortedDates.first;
         _calendarFormat = CalendarFormat.month;
@@ -392,30 +400,17 @@ class _PlannerPageState extends State<PlannerPage> {
   }
 
   Future<void> _pickCategories({VoidCallback? onUpdated}) async {
-    // Load categories from the categories collection (name + ID)
-    final groupId = await GroupRepository.instance.getCurrentGroupId();
-    if (groupId == null) return;
-    final snapshot = await FirebaseFirestore.instance
-        .collection('categories')
-        .where('groupId', isEqualTo: groupId)
-        .get();
-    
-    final allCategories = snapshot.docs.map((doc) {
-      final data = doc.data();
-      return {
-        'id': doc.id,
-        'name': (data['name'] as String? ?? '').trim(),
-        'color': data['color'] is int ? data['color'] as int : 0xFF6A5AE0,
-      };
-    }).where((e) => (e['name'] as String).isNotEmpty).toList()
+    // Réutilise le cache _categoryDataById si disponible — sinon lit Firestore.
+    if (_categoryDataById.isEmpty) {
+      await _loadAllCategories();
+    }
+    if (!mounted) return;
+
+    final allCategories = _categoryDataById.values.toList()
       ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
 
-    // Update local data map
-    final dataById = <String, Map<String, dynamic>>{
-      for (final e in allCategories) e['id'] as String: e
-    };
-
-    if (!mounted) return;
+    // dataById est _categoryDataById lui-même (déjà à jour)
+    final dataById = _categoryDataById;
 
     final validCategoryIds = allCategories.map((e) => e['id'] as String).toSet();
     final tempSelected = Set<String>.from(_selectedCategories.where((id) => validCategoryIds.contains(id)));
@@ -1320,7 +1315,7 @@ class _PlannerPageState extends State<PlannerPage> {
     // New plan — clear all auto-change bans
     _autoChangeBannedRecipes.clear();
     try {
-      final allRecipes = await _loadRecipes();
+      final allRecipes = await _loadRecipes(forceRefresh: true);
       // History duration is always based on the total number of recipes (all categories)
       _maxHistoryDays = allRecipes.length;
 
@@ -1455,9 +1450,14 @@ class _PlannerPageState extends State<PlannerPage> {
     }
   }
 
-  Future<List<Recipe>> _loadRecipes() async {
-    return FirebaseRecipeRepository().fetchAllRecipes();
+  Future<List<Recipe>> _loadRecipes({bool forceRefresh = false}) async {
+    if (!forceRefresh && _cachedRecipes != null) return _cachedRecipes!;
+    _cachedRecipes = await FirebaseRecipeRepository().fetchAllRecipes();
+    return _cachedRecipes!;
   }
+
+  /// Invalide le cache recettes (à appeler après ajout/modification/suppression).
+  void _invalidateRecipeCache() => _cachedRecipes = null;
 
   /// Planifie silencieusement les notifications locales pour [plan] en utilisant
   /// les préférences sauvegardées de l'utilisateur courant.
@@ -3321,7 +3321,7 @@ class _PlannerPageState extends State<PlannerPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (_generatedMealPlan == null && !_isLoading) ...[
+                      if (_generatedMealPlan == null && _mealHistory.isEmpty && !_isLoading) ...[
                         SizedBox(height: _mealHistory.isEmpty ? 40 : 16),
                         Builder(builder: (context) {
                           final header = _ModernPlannerHeader(

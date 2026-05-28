@@ -24,13 +24,11 @@ import '../../data/repositories/firebase_stats_repository.dart';
 class RecipeDetailPage extends StatefulWidget {
   final String recipeId;
   final Recipe? initialRecipe;
-  final int? ingredientMultiplier;
   final bool isCatalogRecipe;
   const RecipeDetailPage({
     super.key,
     required this.recipeId,
     this.initialRecipe,
-    this.ingredientMultiplier,
     this.isCatalogRecipe = false,
   });
 
@@ -62,7 +60,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       }
     }
   Recipe? _recipe;
-  int? _ingredientMultiplier;
   bool _isDeleting = false;
 
   List<UserRecipeServing> _userServings = [];
@@ -88,7 +85,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   void initState() {
     super.initState();
     _recipe = widget.initialRecipe;
-    _ingredientMultiplier = widget.ingredientMultiplier;
     _loadIngredientTypes();
     if (widget.isCatalogRecipe) {
       _isLoadingRecipe = false;
@@ -658,37 +654,53 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                 'Portions',
                                 const Color(0xFF66BB6A),
                               ),
-                              ...[
-                                Container(width: 1, height: 40, color: Colors.grey[200]),
-                                _buildModernStatItem(
-                                  currentRecipe.mealTime == MealTime.lunchOnly
-                                      ? Icons.wb_sunny_rounded
-                                      : currentRecipe.mealTime == MealTime.dinnerOnly
-                                          ? Icons.nights_stay_rounded
-                                          : Icons.sunny_snowing,
-                                  currentRecipe.mealTime.shortLabel,
-                                  'Repas',
-                                  currentRecipe.mealTime == MealTime.lunchOnly
-                                      ? Colors.orange.shade700
-                                      : currentRecipe.mealTime == MealTime.dinnerOnly
-                                          ? const Color(0xFF5C6BC0)
-                                          : const Color(0xFF6A5AE0),
-                                ),
-                              ],
-                              if (!widget.isCatalogRecipe && _usageCount > 0) ...[
-                                Container(width: 1, height: 40, color: Colors.grey[200]),
-                                _buildModernStatItem(
-                                  Icons.bar_chart_rounded,
-                                  '$_usageCount',
-                                  _usageCount == 1 ? 'fois mangé' : 'fois mangé',
-                                  const Color(0xFFF57C00),
-                                ),
-                              ],
+                              Container(width: 1, height: 40, color: Colors.grey[200]),
+                              _buildModernStatItem(
+                                currentRecipe.mealTime == MealTime.lunchOnly
+                                    ? Icons.wb_sunny_rounded
+                                    : currentRecipe.mealTime == MealTime.dinnerOnly
+                                        ? Icons.nights_stay_rounded
+                                        : Icons.sunny_snowing,
+                                currentRecipe.mealTime.shortLabel,
+                                'Repas',
+                                currentRecipe.mealTime == MealTime.lunchOnly
+                                    ? Colors.orange.shade700
+                                    : currentRecipe.mealTime == MealTime.dinnerOnly
+                                        ? const Color(0xFF5C6BC0)
+                                        : const Color(0xFF6A5AE0),
+                              ),
                             ],
                           ),
                         ),
 
-
+                        // Usage count — badge séparé
+                        if (!widget.isCatalogRecipe && _usageCount > 0) ...[
+                          const SizedBox(height: 12),
+                          Center(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF57C00).withOpacity(0.09),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.bar_chart_rounded, size: 15, color: Color(0xFFF57C00)),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Cuisiné $_usageCount fois',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: const Color(0xFFF57C00),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
 
                         const SizedBox(height: 40),
 
@@ -704,17 +716,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                 color: Colors.black87,
                               ),
                             ),
-                            if (_ingredientMultiplier != null && _ingredientMultiplier! > 1) ...[
-                              const SizedBox(width: 10),
-                              Text(
-                                '×${_ingredientMultiplier}',
-                                style: GoogleFonts.poppins(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.deepPurpleAccent,
-                                ),
-                              ),
-                            ],
+
                           ],
                         ),
                         const SizedBox(height: 16),
@@ -961,6 +963,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   Widget _buildModernStatItem(IconData icon, String value, String label, Color color) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           padding: const EdgeInsets.all(12),
@@ -968,21 +971,21 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             color: color.withOpacity(0.1),
             shape: BoxShape.circle,
           ),
-          child: Icon(icon, size: 24, color: color),
+          child: Icon(icon, size: 22, color: color),
         ),
         const SizedBox(height: 8),
         Text(
           value,
           style: GoogleFonts.poppins(
             fontWeight: FontWeight.w700,
-            fontSize: 15,
+            fontSize: 14,
             color: Colors.black87,
           ),
         ),
         Text(
           label,
           style: GoogleFonts.poppins(
-            fontSize: 12,
+            fontSize: 11,
             color: Colors.grey[600],
           ),
         ),

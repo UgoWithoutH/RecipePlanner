@@ -678,10 +678,10 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                               if (!widget.isCatalogRecipe && _usageCount > 0) ...[
                                 Container(width: 1, height: 40, color: Colors.grey[200]),
                                 _buildModernStatItem(
-                                  Icons.restaurant_menu_rounded,
+                                  Icons.bar_chart_rounded,
                                   '$_usageCount',
                                   _usageCount == 1 ? 'fois mangé' : 'fois mangé',
-                                  const Color(0xFF26A69A),
+                                  const Color(0xFFF57C00),
                                 ),
                               ],
                             ],

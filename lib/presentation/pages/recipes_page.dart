@@ -462,7 +462,7 @@ class _RecipesPageState extends State<RecipesPage> {
                           _buildSortChip(Icons.bar_chart_rounded, 'Plus cuisinées', _sortMode == 'usage',
                               () => setState(() => _sortMode = 'usage')),
                           const SizedBox(width: 8),
-                          _buildSortChip(Icons.new_releases_rounded, 'Jamais cuisinées', _sortMode == 'unused',
+                          _buildSortChip(Icons.bar_chart_rounded, 'Jamais cuisinées', _sortMode == 'unused',
                               () => setState(() => _sortMode = _sortMode == 'unused' ? 'alpha' : 'unused')),
                         ],
                       ),
@@ -726,12 +726,29 @@ class _RecipesPageState extends State<RecipesPage> {
                                                   '${recipe.servings} portions',
                                                   const Color(0xFFFF8A65),
                                                 ),
-                                                if ((_recipeCounts[recipe.id] ?? 0) > 0) ...[  
-                                                  const SizedBox(width: 24),
-                                                  _buildStatItem(
-                                                    Icons.restaurant_menu_rounded,
-                                                    '${_recipeCounts[recipe.id]}×',
-                                                    const Color(0xFF26A69A),
+                                                if ((_recipeCounts[recipe.id] ?? 0) > 0) ...[
+                                                  const SizedBox(width: 12),
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(0xFFF57C00).withOpacity(0.12),
+                                                      borderRadius: BorderRadius.circular(20),
+                                                    ),
+                                                    child: Row(
+                                                      mainAxisSize: MainAxisSize.min,
+                                                      children: [
+                                                        const Icon(Icons.bar_chart_rounded, size: 12, color: Color(0xFFF57C00)),
+                                                        const SizedBox(width: 3),
+                                                        Text(
+                                                          '${_recipeCounts[recipe.id]}×',
+                                                          style: GoogleFonts.poppins(
+                                                            fontSize: 11,
+                                                            fontWeight: FontWeight.w700,
+                                                            color: const Color(0xFFF57C00),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
                                                   ),
                                                 ],
                                               ],

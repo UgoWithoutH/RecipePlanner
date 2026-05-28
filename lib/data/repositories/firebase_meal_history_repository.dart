@@ -2,7 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:recipe_planner/domain/entities/recipe.dart' show Recipe;
 import '../../domain/entities/meal_plan.dart';
 import '../../core/constants/meal_time.dart';
+import '../../core/utils/ingredient_name_cache.dart';
 import 'firebase_pantry_repository.dart';
+import 'firebase_recipe_repository.dart';
 import 'firebase_stats_repository.dart';
 import 'group_repository.dart';
 
@@ -20,7 +22,9 @@ class FirebaseMealHistoryRepository {
 
   /// Add meals to history for a specific date
   /// Each day is stored as a separate document with the date as ID
-  Future<void> addDayToHistory(DateTime date, List<Meal> mealsForDay) async {
+  /// If [previousMeals] is provided, only the diff (removed/added) is reflected
+  /// in usageCount — avoids double-counting when updating an existing day.
+  Future<void> addDayToHistory(DateTime date, List<Meal> mealsForDay, {List<Meal>? previousMeals}) async {
     if (mealsForDay.isEmpty) return;
 
     final groupId = await _getGroupId();
@@ -53,24 +57,74 @@ class FirebaseMealHistoryRepository {
       'meals': mealsData,
     });
 
-    // Incrémente usageCount dans les documents recette et ingrédient
+    // Calcule le diff pour usageCount :
+    // - Si previousMeals est fourni → décrémenter les recettes supprimées, incrémenter les nouvelles
+    // - Sinon (premier ajout) → incrémenter toutes les recettes du jour
     final db = FirebaseFirestore.instance;
     final batch = db.batch();
-    for (final m in mealsForDay) {
-      if (m.isLeftoverMeal) continue;
-      batch.update(
-        db.collection('recipes').doc(m.recipe.id),
-        {'usageCount': FieldValue.increment(1)},
-      );
-      for (final ing in m.recipe.ingredients) {
-        if (ing.ingredient.id.isNotEmpty) {
-          batch.update(
-            db.collection('ingredients').doc(ing.ingredient.id),
-            {'usageCount': FieldValue.increment(1)},
-          );
+
+    if (previousMeals != null) {
+      // Recettes retirées (dans previous mais plus dans new)
+      final removedMeals = previousMeals.where((prev) =>
+          !prev.isLeftoverMeal &&
+          !mealsForDay.any((m) =>
+              m.recipe.id == prev.recipe.id &&
+              m.type == prev.type &&
+              m.isLeftoverMeal == prev.isLeftoverMeal));
+      for (final m in removedMeals) {
+        batch.update(
+          db.collection('recipes').doc(m.recipe.id),
+          {'usageCount': FieldValue.increment(-1)},
+        );
+        for (final ing in m.recipe.ingredients) {
+          if (ing.ingredient.id.isNotEmpty) {
+            batch.update(
+              db.collection('ingredients').doc(ing.ingredient.id),
+              {'usageCount': FieldValue.increment(-1)},
+            );
+          }
+        }
+      }
+      // Recettes ajoutées (dans new mais pas dans previous)
+      final addedMeals = mealsForDay.where((m) =>
+          !m.isLeftoverMeal &&
+          !previousMeals.any((prev) =>
+              prev.recipe.id == m.recipe.id &&
+              prev.type == m.type &&
+              prev.isLeftoverMeal == m.isLeftoverMeal));
+      for (final m in addedMeals) {
+        batch.update(
+          db.collection('recipes').doc(m.recipe.id),
+          {'usageCount': FieldValue.increment(1)},
+        );
+        for (final ing in m.recipe.ingredients) {
+          if (ing.ingredient.id.isNotEmpty) {
+            batch.update(
+              db.collection('ingredients').doc(ing.ingredient.id),
+              {'usageCount': FieldValue.increment(1)},
+            );
+          }
+        }
+      }
+    } else {
+      // Premier ajout — incrémenter toutes les recettes du jour
+      for (final m in mealsForDay) {
+        if (m.isLeftoverMeal) continue;
+        batch.update(
+          db.collection('recipes').doc(m.recipe.id),
+          {'usageCount': FieldValue.increment(1)},
+        );
+        for (final ing in m.recipe.ingredients) {
+          if (ing.ingredient.id.isNotEmpty) {
+            batch.update(
+              db.collection('ingredients').doc(ing.ingredient.id),
+              {'usageCount': FieldValue.increment(1)},
+            );
+          }
         }
       }
     }
+
     await batch.commit();
     FirebaseStatsRepository.instance.invalidateCache();
   }
@@ -208,9 +262,42 @@ class FirebaseMealHistoryRepository {
       });
       
       if (!isAlreadyInHistory) {
-        await addDayToHistory(dateKey, entry.value);
+        // Enrichir les repas avec les ingrédients complets AVANT d'appeler
+        // addDayToHistory, afin que usageCount des ingrédients soit bien incrémenté.
+        // Les repas chargés depuis le plan ont ingredients: [] par défaut.
+        final enrichedMeals = <Meal>[];
+        for (final meal in entry.value) {
+          if (meal.isLeftoverMeal) {
+            enrichedMeals.add(meal);
+            continue;
+          }
+          final fullRecipe = await FirebaseRecipeRepository().fetchRecipeById(meal.recipe.id);
+          if (fullRecipe != null && fullRecipe.ingredients.isNotEmpty) {
+            final ids = fullRecipe.ingredients
+                .map((i) => i.ingredient.id)
+                .where((id) => id.isNotEmpty)
+                .toList();
+            final nameMap = await IngredientNameCache.instance.fetchNamesForIds(ids);
+            final resolved = fullRecipe.copyWith(
+              ingredients: fullRecipe.ingredients.map((ri) {
+                final name = nameMap[ri.ingredient.id] ?? ri.ingredient.name;
+                return ri.copyWith(ingredient: ri.ingredient.copyWith(name: name));
+              }).toList(),
+            );
+            enrichedMeals.add(meal.copyWith(recipe: resolved));
+          } else {
+            enrichedMeals.add(meal);
+          }
+        }
+
+        // Sauvegarder en historique avec les repas enrichis (ingrédients présents)
+        await addDayToHistory(dateKey, enrichedMeals);
+
         // Déduire les ingrédients consommés du frigo/placard
-        await FirebasePantryRepository.instance.deductFromMeals(entry.value);
+        final nonLeftovers = enrichedMeals.where((m) => !m.isLeftoverMeal).toList();
+        if (nonLeftovers.isNotEmpty) {
+          await FirebasePantryRepository.instance.deductFromMeals(nonLeftovers);
+        }
       }
     }
     
@@ -224,17 +311,82 @@ class FirebaseMealHistoryRepository {
     final snapshot = await _history
         .where('groupId', isEqualTo: groupId)
         .get();
+
+    final db = FirebaseFirestore.instance;
+
+    // Collecter les recipeIds uniques (non-leftovers) présents dans l'historique
+    final recipeIdsSeen = <String>{};
     for (final doc in snapshot.docs) {
-      await doc.reference.delete();
+      final data = doc.data() as Map<String, dynamic>;
+      final mealsData = (data['meals'] as List<dynamic>?) ?? [];
+      for (final m in mealsData) {
+        final mealData = m as Map<String, dynamic>;
+        if (mealData['isLeftoverMeal'] as bool? ?? false) continue;
+        final recipeId = mealData['recipeId'] as String? ?? '';
+        if (recipeId.isNotEmpty) recipeIdsSeen.add(recipeId);
+      }
     }
+
+    // Collecter les ingredientIds via les recettes complètes
+    final ingredientIdsSeen = <String>{};
+    for (final recipeId in recipeIdsSeen) {
+      try {
+        final recipeDoc = await db.collection('recipes').doc(recipeId).get();
+        if (!recipeDoc.exists) continue;
+        final ingredients = (recipeDoc.data()?['ingredients'] as List<dynamic>?) ?? [];
+        for (final ing in ingredients) {
+          final ingId = (ing as Map<String, dynamic>)['ingredientId'] as String? ?? '';
+          if (ingId.isNotEmpty) ingredientIdsSeen.add(ingId);
+        }
+      } catch (_) {}
+    }
+
+    // Supprimer les docs d'historique et remettre usageCount à 0
+    // On utilise set(0) et non increment(-1) pour éviter de passer en négatif
+    // si les stats ont été réinitialisées manuellement avant la suppression.
+    final batch = db.batch();
+    for (final doc in snapshot.docs) {
+      batch.delete(doc.reference);
+    }
+    for (final recipeId in recipeIdsSeen) {
+      batch.update(db.collection('recipes').doc(recipeId), {'usageCount': 0});
+    }
+    for (final ingId in ingredientIdsSeen) {
+      batch.update(db.collection('ingredients').doc(ingId), {'usageCount': 0});
+    }
+    await batch.commit();
+
+    FirebaseStatsRepository.instance.invalidateCache();
   }
 
-  /// Supprime un jour entier de l'historique
-  Future<void> deleteDayFromHistory(DateTime date) async {
+  /// Supprime un jour entier de l'historique et décrémente usageCount
+  Future<void> deleteDayFromHistory(DateTime date, {List<Meal>? mealsBeingDeleted}) async {
     final dateKey = _formatDateKey(
       DateTime(date.year, date.month, date.day),
     );
     await _history.doc(dateKey).delete();
+
+    if (mealsBeingDeleted != null && mealsBeingDeleted.isNotEmpty) {
+      final db = FirebaseFirestore.instance;
+      final batch = db.batch();
+      for (final m in mealsBeingDeleted) {
+        if (m.isLeftoverMeal) continue;
+        batch.update(
+          db.collection('recipes').doc(m.recipe.id),
+          {'usageCount': FieldValue.increment(-1)},
+        );
+        for (final ing in m.recipe.ingredients) {
+          if (ing.ingredient.id.isNotEmpty) {
+            batch.update(
+              db.collection('ingredients').doc(ing.ingredient.id),
+              {'usageCount': FieldValue.increment(-1)},
+            );
+          }
+        }
+      }
+      await batch.commit();
+      FirebaseStatsRepository.instance.invalidateCache();
+    }
   }
 
   /// Check if a specific date is already in history

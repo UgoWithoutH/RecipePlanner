@@ -147,11 +147,37 @@ class FirebasePantryRepository {
           if (existing.ingredientId.isNotEmpty) byId[existing.ingredientId] = updated;
           byName[existing.name.toLowerCase().trim()] = updated;
         } else {
-          // Créer un nouvel item minimal dans l'unité de la recette
+          // Récupérer typeId/typeName depuis le document ingredient Firestore
+          String typeId = '';
+          String typeName = '';
+          if (ingredient.ingredient.id.isNotEmpty) {
+            try {
+              final doc = await FirebaseFirestore.instance
+                  .collection('ingredients')
+                  .doc(ingredient.ingredient.id)
+                  .get();
+              if (doc.exists) {
+                final data = doc.data() as Map<String, dynamic>;
+                typeId = data['typeId'] as String? ?? '';
+                if (typeId.isNotEmpty) {
+                  final typeDoc = await FirebaseFirestore.instance
+                      .collection('ingredient_types')
+                      .doc(typeId)
+                      .get();
+                  if (typeDoc.exists) {
+                    typeName = (typeDoc.data() as Map<String, dynamic>)['name'] as String? ?? '';
+                  }
+                }
+              }
+            } catch (_) {}
+          }
+          // Créer un nouvel item dans l'unité de la recette
           final newItem = PantryItem(
             id: '',
             name: ingredient.ingredient.name,
             ingredientId: ingredient.ingredient.id,
+            typeId: typeId,
+            typeName: typeName,
             quantity: ingredient.quantity * meal.recipeMultiplier,
             unit: ingredient.unit,
             updatedAt: DateTime.now(),

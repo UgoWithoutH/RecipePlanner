@@ -63,10 +63,14 @@ class _IngredientsPageState extends State<IngredientsPage> {
     setState(() {
       _types = typesList;
       _ingredients = snap.docs
-          .map((doc) => {
-                'id': doc.id,
-                'name': doc.get('name'),
-                'typeId': doc.data().toString().contains('typeId') ? doc.get('typeId') : null,
+          .map((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                return {
+                  'id': doc.id,
+                  'name': data['name'],
+                  'typeId': data.containsKey('typeId') ? data['typeId'] : null,
+                  'usageCount': (data['usageCount'] as num?)?.toInt() ?? 0,
+                };
               })
           .toList()
         ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
@@ -455,10 +459,13 @@ class _IngredientsPageState extends State<IngredientsPage> {
     // Recettes du groupe
     final groupSnap = results[0] as QuerySnapshot;
     final groupRecipes = <Recipe>[];
+    final Map<String, int> groupRecipeCounts = {};
     for (final doc in groupSnap.docs) {
       final data = doc.data() as Map<String, dynamic>;
       final ingredients = data['ingredients'] as List<dynamic>? ?? [];
       if (ingredients.any((i) => i['ingredientId'] == ingredientId)) {
+        final usage = (data['usageCount'] as num?)?.toInt() ?? 0;
+        if (usage > 0) groupRecipeCounts[doc.id] = usage;
         final rawIngredients = data['ingredients'] as List<dynamic>? ?? [];
         final mappedIngredients = rawIngredients.map((i) {
           return RecipeIngredient(
@@ -521,6 +528,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
         ingredientName: ingredientName,
         recipes: groupRecipes,
         catalogRecipes: catalogRecipes,
+        recipeCounts: groupRecipeCounts,
         initialChildSize: initial,
         maxChildSize: maxFraction,
       ),
@@ -745,7 +753,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
                           _buildSortChip(Icons.bar_chart_rounded, 'Plus utilisés', _sortMode == 'usage',
                               () => setState(() => _sortMode = 'usage')),
                           const SizedBox(width: 8),
-                          _buildSortChip(Icons.new_releases_rounded, 'Jamais utilisés', _sortMode == 'unused',
+                          _buildSortChip(Icons.bar_chart_rounded, 'Jamais utilisés', _sortMode == 'unused',
                               () => setState(() => _sortMode = _sortMode == 'unused' ? 'alpha' : 'unused')),
                         ],
                       ),
@@ -768,11 +776,11 @@ class _IngredientsPageState extends State<IngredientsPage> {
                             filtered = filtered.where((ing) => ing['typeId'] != null && _selectedTypeIds.contains(ing['typeId'])).toList();
                           }
                           if (_sortMode == 'unused') {
-                            filtered = filtered.where((ing) => (_ingredientCounts[ing['id'] as String] ?? 0) == 0).toList();
+                            filtered = filtered.where((ing) => ((ing['usageCount'] as int?) ?? 0) == 0).toList();
                           }
                           if (_sortMode == 'usage') {
                             filtered.sort((a, b) {
-                              final diff = (_ingredientCounts[b['id'] as String] ?? 0).compareTo(_ingredientCounts[a['id'] as String] ?? 0);
+                              final diff = ((b['usageCount'] as int?) ?? 0).compareTo((a['usageCount'] as int?) ?? 0);
                               return diff != 0 ? diff : (a['name'] as String).compareTo(b['name'] as String);
                             });
                           }
@@ -906,6 +914,29 @@ class _IngredientsPageState extends State<IngredientsPage> {
                                                       ],
                                                     ),
                                                   ),
+                                                if (((ing['usageCount'] as int?) ?? 0) > 0)
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(0xFFF57C00).withOpacity(0.12),
+                                                      borderRadius: BorderRadius.circular(20),
+                                                    ),
+                                                    child: Row(
+                                                      mainAxisSize: MainAxisSize.min,
+                                                      children: [
+                                                        const Icon(Icons.bar_chart_rounded, size: 12, color: Color(0xFFF57C00)),
+                                                        const SizedBox(width: 3),
+                                                        Text(
+                                                          '${ing['usageCount']}×',
+                                                          style: GoogleFonts.poppins(
+                                                            fontSize: 11,
+                                                            fontWeight: FontWeight.w700,
+                                                            color: const Color(0xFFF57C00),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
                                               ],
                                             ),
                                           ),
@@ -989,6 +1020,7 @@ class _RecipesForIngredientSheet extends StatelessWidget {
   final String ingredientName;
   final List<Recipe> recipes;
   final List<Map<String, dynamic>> catalogRecipes;
+  final Map<String, int> recipeCounts;
   final double initialChildSize;
   final double maxChildSize;
 
@@ -996,6 +1028,7 @@ class _RecipesForIngredientSheet extends StatelessWidget {
     required this.ingredientName,
     required this.recipes,
     required this.catalogRecipes,
+    required this.recipeCounts,
     required this.initialChildSize,
     required this.maxChildSize,
   });
@@ -1096,6 +1129,7 @@ class _RecipesForIngredientSheet extends StatelessWidget {
                                 padding: const EdgeInsets.only(bottom: 8),
                                 child: _RecipeItem(
                                   title: recipe.title,
+                                  usageCount: recipeCounts[recipe.id],
                                   onTap: () => Navigator.push(
                                     context,
                                     MaterialPageRoute(
@@ -1207,8 +1241,9 @@ class _SectionHeader extends StatelessWidget {
 
 class _RecipeItem extends StatelessWidget {
   final String title;
+  final int? usageCount;
   final VoidCallback? onTap;
-  const _RecipeItem({required this.title, this.onTap});
+  const _RecipeItem({required this.title, this.usageCount, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -1243,7 +1278,32 @@ class _RecipeItem extends StatelessWidget {
                     ),
                   ),
                 ),
-
+                if ((usageCount ?? 0) > 0) ...
+                  [
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF57C00).withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.bar_chart_rounded, size: 12, color: Color(0xFFF57C00)),
+                          const SizedBox(width: 3),
+                          Text(
+                            '$usageCount×',
+                            style: GoogleFonts.poppins(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFFF57C00),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
               ],
             ),
           ),

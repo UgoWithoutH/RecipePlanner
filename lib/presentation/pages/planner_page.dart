@@ -1494,8 +1494,9 @@ class _PlannerPageState extends State<PlannerPage> {
         activeDays: activeDays,
         offsetDays: settings.offsetDays,
       );
-    } catch (_) {
-      // Silencieux — ne doit pas bloquer l'UI
+    } catch (e, st) {
+      // Ne doit pas bloquer l'UI — loggé en debug pour diagnostic
+      debugPrint('[Notifications] Erreur : $e\n$st');
     }
   }
 

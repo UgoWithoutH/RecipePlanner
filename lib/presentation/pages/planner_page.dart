@@ -1687,14 +1687,13 @@ class _PlannerPageState extends State<PlannerPage> {
           .toList();
 
       // Exclude banned recipes so the algo can't pick them
-      final candidateRecipes = allRecipes
+      var candidateRecipes = allRecipes
           .where((r) => !banned.contains(r.id))
           .toList();
 
       // All recipes have been seen — clear the ban cache and notify user
       if (candidateRecipes.isEmpty) {
         banned.clear(); // Reset so the user can shuffle again from scratch
-        if (manageLoadingState) setState(() => _isLoading = false);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1704,7 +1703,7 @@ class _PlannerPageState extends State<PlannerPage> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Toutes les recettes ont été proposées. Le cache a été réinitialisé.',
+                    'Toutes les recettes ont été proposées. Reprise depuis le début.',
                     style: GoogleFonts.poppins(color: Colors.white),
                   ),
                 ),
@@ -1717,14 +1716,16 @@ class _PlannerPageState extends State<PlannerPage> {
             elevation: 4,
           ),
         );
-        // In multi-shuffle, retry with the cleared cache so the slot still gets a new recipe.
-        if (suppressDialogs) {
-          final retryRecipes = allRecipes.where((r) => !banned.contains(r.id)).toList();
-          if (retryRecipes.isEmpty) return;
-          // Use retryRecipes for the rest of the algorithm instead of returning.
-        } else {
+        // Dans tous les cas (shuffle unitaire ou multi), on continue avec le cache vidé
+        // pour que la recette change quand même immédiatement.
+        final retryRecipes = allRecipes.where((r) => !banned.contains(r.id)).toList();
+        if (retryRecipes.isEmpty) {
+          if (manageLoadingState) setState(() => _isLoading = false);
           return;
         }
+        // Relancer avec le cache vide en évitant de rebannir la recette actuelle
+        // (elle vient d'être réintégrée dans le pool par le clear() ci-dessus).
+        candidateRecipes = retryRecipes;
       }
 
       // If this meal has a leftover the next day, warn the user before replacing it.
@@ -2195,6 +2196,7 @@ class _PlannerPageState extends State<PlannerPage> {
       try {
         // Mettre à jour l'historique local + Firestore
         final historyMeals = List<Meal>.from(_mealHistory[mealDate] ?? []);
+        final previousMeals = List<Meal>.from(historyMeals);
         historyMeals.removeWhere((m) =>
             m.date.year == mealToDelete.date.year &&
             m.date.month == mealToDelete.date.month &&
@@ -2204,10 +2206,10 @@ class _PlannerPageState extends State<PlannerPage> {
 
         if (historyMeals.isEmpty) {
           _mealHistory.remove(mealDate);
-          await _historyRepo.deleteDayFromHistory(mealDate);
+          await _historyRepo.deleteDayFromHistory(mealDate, mealsBeingDeleted: previousMeals);
         } else {
           _mealHistory[mealDate] = historyMeals;
-          await _historyRepo.addDayToHistory(mealDate, historyMeals);
+          await _historyRepo.addDayToHistory(mealDate, historyMeals, previousMeals: previousMeals);
         }
         setState(() {});
       } finally {
@@ -2424,7 +2426,8 @@ class _PlannerPageState extends State<PlannerPage> {
 
       if (isHistory) {
         // Edit the meal in history
-        final historyMeals = _mealHistory[mealDate] ?? [];
+        final historyMeals = List<Meal>.from(_mealHistory[mealDate] ?? []);
+        final previousMeals = List<Meal>.from(historyMeals); // snapshot avant modif
         final indexToUpdate = historyMeals.indexWhere(
           (m) =>
               m.date.year == mealToUpdate.date.year &&
@@ -2450,8 +2453,26 @@ class _PlannerPageState extends State<PlannerPage> {
         // Update local history
         _mealHistory[mealDate] = historyMeals;
 
-        // Persist the change in Firestore
-        await _historyRepo.addDayToHistory(mealDate, historyMeals);
+        // Persist the change in Firestore history (diff pour usageCount)
+        await _historyRepo.addDayToHistory(mealDate, historyMeals, previousMeals: previousMeals);
+
+        // Sync the change back to the meal plan document so that deleting
+        // history and re-adding doesn't restore the old recipe.
+        if (_generatedMealPlan != null) {
+          final planMealIndex = _generatedMealPlan!.meals.indexWhere((m) =>
+              m.date.year == mealToUpdate.date.year &&
+              m.date.month == mealToUpdate.date.month &&
+              m.date.day == mealToUpdate.date.day &&
+              m.type == mealToUpdate.type &&
+              m.recipe.id == mealToUpdate.recipe.id);
+          if (planMealIndex != -1) {
+            final updatedPlanMeals = List<Meal>.from(_generatedMealPlan!.meals);
+            updatedPlanMeals[planMealIndex] = historyMeals[indexToUpdate];
+            final updatedPlan = _generatedMealPlan!.copyWith(meals: updatedPlanMeals);
+            await _mealPlanRepo.saveMealPlan(updatedPlan);
+            _generatedMealPlan = updatedPlan;
+          }
+        }
 
         setState(() {});
 
@@ -2474,12 +2495,59 @@ class _PlannerPageState extends State<PlannerPage> {
           ),
         );
 
-        // Proposer de déduire les ingrédients du nouveau plat du frigo/placard
+        // Proposer de REMETTRE les ingrédients de l'ANCIENNE recette dans le frigo/placard
+        // (elle n'a pas été cuisinée)
+        if (!mounted) return;
+        final restorePantry = await _showPantryModificationDialog(
+          title: 'Remettre dans le frigo/placard ?',
+          message:
+              'Vous n\'avez pas cuisiné "${mealToUpdate.recipe.title}". Voulez-vous remettre ses ingrédients dans le frigo/placard ?',
+          confirmLabel: 'Oui, remettre',
+          icon: Icons.kitchen_rounded,
+          color: const Color(0xFF6A5AE0),
+        );
+        if (restorePantry == true) {
+          setState(() => _isLoading = true);
+          try {
+            final oldFullRecipe = await _recipeRepo.fetchRecipeById(mealToUpdate.recipe.id);
+            if (oldFullRecipe != null) {
+              // Résoudre les noms des ingrédients (stockés séparément)
+              final ids = oldFullRecipe.ingredients
+                  .map((i) => i.ingredient.id)
+                  .where((id) => id.isNotEmpty)
+                  .toList();
+              final nameMap = await IngredientNameCache.instance.fetchNamesForIds(ids);
+              final resolved = oldFullRecipe.copyWith(
+                ingredients: oldFullRecipe.ingredients.map((ri) {
+                  final name = nameMap[ri.ingredient.id] ?? ri.ingredient.name;
+                  return ri.copyWith(ingredient: ri.ingredient.copyWith(name: name));
+                }).toList(),
+              );
+              final oldMeal = Meal(
+                recipe: resolved,
+                date: mealToUpdate.date,
+                type: mealToUpdate.type,
+                totalServings: resolved.servings,
+                userServings: {},
+                recipeMultiplier: 1,
+                isLeftoverMeal: false,
+                userSelected: true,
+              );
+              await FirebasePantryRepository.instance.restoreFromMeals([oldMeal]);
+              await _loadPantryFromRepository();
+            }
+          } finally {
+            setState(() => _isLoading = false);
+          }
+        }
+
+        // Proposer de DÉDUIRE les ingrédients de la NOUVELLE recette du frigo/placard
+        // (elle a été cuisinée à la place, et c'est un jour passé)
         if (!mounted) return;
         final deductPantry = await _showPantryModificationDialog(
           title: 'Déduire du frigo/placard ?',
           message:
-              'Voulez-vous déduire les ingrédients de "${newRecipe.title}" du frigo/placard ? (vous avez cuisiné ce plat à la place)',
+              'Vous avez cuisiné "${newRecipe.title}" à la place. Voulez-vous déduire ses ingrédients du frigo/placard ?',
           confirmLabel: 'Oui, déduire',
           icon: Icons.kitchen_rounded,
           color: const Color(0xFF6A5AE0),
@@ -2489,11 +2557,23 @@ class _PlannerPageState extends State<PlannerPage> {
           try {
             final fullRecipe = await _recipeRepo.fetchRecipeById(newRecipe.id);
             if (fullRecipe != null) {
+              // Résoudre les noms des ingrédients (stockés séparément)
+              final ids = fullRecipe.ingredients
+                  .map((i) => i.ingredient.id)
+                  .where((id) => id.isNotEmpty)
+                  .toList();
+              final nameMap = await IngredientNameCache.instance.fetchNamesForIds(ids);
+              final resolved = fullRecipe.copyWith(
+                ingredients: fullRecipe.ingredients.map((ri) {
+                  final name = nameMap[ri.ingredient.id] ?? ri.ingredient.name;
+                  return ri.copyWith(ingredient: ri.ingredient.copyWith(name: name));
+                }).toList(),
+              );
               final newMeal = Meal(
-                recipe: fullRecipe,
+                recipe: resolved,
                 date: mealToUpdate.date,
                 type: mealToUpdate.type,
-                totalServings: fullRecipe.servings,
+                totalServings: resolved.servings,
                 userServings: {},
                 recipeMultiplier: 1,
                 isLeftoverMeal: false,

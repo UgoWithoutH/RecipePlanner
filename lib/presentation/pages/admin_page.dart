@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../data/repositories/firebase_stats_repository.dart';
 
 const _primary = Color(0xFF6A5AE0);
 const _primaryLight = Color(0xFFEEECFB);
@@ -360,6 +361,111 @@ class _AdminPageState extends State<AdminPage> {
     if (result == true) setState(() {});
   }
 
+  Future<void> _resetAllStats() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.bar_chart_rounded,
+                    color: Colors.orange.shade700, size: 28),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Réinitialiser les statistiques ?',
+                style: GoogleFonts.poppins(
+                    fontSize: 16, fontWeight: FontWeight.w600),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Tous les compteurs d\'utilisation des recettes et des ingrédients seront remis à zéro. Cette action est irréversible.',
+                style: GoogleFonts.poppins(
+                    fontSize: 13, color: Colors.black45),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.black12),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: Text('Annuler',
+                          style: GoogleFonts.poppins(
+                              fontSize: 13, color: Colors.black54)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange.shade700,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: Text('Réinitialiser',
+                          style: GoogleFonts.poppins(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (confirm != true) return;
+
+    final batch = FirebaseFirestore.instance.batch();
+
+    final recipesSnap =
+        await FirebaseFirestore.instance.collection('recipes').get();
+    for (final doc in recipesSnap.docs) {
+      batch.update(doc.reference, {'usageCount': 0});
+    }
+
+    final ingredientsSnap =
+        await FirebaseFirestore.instance.collection('ingredients').get();
+    for (final doc in ingredientsSnap.docs) {
+      batch.update(doc.reference, {'usageCount': 0});
+    }
+
+    await batch.commit();
+    FirebaseStatsRepository.instance.invalidateCache();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Statistiques réinitialisées.',
+              style: GoogleFonts.poppins()),
+          backgroundColor: Colors.orange.shade700,
+        ),
+      );
+    }
+  }
+
   Future<void> _confirmDeleteGroup(DocumentSnapshot group) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -457,6 +563,13 @@ class _AdminPageState extends State<AdminPage> {
             color: Colors.white,
           ),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Réinitialiser les statistiques',
+            icon: const Icon(Icons.bar_chart_rounded, color: Colors.white),
+            onPressed: _resetAllStats,
+          ),
+        ],
       ),
       body: FutureBuilder<QuerySnapshot>(
         future: FirebaseFirestore.instance.collection('groups').get(),

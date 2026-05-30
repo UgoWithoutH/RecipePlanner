@@ -12,6 +12,10 @@ class FirebaseRecipeRepository implements RecipeRepository {
     'recipes',
   );
 
+  static final Map<String, List<Recipe>> _cache = {};
+
+  static void invalidateCache() => _cache.clear();
+
   Future<String> _getGroupId() async {
     final groupId = await GroupRepository.instance.getCurrentGroupId();
     if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
@@ -71,6 +75,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
     data['id'] = docRef.id;
     data['groupId'] = groupId;
     await docRef.set(data);
+    invalidateCache();
 
     return docRef.id;
   }
@@ -88,6 +93,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
 
     if (query.docs.isNotEmpty) {
       await query.docs.first.reference.update(data);
+      invalidateCache();
       return;
     }
 
@@ -98,6 +104,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
       final snapshot = await docRef.get();
       if (snapshot.exists) {
         await docRef.update(data);
+        invalidateCache();
         return;
       }
     }
@@ -115,6 +122,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
     final snapshot = await docRef.get();
     if (snapshot.exists) {
       await docRef.delete();
+      invalidateCache();
       return;
     }
     throw Exception('Recipe with id $id not found');
@@ -176,11 +184,13 @@ class FirebaseRecipeRepository implements RecipeRepository {
   @override
   Future<List<Recipe>> fetchAllRecipes() async {
     final groupId = await _getGroupId();
+    if (_cache.containsKey(groupId)) return _cache[groupId]!;
+
     final snapshot = await _recipes
         .where('groupId', isEqualTo: groupId)
         .get();
 
-    return snapshot.docs.map((doc) {
+    final recipes = snapshot.docs.map((doc) {
       final data = doc.data() as Map<String, dynamic>;
 
       final ingredients = (data['ingredients'] as List<dynamic>? ?? []).map((
@@ -223,6 +233,9 @@ class FirebaseRecipeRepository implements RecipeRepository {
       );
     }).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    _cache[groupId] = recipes;
+    return recipes;
   }
   Map<String, dynamic> _recipeToMap(Recipe recipe) {
     return {

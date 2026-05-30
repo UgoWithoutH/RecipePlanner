@@ -6,6 +6,14 @@ class FirebaseShoppingListRepository {
   final CollectionReference _collection =
       FirebaseFirestore.instance.collection('shopping_lists');
 
+  static ShoppingList? _cache;
+  static String? _cacheGroupId;
+
+  static void invalidateCache() {
+    _cache = null;
+    _cacheGroupId = null;
+  }
+
   Future<String> _getGroupId() async {
     final groupId = await GroupRepository.instance.getCurrentGroupId();
     if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
@@ -17,11 +25,13 @@ class FirebaseShoppingListRepository {
     final data = shoppingList.toMap();
     data['groupId'] = groupId;
     await _collection.doc(shoppingList.id).set(data);
+    invalidateCache();
   }
 
   /// Retourne le document de liste de courses du groupe (un seul par groupe).
   Future<ShoppingList?> getGroupShoppingList() async {
     final groupId = await _getGroupId();
+    if (_cacheGroupId == groupId && _cache != null) return _cache;
     final querySnapshot = await _collection
         .where('groupId', isEqualTo: groupId)
         .limit(1)
@@ -29,8 +39,13 @@ class FirebaseShoppingListRepository {
 
     if (querySnapshot.docs.isNotEmpty) {
       final doc = querySnapshot.docs.first;
-      return ShoppingList.fromMap(doc.id, doc.data() as Map<String, dynamic>);
+      final result = ShoppingList.fromMap(doc.id, doc.data() as Map<String, dynamic>);
+      _cache = result;
+      _cacheGroupId = groupId;
+      return result;
     }
+    _cache = null;
+    _cacheGroupId = groupId;
     return null;
   }
 

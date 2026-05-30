@@ -8,6 +8,10 @@ class FirebaseCategoryRepository {
     'categories',
   );
 
+  static final Map<String, List<Category>> _cache = {};
+
+  static void invalidateCache() => _cache.clear();
+
   Future<String> _getGroupId() async {
     final groupId = await GroupRepository.instance.getCurrentGroupId();
     if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
@@ -18,6 +22,8 @@ class FirebaseCategoryRepository {
   /// Fetch all categories from Firestore and convert to List<Map<String, String\u003c\u003e>>
   Future<List<Category>> getCategories() async {
     final groupId = await _getGroupId();
+    if (_cache.containsKey(groupId)) return _cache[groupId]!;
+
     final snap = await _categories
         .where('groupId', isEqualTo: groupId)
         .get();
@@ -28,6 +34,7 @@ class FirebaseCategoryRepository {
     }).toList()
       ..sort((a, b) => a.name.compareTo(b.name));
 
+    _cache[groupId] = categories;
     return categories;
   }
 
@@ -35,16 +42,19 @@ class FirebaseCategoryRepository {
   Future<void> addCategory(String name, int color) async {
     final groupId = await _getGroupId();
     await _categories.add({'name': name, 'color': color, 'groupId': groupId});
+    invalidateCache();
   }
 
   /// Update category name and potentially color.
   /// No propagation needed: recipes reference categories by ID, not by name.
   Future<void> updateCategory(String id, String newName, int color) async {
     await _categories.doc(id).update({'name': newName, 'color': color});
+    invalidateCache();
   }
 
   /// Delete a category
   Future<void> deleteCategory(String id) async {
     await _categories.doc(id).delete();
+    invalidateCache();
   }
 }

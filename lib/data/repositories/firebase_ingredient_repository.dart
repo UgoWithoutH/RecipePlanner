@@ -5,10 +5,32 @@ class FirebaseIngredientRepository {
   final CollectionReference _ingredients =
       FirebaseFirestore.instance.collection('ingredients');
 
+  static final Map<String, List<Map<String, dynamic>>> _cache = {};
+
+  static void invalidateCache() => _cache.clear();
+
   Future<String> _getGroupId() async {
     final groupId = await GroupRepository.instance.getCurrentGroupId();
     if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
     return groupId;
+  }
+
+  /// Retourne tous les ingrédients du groupe (avec cache).
+  Future<List<Map<String, dynamic>>> getAllIngredients() async {
+    final groupId = await _getGroupId();
+    if (_cache.containsKey(groupId)) return _cache[groupId]!;
+    final snap = await _ingredients.where('groupId', isEqualTo: groupId).get();
+    final result = snap.docs.map((doc) {
+      final data = doc.data() as Map<String, dynamic>;
+      return <String, dynamic>{
+        'id': doc.id,
+        'name': data['name'],
+        'typeId': data.containsKey('typeId') ? data['typeId'] : null,
+        'usageCount': (data['usageCount'] as num?)?.toInt() ?? 0,
+      };
+    }).toList();
+    _cache[groupId] = result;
+    return result;
   }
 
   /// Retourne l'ingrédient (id, name, typeId) correspondant à un nom (non sensible à la casse), ou null si absent
@@ -64,6 +86,7 @@ class FirebaseIngredientRepository {
     if (query.docs.isNotEmpty) return query.docs.first.id;
 
     final doc = await _ingredients.add({'name': name, 'groupId': groupId});
+    invalidateCache();
     return doc.id;
   }
 
@@ -84,6 +107,7 @@ class FirebaseIngredientRepository {
       data['typeId'] = typeId;
     }
     final doc = await _ingredients.add(data);
+    invalidateCache();
     return doc.id;
   }
 }

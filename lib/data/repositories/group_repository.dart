@@ -8,15 +8,20 @@ class GroupRepository {
   static final GroupRepository instance = GroupRepository._();
   GroupRepository._();
 
-  /// Clears any cached state (kept for API compatibility, no-op now).
-  void clearCache() {}
+  /// In-memory cache: uid -> groupId. Cleared on sign-out via [clearCache].
+  final Map<String, String> _groupIdCache = {};
+
+  /// Clears the cached groupId (call on sign-out or group membership change).
+  void clearCache() => _groupIdCache.clear();
 
   /// Returns the group document ID for the currently authenticated user,
   /// or null if no matching group is found.
-  /// Always queries Firestore to reflect membership changes in real time.
+  /// Result is cached in-memory for the session duration.
   Future<String?> getCurrentGroupId() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return null;
+
+    if (_groupIdCache.containsKey(uid)) return _groupIdCache[uid];
 
     final snap = await FirebaseFirestore.instance
         .collection('groups')
@@ -25,7 +30,9 @@ class GroupRepository {
         .get();
 
     if (snap.docs.isEmpty) return null;
-    return snap.docs.first.id;
+    final groupId = snap.docs.first.id;
+    _groupIdCache[uid] = groupId;
+    return groupId;
   }
 
   /// Returns the list of member UIDs for the current user's group.

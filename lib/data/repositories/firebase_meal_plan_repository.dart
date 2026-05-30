@@ -11,6 +11,10 @@ class FirebaseMealPlanRepository {
   final CollectionReference _mealPlans =
       FirebaseFirestore.instance.collection('mealPlans');
 
+  static final Map<String, List<MealPlan>> _cache = {};
+
+  static void invalidateCache() => _cache.clear();
+
   Future<String> _getGroupId() async {
     final groupId = await GroupRepository.instance.getCurrentGroupId();
     if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
@@ -29,6 +33,7 @@ class FirebaseMealPlanRepository {
         ...data,
         'id': mealPlan.id,
       });
+      invalidateCache();
       return mealPlan.id;
     }
 
@@ -46,13 +51,14 @@ class FirebaseMealPlanRepository {
       ...data,
       'id': docRef.id,
     });
-
+    invalidateCache();
     return docRef.id;
   }
 
   /// Fetch all meal plans
   Future<List<MealPlan>> getAllMealPlans() async {
     final groupId = await _getGroupId();
+    if (_cache.containsKey(groupId)) return _cache[groupId]!;
     final snapshot = await _mealPlans
         .where('groupId', isEqualTo: groupId)
         .get();
@@ -64,7 +70,7 @@ class FirebaseMealPlanRepository {
         return bDate.compareTo(aDate); // descending
       });
 
-    return docs.map((doc) {
+    final plans = docs.map((doc) {
       final data = doc.data() as Map<String, dynamic>;
 
       final mealsData = (data['meals'] as List<dynamic>?) ?? [];
@@ -138,6 +144,9 @@ class FirebaseMealPlanRepository {
         meals: meals,
       );
     }).toList();
+
+    _cache[groupId] = plans;
+    return plans;
   }
 
   /// Fetch a specific meal plan by ID
@@ -221,6 +230,7 @@ class FirebaseMealPlanRepository {
   /// Delete a meal plan
   Future<void> deleteMealPlan(String id) async {
     await _mealPlans.doc(id).delete();
+    invalidateCache();
   }
 
   /// Update all meal plans that contain this recipe with new details

@@ -59,4 +59,9 @@ class IngredientNameCache {
   void remove(String id) {
     _cache.remove(id);
   }
+
+  /// Clear the entire cache (called on sign-out)
+  void clear() {
+    _cache.clear();
+  }
 }

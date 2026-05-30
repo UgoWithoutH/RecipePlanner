@@ -24,12 +24,10 @@ import '../../data/repositories/firebase_stats_repository.dart';
 class RecipeDetailPage extends StatefulWidget {
   final String recipeId;
   final Recipe? initialRecipe;
-  final bool isCatalogRecipe;
   const RecipeDetailPage({
     super.key,
     required this.recipeId,
     this.initialRecipe,
-    this.isCatalogRecipe = false,
   });
 
   @override
@@ -77,7 +75,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   List<IngredientType> _ingredientTypes = [];
   final FirebaseIngredientTypeRepository _ingredientTypeRepo = FirebaseIngredientTypeRepository();
 
-  bool _isAlreadyImported = false;
   bool _wasModified = false;
   int _usageCount = 0;
 
@@ -86,40 +83,18 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     super.initState();
     _recipe = widget.initialRecipe;
     _loadIngredientTypes();
-    if (widget.isCatalogRecipe) {
-      _isLoadingRecipe = false;
-      _isLoadingServings = false;
-      if (_recipe != null) {
-        _loadCategories();
-        _checkIfAlreadyImported();
-      }
-    } else {
-      _loadFullRecipe();
-      if (_recipe != null) {
-        _loadUserServings();
-        _loadCategories();
-      }
-      _loadUsageCount();
+    _loadFullRecipe();
+    if (_recipe != null) {
+      _loadUserServings();
+      _loadCategories();
     }
+    _loadUsageCount();
   }
 
   Future<void> _loadUsageCount() async {
     final counts = await FirebaseStatsRepository.instance.getRecipeUsageCounts();
     final id = widget.recipeId;
     if (mounted) setState(() => _usageCount = counts[id] ?? 0);
-  }
-
-  Future<void> _checkIfAlreadyImported() async {
-    if (_recipe == null) return;
-    final groupId = await GroupRepository.instance.getCurrentGroupId();
-    if (groupId == null || !mounted) return;
-    final snap = await FirebaseFirestore.instance
-        .collection('recipes')
-        .where('groupId', isEqualTo: groupId)
-        .where('title', isEqualTo: _recipe!.title)
-        .limit(1)
-        .get();
-    if (mounted) setState(() => _isAlreadyImported = snap.docs.isNotEmpty);
   }
 
   Future<void> _loadIngredientTypes() async {
@@ -362,9 +337,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     final currentRecipe = _recipe!;
     return Scaffold(
       backgroundColor: Colors.white,
-      floatingActionButton: widget.isCatalogRecipe && !_isAlreadyImported
-          ? _buildImportFab()
-          : null,
+      floatingActionButton: null,
       body: Stack(
         children: [
           // Background Gradient at the top
@@ -400,62 +373,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                           () => Navigator.pop(context, _wasModified),
                         ),
                         const SizedBox(width: 40),
-                        if (widget.isCatalogRecipe)
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF6A5AE0).withOpacity(0.12),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(Icons.menu_book_rounded, size: 14, color: Color(0xFF6A5AE0)),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      'Catalogue',
-                                      style: GoogleFonts.poppins(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w700,
-                                        color: const Color(0xFF6A5AE0),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              if (_isAlreadyImported) ...
-                                [
-                                  const SizedBox(width: 8),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                    decoration: BoxDecoration(
-                                      color: Colors.green.withOpacity(0.12),
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(Icons.check_circle_rounded, size: 14, color: Colors.green),
-                                        const SizedBox(width: 6),
-                                        Text(
-                                          'Dans le groupe',
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w700,
-                                            color: Colors.green,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                            ],
-                          )
-                        else
-                          Row(
+                        Row(
                             children: [
                               _headerCircleButton(
                                 Icons.edit_rounded,
@@ -673,8 +591,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                           ),
                         ),
 
-                        // Usage count — badge séparé
-                        if (!widget.isCatalogRecipe && _usageCount > 0) ...[
+                        // Usage count
+                        if (_usageCount > 0) ...[
                           const SizedBox(height: 12),
                           Center(
                             child: Container(
@@ -862,8 +780,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
                         const SizedBox(height: 40),
 
-                        // USER SERVINGS — masqué pour les recettes du catalogue
-                        if (!widget.isCatalogRecipe) ...[
+                        // USER SERVINGS
+                        ...[
                           Text(
                             'Portions par utilisateur',
                             style: GoogleFonts.poppins(
@@ -894,52 +812,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildImportFab() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16, right: 16),
-      child: FloatingActionButton.extended(
-        onPressed: () async {
-          final recipe = _recipe;
-          if (recipe == null) return;
-          final presetData = <String, dynamic>{
-            'title': recipe.title,
-            'description': recipe.description,
-            'preparationTime': recipe.preparationTime,
-            'cookingTime': recipe.cookingTime,
-            'servings': recipe.servings,
-            'instructions': recipe.instructions,
-            'categories': recipe.categoryIds,
-            'ingredients': recipe.ingredients.map((ri) => {
-              'name': ri.ingredient.name,
-              'quantity': ri.quantity,
-              'unit': ri.unit.label,
-              'type': ri.ingredient.typeId ?? '',
-            }).toList(),
-          };
-          await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => CreateRecipePage(presetData: presetData),
-            ),
-          );
-          if (mounted) setState(() => _isAlreadyImported = true);
-        },
-        backgroundColor: const Color(0xFF6A5AE0),
-        elevation: 6,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        label: Text(
-          'Ajouter cette recette',
-          style: GoogleFonts.poppins(
-            color: Colors.white,
-            fontWeight: FontWeight.w600,
-            fontSize: 15,
-          ),
-        ),
-        icon: const Icon(Icons.download_rounded, color: Colors.white),
       ),
     );
   }

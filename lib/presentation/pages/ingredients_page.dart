@@ -33,7 +33,6 @@ class _IngredientsPageState extends State<IngredientsPage> {
   final _ingredientRepo = FirebaseIngredientRepository();
   final _shoppingListRepo = FirebaseShoppingListRepository();
   Map<String, int> _ingredientCounts = {};
-  Map<String, int> _catalogCounts = {};
   String _sortMode = 'alpha'; // 'alpha' | 'usage' | 'unused'
 
   @override
@@ -63,7 +62,6 @@ class _IngredientsPageState extends State<IngredientsPage> {
 
     // Compte les recettes du groupe et du catalogue utilisant chaque ingrédient (sans bloquer l’UI)
     _loadGroupCounts();
-    _loadCatalogCounts();
   }
 
   Future<void> _loadIngredients() async {
@@ -91,23 +89,6 @@ class _IngredientsPageState extends State<IngredientsPage> {
       }
     }
     if (mounted) setState(() => _ingredientCounts = counts);
-  }
-
-  Future<void> _loadCatalogCounts() async {
-    final snap = await FirebaseFirestore.instance.collection('recipes_cache').get();
-    final counts = <String, int>{};
-    for (final doc in snap.docs) {
-      final data = doc.data() as Map<String, dynamic>;
-      final ingredients = data['ingredients'] as List<dynamic>? ?? [];
-      final seen = <String>{};
-      for (final i in ingredients) {
-        final iName = (i['name'] as String? ?? '').toLowerCase().trim();
-        if (iName.isNotEmpty && seen.add(iName)) {
-          counts[iName] = (counts[iName] ?? 0) + 1;
-        }
-      }
-    }
-    if (mounted) setState(() => _catalogCounts = counts);
   }
 
   Future<void> _addIngredient() async {
@@ -431,20 +412,11 @@ class _IngredientsPageState extends State<IngredientsPage> {
     final groupId = await GroupRepository.instance.getCurrentGroupId();
     if (groupId == null) return;
 
-    // Chargement en parallèle : recettes du groupe + recettes du catalogue
-    final results = await Future.wait([
-      FirebaseFirestore.instance
-          .collection('recipes')
-          .where('groupId', isEqualTo: groupId)
-          .get(),
-      FirebaseFirestore.instance
-          .collection('recipes_cache')
-          .get(),
-    ]);
+    final groupSnap = await FirebaseFirestore.instance
+        .collection('recipes')
+        .where('groupId', isEqualTo: groupId)
+        .get();
     if (!mounted) return;
-
-    // Recettes du groupe
-    final groupSnap = results[0] as QuerySnapshot;
     final groupRecipes = <Recipe>[];
     final Map<String, int> groupRecipeCounts = {};
     for (final doc in groupSnap.docs) {
@@ -482,28 +454,12 @@ class _IngredientsPageState extends State<IngredientsPage> {
     }
     groupRecipes.sort((a, b) => a.title.compareTo(b.title));
 
-    // Recettes du catalogue (recipes_cache) — filtre sur le nom de l'ingrédient
-    final cacheSnap = results[1] as QuerySnapshot;
-    final catalogRecipes = <Map<String, dynamic>>[];
-    for (final doc in cacheSnap.docs) {
-      final data = Map<String, dynamic>.from(doc.data() as Map<String, dynamic>);
-      final ingredients = data['ingredients'] as List<dynamic>? ?? [];
-      if (ingredients.any((i) =>
-          (i['name'] as String? ?? '').toLowerCase() == ingredientName.toLowerCase())) {
-        data['_id'] = doc.id;
-        catalogRecipes.add(data);
-      }
-    }
-    catalogRecipes.sort((a, b) =>
-        (a['title'] as String? ?? '').compareTo(b['title'] as String? ?? ''));
-
     const double headerPx = 130;
     const double itemPx = 62;
     const double minFraction = 0.50;
     const double maxFraction = 0.95;
     final screenH = MediaQuery.of(context).size.height;
-    final totalItems = groupRecipes.length + catalogRecipes.length;
-    final contentH = headerPx + totalItems * itemPx + 80;
+    final contentH = headerPx + groupRecipes.length * itemPx + 80;
     final initial = (contentH / screenH).clamp(minFraction, maxFraction);
 
     if (!mounted) return;
@@ -514,7 +470,6 @@ class _IngredientsPageState extends State<IngredientsPage> {
       builder: (_) => _RecipesForIngredientSheet(
         ingredientName: ingredientName,
         recipes: groupRecipes,
-        catalogRecipes: catalogRecipes,
         recipeCounts: groupRecipeCounts,
         initialChildSize: initial,
         maxChildSize: maxFraction,
@@ -878,29 +833,6 @@ class _IngredientsPageState extends State<IngredientsPage> {
                                                       ],
                                                     ),
                                                   ),
-                                                if ((_catalogCounts[name.toLowerCase().trim()] ?? 0) > 0)
-                                                  Container(
-                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                                    decoration: BoxDecoration(
-                                                      color: const Color(0xFF5C6BC0).withOpacity(0.12),
-                                                      borderRadius: BorderRadius.circular(20),
-                                                    ),
-                                                    child: Row(
-                                                      mainAxisSize: MainAxisSize.min,
-                                                      children: [
-                                                        const Icon(Icons.menu_book_rounded, size: 12, color: Color(0xFF5C6BC0)),
-                                                        const SizedBox(width: 3),
-                                                        Text(
-                                                          '${_catalogCounts[name.toLowerCase().trim()]}×',
-                                                          style: GoogleFonts.poppins(
-                                                            fontSize: 11,
-                                                            fontWeight: FontWeight.w700,
-                                                            color: const Color(0xFF5C6BC0),
-                                                          ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
                                                 if (((ing['usageCount'] as int?) ?? 0) > 0)
                                                   Container(
                                                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -1006,7 +938,6 @@ class _IngredientsPageState extends State<IngredientsPage> {
 class _RecipesForIngredientSheet extends StatelessWidget {
   final String ingredientName;
   final List<Recipe> recipes;
-  final List<Map<String, dynamic>> catalogRecipes;
   final Map<String, int> recipeCounts;
   final double initialChildSize;
   final double maxChildSize;
@@ -1014,7 +945,6 @@ class _RecipesForIngredientSheet extends StatelessWidget {
   const _RecipesForIngredientSheet({
     required this.ingredientName,
     required this.recipes,
-    required this.catalogRecipes,
     required this.recipeCounts,
     required this.initialChildSize,
     required this.maxChildSize,
@@ -1086,7 +1016,7 @@ class _RecipesForIngredientSheet extends StatelessWidget {
                 const Divider(height: 1),
                 // Contenu scrollable : deux sections
                 Expanded(
-                  child: (recipes.isEmpty && catalogRecipes.isEmpty)
+                  child: recipes.isEmpty
                       ? Center(
                           child: Text(
                             'Aucune recette utilise cet ingrédient.',
@@ -1126,68 +1056,6 @@ class _RecipesForIngredientSheet extends StatelessWidget {
                                       ),
                                     ),
                                   ),
-                                ),
-                              )),
-                            const SizedBox(height: 8),
-                            // ── Section catalogue ──
-                            _SectionHeader(
-                              icon: Icons.menu_book_rounded,
-                              label: 'Catalogue (${catalogRecipes.length})',
-                            ),
-                            const SizedBox(height: 8),
-                            if (catalogRecipes.isEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 16),
-                                child: Text(
-                                  'Aucune recette du catalogue.',
-                                  style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey),
-                                ),
-                              )
-                            else
-                              ...catalogRecipes.map((recipe) => Padding(
-                                padding: const EdgeInsets.only(bottom: 8),
-                                child: _RecipeItem(
-                                  title: recipe['title'] as String? ?? '',
-                                  onTap: () {
-                                    final rawIngredients = (recipe['ingredients'] as List<dynamic>? ?? []);
-                                    final ingredients = rawIngredients.map((i) {
-                                      final name = i['name'] as String? ?? '';
-                                      final typeName = i['type'] as String? ?? '';
-                                      return RecipeIngredient(
-                                        ingredient: Ingredient(id: name, name: name, typeId: typeName.isNotEmpty ? typeName : null),
-                                        quantity: (i['quantity'] as num?)?.toDouble() ?? 0,
-                                        unit: Unit.values.firstWhere(
-                                          (u) => u.label == i['unit'] || u.name == i['unit'],
-                                          orElse: () => Unit.g,
-                                        ),
-                                      );
-                                    }).toList();
-                                    final catalogRecipe = Recipe(
-                                      id: recipe['_id'] as String? ?? '',
-                                      title: recipe['title'] as String? ?? '',
-                                      description: recipe['description'] as String? ?? '',
-                                      preparationTime: (recipe['preparationTime'] as num?)?.toInt() ?? 0,
-                                      cookingTime: (recipe['cookingTime'] as num?)?.toInt() ?? 0,
-                                      servings: (recipe['servings'] as num?)?.toInt() ?? 1,
-                                      categoryIds: (recipe['categories'] as List?)?.map((e) => e.toString()).toList() ?? [],
-                                      ingredients: ingredients,
-                                      instructions: List<String>.from(recipe['instructions'] ?? []),
-                                      createdAt: DateTime.now(),
-                                      isFavorite: false,
-                                      rating: 0.0,
-                                      mealTime: MealTime.fromString(recipe['mealTime'] as String?),
-                                    );
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => RecipeDetailPage(
-                                          recipeId: catalogRecipe.id,
-                                          initialRecipe: catalogRecipe,
-                                          isCatalogRecipe: true,
-                                        ),
-                                      ),
-                                    );
-                                  },
                                 ),
                               )),
                           ],

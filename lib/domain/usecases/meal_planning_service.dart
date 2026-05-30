@@ -23,7 +23,7 @@ class MealPlanningService {
   /// [durationDays]: number of days to plan
   /// [usagePenaltyWeight]: penalty multiplier for recipe reuse (default: 20)
   /// [recencyPenaltyWeight]: penalty for recently used recipes (default: 100)
-  /// [similarityPenaltyWeight]: penalty for ingredient similarity (default: 30)
+  /// [similarityPenaltyWeight]: penalty for ingredient similarity (default: 60)
   /// [coverageBonusWeight]: bonus multiplier for portion coverage (default: 2)
   static MealPlan generateMealPlan({
     required List<Recipe> recipes,
@@ -33,7 +33,7 @@ class MealPlanningService {
     required int durationDays,
     double usagePenaltyWeight = 20.0,
     double recencyPenaltyWeight = 100.0,
-    double similarityPenaltyWeight = 30.0,
+    double similarityPenaltyWeight = 60.0,
     double coverageBonusWeight = 2.0,
     double endOfPlanCoverageBoost = 1.5,
     double endOfPlanThresholdRatio = 0.2,
@@ -48,6 +48,7 @@ class MealPlanningService {
     DateTime? referenceDate,
     double wastePenaltyWeight = 0.0,
     List<String> leftoverUserOrder = const [],
+    bool strictNoWaste = false,
   }) {
     if (recipes.isEmpty || users.isEmpty) {
       throw Exception('Recipes and users are required');
@@ -307,7 +308,7 @@ class MealPlanningService {
         pendingLeftovers.remove(i);
       }
       // 2. Gestion des userSelectedMeals
-      if (_handleUserSelectedSlot(i, meals, usedRecipes, users, recipeUserServingsMap, remainingPortions)) { continue; }
+      if (_handleUserSelectedSlot(i, meals, usedRecipes, users, recipeUserServingsMap, remainingPortions, pantryRemaining)) { continue; }
       // 3. Skip slots already filled by user-selected
       if (meals[i] != null) { continue; }
       // 4. Génération normale du slot — on exclut les users déjà couverts par un leftover
@@ -334,6 +335,13 @@ class MealPlanningService {
         freeFollowingSlots++;
       }
       final maxLeftoverSlots = freeFollowingSlots;
+      // Appliquer strictNoWaste dès que des slots suivants existent (pas fin de plan).
+      // Le filtre maxLeftoverSlots dans _selectBestRecipe gère déjà le comptage
+      // précis (exclut les recettes dont leftoverDays > maxLeftoverSlots). Ce flag
+      // empêche uniquement le fallback "all-recipes" quand filtered.isEmpty : si
+      // toutes les recettes dépassent les slots disponibles, on retourne null
+      // (échec waste-constrained) plutôt que de proposer une recette gaspilleuse.
+      final effectiveStrictNoWaste = strictNoWaste && (i + 2 < numMeals);
 
       // Lookahead : avant de sélectionner le déjeuner, anticiper la meilleure
       // recette du dîner et l'injecter temporairement dans le contexte de récence.
@@ -368,6 +376,7 @@ class MealPlanningService {
           slotsRemaining: numMeals - i - 1,
           wastePenaltyWeight: wastePenaltyWeight,
           maxLeftoverSlots: maxLeftoverSlots,
+          strictNoWaste: effectiveStrictNoWaste,
         );
         if (peekedDinner != null && !recentRecipeDaysAgo.containsKey(peekedDinner.id)) {
           recentRecipeDaysAgo[peekedDinner.id] = 0;
@@ -421,6 +430,7 @@ class MealPlanningService {
         slotsRemaining: numMeals - i,
         wastePenaltyWeight: wastePenaltyWeight,
         maxLeftoverSlots: maxLeftoverSlots,
+        strictNoWaste: effectiveStrictNoWaste,
       ); // wastePenaltyWeight non passé par défaut (les restes du plan complet sont utiles)
       // Retire l'entrée temporaire du lookahead pour ne pas biaiser le dîner
       if (peekedDinnerAdded) recentRecipeDaysAgo.remove(peekedDinner!.id);
@@ -624,12 +634,13 @@ class MealPlanningService {
             !nextDateUS.isAfter(startDate.add(Duration(days: durationDays - 1)))) {
           final leftoverUserServingsUS = <String, int>{};
           int leftoverTotalUS = 0;
-          final shuffledUSentries = meal.userServings.entries.toList()..shuffle();
-          for (int idx = 0; idx < shuffledUSentries.length; idx++) {
+          final sortedUSentries = meal.userServings.entries.toList()
+              ..sort((a, b) => a.key.compareTo(b.key));
+          for (int idx = 0; idx < sortedUSentries.length; idx++) {
             if (remainingLeftUS <= 0) break;
-            final e = shuffledUSentries[idx];
+            final e = sortedUSentries[idx];
             final portionsNeeded = e.value;
-            final usersLeftUS = shuffledUSentries.length - idx;
+            final usersLeftUS = sortedUSentries.length - idx;
             final fairShareUS = max(1, remainingLeftUS ~/ usersLeftUS);
             final toAssignUS = min(portionsNeeded, min(fairShareUS, remainingLeftUS));
             if (toAssignUS > 0) {
@@ -664,6 +675,7 @@ class MealPlanningService {
     List<User> users,
     Map<String, Map<String, (int, int)>> recipeUserServingsMap,
     Map<String, Map<MealType, int>> remainingPortions,
+    Map<String, (double, Unit)> pantryRemaining,
   ) {
     if (meals[i] != null && meals[i]!.userSelected == true) {
       usedRecipes[meals[i]!.recipe.id] = (usedRecipes[meals[i]!.recipe.id] ?? 0) + 1;
@@ -678,6 +690,14 @@ class MealPlanningService {
           servingCount = desired < remaining ? desired : remaining;
           remainingPortions[user.id]![meal.type] = remaining - servingCount;
         }
+      }
+      // Consomme les ingrédients du placard pour ce repas verrouillé
+      if (!meal.isLeftoverMeal) {
+        _consumePantryItems(
+          recipe: meal.recipe,
+          recipeMultiplier: meal.recipeMultiplier,
+          pantryRemaining: pantryRemaining,
+        );
       }
       return true;
     }
@@ -756,6 +776,7 @@ class MealPlanningService {
     int slotsRemaining = 1,
     double wastePenaltyWeight = 0.0,
     int maxLeftoverSlots = 999,
+    bool strictNoWaste = false,
   }) {
     if (availableRecipes.isEmpty) return null;
 
@@ -765,7 +786,6 @@ class MealPlanningService {
     // donc on fait un premier passage pour identifier les recettes éligibles.
     List<Recipe> recipesToScore = availableRecipes;
 
-    final maxTimesUsed = usedRecipes.values.fold<int>(0, (max, val) => val > max ? val : max);
     final totalRemainingPortions = remainingPortions.values
         .fold<int>(0, (sum, map) => sum + (map[mealType] ?? 0));
 
@@ -797,12 +817,14 @@ class MealPlanningService {
     }
 
     // Filtrer selon le nombre de slots consécutifs libres disponibles pour les restes.
-    // maxLeftoverSlots=0 → recette sans restes uniquement.
+    // maxLeftoverSlots=0 → préférence pour les recettes sans restes.
     // maxLeftoverSlots=n → recettes dont les restes tiennent en n jours au plus.
-    // Si aucune recette ne passe le filtre → recipesToScore vide → candidates vide
-    // → _selectBestRecipe retourne null → slot laissé vide (pas de fallback avec restes).
+    // Fallback : si le filtre élimine toutes les recettes (ex. aucune recette avec
+    // exactement les bonnes portions), on autorise quand même les restes plutôt que
+    // de laisser le slot vide (les restes seront gaspillés mais c'est préférable à
+    // un slot non rempli qui garde l'ancienne recette).
     if (maxLeftoverSlots < 999) {
-      recipesToScore = availableRecipes.where((r) {
+      final filtered = availableRecipes.where((r) {
         final consumed = candidateTotalConsumed[r.id] ?? 0;
         if (consumed <= 0) return false;
         final multiplier = (consumed / r.servings).ceil();
@@ -813,6 +835,17 @@ class MealPlanningService {
         final leftoverDays = (leftover / consumed).ceil();
         return leftoverDays <= maxLeftoverSlots;
       }).toList();
+      if (filtered.isNotEmpty) {
+        recipesToScore = filtered;
+      } else if (!strictNoWaste) {
+        // Fallback : si le filtre est trop strict, on accepte toutes les recettes
+        // pour éviter un slot vide (les restes excédentaires seront gaspillés).
+        recipesToScore = availableRecipes;
+      } else {
+        // strictNoWaste && filtered.isEmpty : aucune recette sans gaspillage dispo.
+        // → on retourne null (le slot ne sera pas rempli plutôt que de gaspiller).
+        recipesToScore = [];
+      }
     }
 
     final candidates = <Recipe>[];
@@ -820,13 +853,18 @@ class MealPlanningService {
     const epsilon = 1e-6;
 
     // Contrainte dure : si des ingrédients urgents sont encore disponibles ET qu'au
-    // moins une recette les utilise, on exclut les recettes qui n'en utilisent aucun.
+    // moins une recette du pool DE SCORING les utilise, on exclut les recettes qui
+    // n'en utilisent aucun.
+    // IMPORTANT : on vérifie recipesToScore (et non availableRecipes) pour éviter
+    // le cas où la seule recette urgente a été filtrée (ex : produit des restes
+    // avec maxLeftoverSlots=0) → hasUrgentConstraint=true mais aucune recette
+    // scorable ne satisfait la contrainte → candidates vide → retour null incorrect.
     final bool hasUrgentConstraint = urgentPantryNames.isNotEmpty &&
         urgentPantryNames.any((name) {
           final entry = pantryRemaining[name];
           return entry != null && entry.$1 > 0.0;
         }) &&
-        availableRecipes.any((r) => r.ingredients.any((ing) {
+        recipesToScore.any((r) => r.ingredients.any((ing) {
           final n = ing.ingredient.name.toLowerCase().trim();
           return urgentPantryNames.contains(n) &&
               (pantryRemaining[n]?.$1 ?? 0.0) > 0.0;
@@ -848,8 +886,10 @@ class MealPlanningService {
         }
       }
       final timesUsed = usedRecipes[recipe.id] ?? 0;
-      final normalizedUsage = maxTimesUsed > 0 ? (timesUsed / maxTimesUsed).clamp(0.0, 1.0) : 0.0;
-      final usageComponent = normalizedUsage * usagePenaltyWeight;
+      // Pénalité absolue : croît linéairement avec le nombre d'utilisations
+      // (contrairement à une normalisation qui plafonnait toutes les recettes
+      // au même niveau dès qu'elles atteignaient le maximum).
+      final usageComponent = timesUsed.toDouble() * usagePenaltyWeight;
       double recencyScore = 0.0;
       final decayFactor = recencyDecayFactor;
       if (recentRecipeDaysAgo != null && recentRecipeDaysAgo.containsKey(recipe.id)) {
@@ -966,7 +1006,18 @@ class MealPlanningService {
 
     // Fallback: if no recipe consumes any portion, return null (empty slot)
     if (candidates.isEmpty) {
-      // No possible candidate for this slot (incoherent data) — empty slot
+      // Diagnostique pourquoi aucun candidat n'a été retenu.
+      final totalRemainingCheck = remainingPortions.values
+          .fold<int>(0, (s, m) => s + (m[mealType] ?? 0));
+      final allZeroConsumed = recipesToScore.every(
+          (r) => (candidateTotalConsumed[r.id] ?? 0) == 0);
+      // ignore: avoid_print
+      print('[ALGO] _selectBestRecipe → null. mealType=$mealType '
+          'recipesToScore=${recipesToScore.length} '
+          'hasUrgentConstraint=$hasUrgentConstraint '
+          'totalRemaining=$totalRemainingCheck '
+          'allZeroConsumed=$allZeroConsumed '
+          'maxLeftoverSlots=$maxLeftoverSlots');
       return null;
     }
 

@@ -322,6 +322,19 @@ class MealPlanningService {
         // other days / other types instead of stopping the whole plan.
         continue;
       }
+
+      // Compter les slots CONSÉCUTIFS libres suivants du même type.
+      // On vérifie à la fois meals[] (repas verrouillés/générés) ET pendingLeftovers
+      // (restes de repas verrouillés pas encore injectés dans meals[]).
+      // On s'arrête au premier slot occupé : les restes ne sautent pas les jours pris.
+      int freeFollowingSlots = 0;
+      for (int fs = i + 2; fs < numMeals; fs += 2) {
+        if (meals[fs] != null) break; // repas verrouillé ou généré → arrêt
+        if (pendingLeftovers.containsKey(fs)) break; // leftover prévu → arrêt
+        freeFollowingSlots++;
+      }
+      final maxLeftoverSlots = freeFollowingSlots;
+
       // Lookahead : avant de sélectionner le déjeuner, anticiper la meilleure
       // recette du dîner et l'injecter temporairement dans le contexte de récence.
       // Le composant de similarité pénalisera ainsi les candidats au déjeuner trop
@@ -354,6 +367,7 @@ class MealPlanningService {
           urgentPantryNames: urgentPantrySet,
           slotsRemaining: numMeals - i - 1,
           wastePenaltyWeight: wastePenaltyWeight,
+          maxLeftoverSlots: maxLeftoverSlots,
         );
         if (peekedDinner != null && !recentRecipeDaysAgo.containsKey(peekedDinner.id)) {
           recentRecipeDaysAgo[peekedDinner.id] = 0;
@@ -406,6 +420,7 @@ class MealPlanningService {
         urgentPantryNames: urgentPantrySet,
         slotsRemaining: numMeals - i,
         wastePenaltyWeight: wastePenaltyWeight,
+        maxLeftoverSlots: maxLeftoverSlots,
       ); // wastePenaltyWeight non passé par défaut (les restes du plan complet sont utiles)
       // Retire l'entrée temporaire du lookahead pour ne pas biaiser le dîner
       if (peekedDinnerAdded) recentRecipeDaysAgo.remove(peekedDinner!.id);
@@ -461,6 +476,9 @@ class MealPlanningService {
         var remainingLeftover = cookedServings - totalConsumed;
         int nextSlot = i + 2;
         while (remainingLeftover > 0 && nextSlot < numMeals) {
+          // Si le slot suivant est déjà occupé (repas généré ou verrouillé), on arrête
+          // la cascade : les restes ne sautent pas les jours occupés.
+          if (meals[nextSlot] != null) { break; }
           final nextMealType = nextSlot % 2 == 0 ? MealType.lunch : MealType.dinner;
           final nextMealDate = startDate.add(Duration(days: nextSlot ~/ 2));
           final leftoverUserServings = <String, int>{};
@@ -524,7 +542,8 @@ class MealPlanningService {
               perSlotTotalLO += toAssign;
             }
           }
-          if (leftoverTotal == 0) break;
+          // Slot entièrement occupé par d'autres leftovers → passer au suivant sans break
+          if (leftoverTotal == 0) { nextSlot += 2; continue; }
           // Rotation : les utilisateurs assignés passent en fin d'ordre + compteur de restes
           for (final uid in leftoverUserServings.keys) {
             leftoverCountPerUser[uid] = (leftoverCountPerUser[uid] ?? 0) + 1;
@@ -574,59 +593,65 @@ class MealPlanningService {
     required int numMeals,
   }) {
     if (userSelectedMeals == null || userSelectedMeals.isEmpty) return;
+
+    // Passe 1 : placer tous les repas verrouillés dans meals[]
+    // avant de calculer les cascades de restes, pour que les vérifications
+    // meals[nextSlotUS] != null fonctionnent correctement.
+    final slotsToProcess = <({int slot, Meal meal})>[];
     for (final meal in userSelectedMeals) {
       if (!meal.userSelected) continue;
       if (meal.date.isBefore(startDate) || meal.date.isAfter(startDate.add(Duration(days: durationDays - 1)))) continue;
       final slot = meal.date.difference(startDate).inDays * 2 + (meal.type == MealType.lunch ? 0 : 1);
       if (slot >= 0 && slot < numMeals) {
-        final exists = recipes.any((r) => r.id == meal.recipe.id);
-        if (exists) {
-          if (meals[slot] != null) {
-            // Collision userSelected sur slot, slot déjà occupé
-            continue;
-          }
-          meals[slot] = meal.copyWith(userSelected: true);
-          // Auto leftover for user-selected meals
-          final cookedUS = meal.recipe.servings * meal.recipeMultiplier;
-          var remainingLeftUS = cookedUS - meal.totalServings;
-          int nextSlotUS = slot + 2;
-          while (remainingLeftUS > 0 && nextSlotUS < numMeals) {
-            final nextDateUS = startDate.add(Duration(days: nextSlotUS ~/ 2));
-            if (!nextDateUS.isBefore(startDate) &&
-                !nextDateUS.isAfter(startDate.add(Duration(days: durationDays - 1)))) {
-              final leftoverUserServingsUS = <String, int>{};
-              int leftoverTotalUS = 0;
-              final shuffledUSentries = meal.userServings.entries.toList()..shuffle();
-              for (int idx = 0; idx < shuffledUSentries.length; idx++) {
-                if (remainingLeftUS <= 0) break;
-                final entry = shuffledUSentries[idx];
-                final userId = entry.key;
-                final portionsNeeded = entry.value;
-                final usersLeftUS = shuffledUSentries.length - idx;
-                final fairShareUS = max(1, remainingLeftUS ~/ usersLeftUS);
-                final toAssignUS = min(portionsNeeded, min(fairShareUS, remainingLeftUS));
-                if (toAssignUS > 0) {
-                  leftoverUserServingsUS[userId] = toAssignUS;
-                  leftoverTotalUS += toAssignUS;
-                  remainingLeftUS -= toAssignUS;
-                }
-              }
-              if (leftoverTotalUS == 0) break;
-              final nextMealTypeUS = nextSlotUS % 2 == 0 ? MealType.lunch : MealType.dinner;
-              pendingLeftovers.putIfAbsent(nextSlotUS, () => []).add(meal.copyWith(
-                date: nextDateUS,
-                type: nextMealTypeUS,
-                isLeftoverMeal: true,
-                userSelected: true,
-                userServings: leftoverUserServingsUS,
-                totalServings: leftoverTotalUS,
-                recipeMultiplier: 1,
-              ));
-              recentRecipeDaysAgo[meal.recipe.id] = 0;
+        if (meals[slot] != null) continue; // collision
+        meals[slot] = meal.copyWith(userSelected: true);
+        slotsToProcess.add((slot: slot, meal: meal));
+      }
+    }
+
+    // Passe 2 : cascades de restes (tous les repas verrouillés sont déjà placés)
+    for (final entry in slotsToProcess) {
+      final slot = entry.slot;
+      final meal = entry.meal;
+      final cookedUS = meal.recipe.servings * meal.recipeMultiplier;
+      var remainingLeftUS = cookedUS - meal.totalServings;
+      int nextSlotUS = slot + 2;
+      while (remainingLeftUS > 0 && nextSlotUS < numMeals) {
+        // Slot occupé → arrêter la cascade (les restes ne sautent pas les jours occupés)
+        if (meals[nextSlotUS] != null) { break; }
+        final nextDateUS = startDate.add(Duration(days: nextSlotUS ~/ 2));
+        if (!nextDateUS.isBefore(startDate) &&
+            !nextDateUS.isAfter(startDate.add(Duration(days: durationDays - 1)))) {
+          final leftoverUserServingsUS = <String, int>{};
+          int leftoverTotalUS = 0;
+          final shuffledUSentries = meal.userServings.entries.toList()..shuffle();
+          for (int idx = 0; idx < shuffledUSentries.length; idx++) {
+            if (remainingLeftUS <= 0) break;
+            final e = shuffledUSentries[idx];
+            final portionsNeeded = e.value;
+            final usersLeftUS = shuffledUSentries.length - idx;
+            final fairShareUS = max(1, remainingLeftUS ~/ usersLeftUS);
+            final toAssignUS = min(portionsNeeded, min(fairShareUS, remainingLeftUS));
+            if (toAssignUS > 0) {
+              leftoverUserServingsUS[e.key] = toAssignUS;
+              leftoverTotalUS += toAssignUS;
+              remainingLeftUS -= toAssignUS;
             }
-            nextSlotUS += 2;
           }
+          if (leftoverTotalUS == 0) { break; } // slot couvert par d'autres restes
+          final nextMealTypeUS = nextSlotUS % 2 == 0 ? MealType.lunch : MealType.dinner;
+          pendingLeftovers.putIfAbsent(nextSlotUS, () => []).add(meal.copyWith(
+            date: nextDateUS,
+            type: nextMealTypeUS,
+            isLeftoverMeal: true,
+            userSelected: true,
+            userServings: leftoverUserServingsUS,
+            totalServings: leftoverTotalUS,
+            recipeMultiplier: 1,
+          ));
+          recentRecipeDaysAgo[meal.recipe.id] = 0;
         }
+        nextSlotUS += 2;
       }
     }
   }
@@ -730,13 +755,15 @@ class MealPlanningService {
     Set<String> urgentPantryNames = const {},
     int slotsRemaining = 1,
     double wastePenaltyWeight = 0.0,
+    int maxLeftoverSlots = 999,
   }) {
     if (availableRecipes.isEmpty) return null;
 
-    final candidates = <Recipe>[];
-    double bestScore = double.infinity;
-    const epsilon = 1e-6;
-    // recentRecipes n'est plus utilisé pour la récence
+    // Si aucun slot libre suivant, restreindre aux recettes sans restes
+    // (portions cuisinées = portions consommées exactement).
+    // On filtre en se basant sur candidateTotalConsumed calculé juste après,
+    // donc on fait un premier passage pour identifier les recettes éligibles.
+    List<Recipe> recipesToScore = availableRecipes;
 
     final maxTimesUsed = usedRecipes.values.fold<int>(0, (max, val) => val > max ? val : max);
     final totalRemainingPortions = remainingPortions.values
@@ -769,6 +796,29 @@ class MealPlanningService {
       }
     }
 
+    // Filtrer selon le nombre de slots consécutifs libres disponibles pour les restes.
+    // maxLeftoverSlots=0 → recette sans restes uniquement.
+    // maxLeftoverSlots=n → recettes dont les restes tiennent en n jours au plus.
+    // Si aucune recette ne passe le filtre → recipesToScore vide → candidates vide
+    // → _selectBestRecipe retourne null → slot laissé vide (pas de fallback avec restes).
+    if (maxLeftoverSlots < 999) {
+      recipesToScore = availableRecipes.where((r) {
+        final consumed = candidateTotalConsumed[r.id] ?? 0;
+        if (consumed <= 0) return false;
+        final multiplier = (consumed / r.servings).ceil();
+        final cooked = r.servings * multiplier;
+        final leftover = cooked - consumed;
+        if (leftover <= 0) return true; // pas de restes → toujours OK
+        // Nombre de jours de restes estimé (même consommation par jour)
+        final leftoverDays = (leftover / consumed).ceil();
+        return leftoverDays <= maxLeftoverSlots;
+      }).toList();
+    }
+
+    final candidates = <Recipe>[];
+    double bestScore = double.infinity;
+    const epsilon = 1e-6;
+
     // Contrainte dure : si des ingrédients urgents sont encore disponibles ET qu'au
     // moins une recette les utilise, on exclut les recettes qui n'en utilisent aucun.
     final bool hasUrgentConstraint = urgentPantryNames.isNotEmpty &&
@@ -782,7 +832,7 @@ class MealPlanningService {
               (pantryRemaining[n]?.$1 ?? 0.0) > 0.0;
         }));
 
-    for (final recipe in availableRecipes) {
+    for (final recipe in recipesToScore) {
       final totalConsumed = candidateTotalConsumed[recipe.id]!;
       if (totalConsumed == 0) {
         continue;

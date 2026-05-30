@@ -10,6 +10,7 @@ import '../../domain/entities/ingredient.dart';
 import '../../domain/entities/recipe_ingredient.dart';
 import 'ingredient_types_page.dart';
 import '../../domain/entities/ingredient_type.dart';
+import '../../data/repositories/firebase_ingredient_repository.dart';
 import '../../data/repositories/firebase_ingredient_type_repository.dart';
 import '../../data/repositories/firebase_shopping_list_repository.dart';
 import '../../data/repositories/group_repository.dart';
@@ -29,6 +30,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
   String _filter = '';
   List<String> _selectedTypeIds = [];
   final _typeRepo = FirebaseIngredientTypeRepository();
+  final _ingredientRepo = FirebaseIngredientRepository();
   final _shoppingListRepo = FirebaseShoppingListRepository();
   Map<String, int> _ingredientCounts = {};
   Map<String, int> _catalogCounts = {};
@@ -45,34 +47,16 @@ class _IngredientsPageState extends State<IngredientsPage> {
     
     // Load types first or parallel
     final typesFuture = _typeRepo.getTypes();
-    final groupId = await GroupRepository.instance.getCurrentGroupId();
-    if (groupId == null) {
-      if (mounted) setState(() => _isLoading = false);
-      return;
-    }
-    final ingredientsFuture = FirebaseFirestore.instance
-        .collection('ingredients')
-        .where('groupId', isEqualTo: groupId)
-        .get();
+    final ingredientsFuture = _ingredientRepo.getAllIngredients();
 
     final results = await Future.wait([typesFuture, ingredientsFuture]);
     final typesList = results[0] as List<IngredientType>;
-    final snap = results[1] as QuerySnapshot;
+    final ingredientsList = results[1] as List<Map<String, dynamic>>;
 
     if (!mounted) return;
     setState(() {
       _types = typesList;
-      _ingredients = snap.docs
-          .map((doc) {
-                final data = doc.data() as Map<String, dynamic>;
-                return {
-                  'id': doc.id,
-                  'name': data['name'],
-                  'typeId': data.containsKey('typeId') ? data['typeId'] : null,
-                  'usageCount': (data['usageCount'] as num?)?.toInt() ?? 0,
-                };
-              })
-          .toList()
+      _ingredients = List<Map<String, dynamic>>.from(ingredientsList)
         ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
       _isLoading = false;
     });
@@ -237,6 +221,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
           .add(data);
 
       IngredientNameCache.instance.setName(docRef.id, name);
+      FirebaseIngredientRepository.invalidateCache();
       _loadIngredients();
     }
   }
@@ -361,6 +346,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
       // (Assumes shopping list items use the ingredient name as key)
       await _shoppingListRepo.updateShoppingItemsTypeForIngredient(newName, selectedTypeId);
 
+      FirebaseIngredientRepository.invalidateCache();
       _loadIngredients();
     }
   }
@@ -436,6 +422,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
           .delete();
 
       IngredientNameCache.instance.remove(id);
+      FirebaseIngredientRepository.invalidateCache();
       _loadIngredients();
     }
   }

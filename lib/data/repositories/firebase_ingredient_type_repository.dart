@@ -6,6 +6,12 @@ class FirebaseIngredientTypeRepository {
   final CollectionReference _types =
       FirebaseFirestore.instance.collection('ingredient_types');
 
+  /// In-memory cache: groupId -> sorted list of types.
+  static final Map<String, List<IngredientType>> _cache = {};
+
+  /// Clears the cache (call after add/update/delete).
+  static void invalidateCache() => _cache.clear();
+
   Future<String> _getGroupId() async {
     final groupId = await GroupRepository.instance.getCurrentGroupId();
     if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
@@ -14,6 +20,8 @@ class FirebaseIngredientTypeRepository {
 
   Future<List<IngredientType>> getTypes() async {
     final groupId = await _getGroupId();
+    if (_cache.containsKey(groupId)) return _cache[groupId]!;
+
     final snapshot = await _types
         .where('groupId', isEqualTo: groupId)
         .get();
@@ -22,6 +30,7 @@ class FirebaseIngredientTypeRepository {
       return IngredientType.fromFirestore(doc.id, data);
     }).toList()
       ..sort((a, b) => a.name.compareTo(b.name));
+    _cache[groupId] = types;
     return types;
   }
 
@@ -32,6 +41,7 @@ class FirebaseIngredientTypeRepository {
       'color': color,
       'groupId': groupId,
     });
+    invalidateCache();
   }
 
   Future<void> updateType(String id, String name, int color) async {
@@ -39,9 +49,11 @@ class FirebaseIngredientTypeRepository {
       'name': name,
       'color': color,
     });
+    invalidateCache();
   }
 
   Future<void> deleteType(String id) async {
     await _types.doc(id).delete();
+    invalidateCache();
   }
 }

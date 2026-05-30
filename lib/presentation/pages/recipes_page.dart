@@ -13,6 +13,7 @@ import '../../core/utils/ingredient_name_cache.dart';
 import 'recipe_detail_page.dart';
 import 'categories_page.dart';
 import 'create_recipe_page.dart';
+import '../../data/repositories/firebase_recipe_repository.dart';
 import '../../data/repositories/group_repository.dart';
 import '../../data/repositories/firebase_stats_repository.dart';
 
@@ -129,70 +130,27 @@ class _RecipesPageState extends State<RecipesPage> {
   // FETCH RECIPES
   // =========================
   Future<List<Recipe>> fetchRecipes() async {
-    final groupId = await GroupRepository.instance.getCurrentGroupId();
-    if (groupId == null) return [];
-    final snapshot = await FirebaseFirestore.instance
-        .collection('recipes')
-        .where('groupId', isEqualTo: groupId)
-        .get();
+    final recipes = await FirebaseRecipeRepository().fetchAllRecipes();
 
-    return Future.wait(
-      snapshot.docs.map((doc) async {
-        final data = doc.data();
-        final ingredientsData = data['ingredients'] as List<dynamic>? ?? [];
+    // Resolve ingredient names (cached — only fetches missing ids from Firestore)
+    final allIds = recipes
+        .expand((r) => r.ingredients.map((ri) => ri.ingredient.id))
+        .toList();
+    final names = await IngredientNameCache.instance.fetchNamesForIds(allIds);
 
-        final ingredientIds = ingredientsData
-            .map((i) => i['ingredientId'] as String)
-            .toList();
-
-        final names = await IngredientNameCache.instance.fetchNamesForIds(
-          ingredientIds,
+    final enriched = recipes.map((recipe) {
+      final updatedIngredients = recipe.ingredients.map((ri) {
+        return ri.copyWith(
+          ingredient: ri.ingredient.copyWith(
+            name: names[ri.ingredient.id] ?? 'Unknown',
+          ),
         );
+      }).toList();
+      return recipe.copyWith(ingredients: updatedIngredients);
+    }).toList()
+      ..sort((a, b) => a.title.compareTo(b.title));
 
-        final ingredients = ingredientsData.map((i) {
-          final id = i['ingredientId'];
-          final name = names[id] ?? 'Unknown';
-
-          return RecipeIngredient(
-            ingredient: Ingredient(id: id, name: name),
-            quantity: (i['quantity'] as num).toDouble(),
-            unit: Unit.values.firstWhere(
-              (u) => u.label == i['unit'],
-              orElse: () => Unit.g,
-            ),
-            notes: i['notes'],
-          );
-        }).toList();
-
-        String id;
-        final rawId = data['id'];
-        if (rawId != null && rawId is String && rawId.isNotEmpty) {
-          id = rawId;
-        } else {
-          id = doc.id;
-        }
-
-        return Recipe(
-          id: id,
-          title: data['title'] ?? '',
-          description: data['description'] ?? '',
-          preparationTime: (data['preparationTime'] as num?)?.toInt() ?? 0,
-          cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
-          servings: (data['servings'] as num?)?.toInt() ?? 1,
-          categoryIds: (data['categoryIds'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
-              ((data['category'] as String?)?.isNotEmpty == true
-                  ? [data['category'] as String]
-                  : []),
-          ingredients: ingredients,
-          instructions: List<String>.from(data['instructions'] ?? []),
-          createdAt:
-              DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
-          isFavorite: data['isFavorite'] ?? false,
-          rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
-          mealTime: MealTime.fromString(data['mealTime'] as String?),
-        );
-      }),
-    ).then((list) => list..sort((a, b) => a.title.compareTo(b.title)));
+    return enriched;
   }
 
   Future<void> _loadRecipeCounts() async {

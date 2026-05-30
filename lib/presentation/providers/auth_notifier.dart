@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/utils/cache_warmer.dart';
 import '../../data/datasources/google_auth_service.dart';
 import 'auth_state.dart';
 
@@ -35,9 +36,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = const AuthLoading();
     try {
       final appUser = await _service.verifyCurrentUser();
-      state = appUser != null
-          ? AuthAuthenticated(appUser)
-          : const AuthUnauthenticated();
+      if (appUser != null) {
+        state = AuthAuthenticated(appUser);
+        CacheWarmer.warmAll(); // fire-and-forget warm-up
+      } else {
+        state = const AuthUnauthenticated();
+      }
     } on AccessDeniedException {
       // The session existed but the UID is no longer in Firestore.
       state = const AuthDenied();
@@ -56,6 +60,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     try {
       final appUser = await _service.signInWithGoogle();
       state = AuthAuthenticated(appUser);
+      CacheWarmer.warmAll(); // fire-and-forget warm-up
     } on SignInCancelledException {
       // User dismissed the picker – go back to sign-in screen silently.
       state = const AuthUnauthenticated();
@@ -78,6 +83,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// Signs out from Google and Firebase, then resets to unauthenticated.
   Future<void> signOut() async {
     await _service.signOut();
+    CacheWarmer.clearAll();
     state = const AuthUnauthenticated();
   }
 }

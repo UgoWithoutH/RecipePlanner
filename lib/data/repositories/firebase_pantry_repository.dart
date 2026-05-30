@@ -12,6 +12,10 @@ class FirebasePantryRepository {
   final CollectionReference _pantry =
       FirebaseFirestore.instance.collection('pantry');
 
+  static final Map<String, List<PantryItem>> _cache = {};
+
+  static void invalidateCache() => _cache.clear();
+
   Future<String> _getGroupId() async {
     final groupId = await GroupRepository.instance.getCurrentGroupId();
     if (groupId == null) {
@@ -23,6 +27,7 @@ class FirebasePantryRepository {
   /// Returns all pantry items for the current group, sorted by urgent first then by name.
   Future<List<PantryItem>> getAll() async {
     final groupId = await _getGroupId();
+    if (_cache.containsKey(groupId)) return _cache[groupId]!;
     final snapshot =
         await _pantry.where('groupId', isEqualTo: groupId).get();
     final items = snapshot.docs
@@ -34,6 +39,7 @@ class FirebasePantryRepository {
       if (a.isUrgent != b.isUrgent) return a.isUrgent ? -1 : 1;
       return a.name.toLowerCase().compareTo(b.name.toLowerCase());
     });
+    _cache[groupId] = items;
     return items;
   }
 
@@ -42,10 +48,12 @@ class FirebasePantryRepository {
     final groupId = await _getGroupId();
     if (item.id.isNotEmpty) {
       await _pantry.doc(item.id).set(item.toFirestore(groupId));
+      invalidateCache();
       return item;
     } else {
       final docRef = _pantry.doc();
       await docRef.set(item.toFirestore(groupId));
+      invalidateCache();
       return item.copyWith(id: docRef.id);
     }
   }
@@ -62,6 +70,7 @@ class FirebasePantryRepository {
   /// Deletes a single pantry item by ID.
   Future<void> delete(String id) async {
     await _pantry.doc(id).delete();
+    invalidateCache();
   }
 
   /// Deletes all pantry items for the current group.
@@ -72,6 +81,7 @@ class FirebasePantryRepository {
     for (final doc in snapshot.docs) {
       await doc.reference.delete();
     }
+    invalidateCache();
   }
 
   /// Remet les ingrédients d'une liste de repas dans le frigo/placard

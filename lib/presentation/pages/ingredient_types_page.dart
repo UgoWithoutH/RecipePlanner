@@ -175,23 +175,60 @@ class _IngredientTypesPageState extends State<IngredientTypesPage> {
   }
 
   Future<void> _deleteType(String id) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Supprimer ce type ?'),
-        content: const Text(
-          'Attention, si des ingrédients utilisent ce type, ils perdront leur classification.'
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 24),
+                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            Container(
+              width: 56, height: 56,
+              decoration: BoxDecoration(color: Colors.red.withOpacity(0.08), shape: BoxShape.circle),
+              child: Icon(Icons.delete_outline_rounded, color: Colors.red[400], size: 28),
+            ),
+            const SizedBox(height: 16),
+            Text('Supprimer ce type ?',
+              style: GoogleFonts.poppins(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.black87)),
+            const SizedBox(height: 8),
+            Text('Attention, les ingrédients utilisant ce type perdront leur classification.',
+              style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey[500]), textAlign: TextAlign.center),
+            const SizedBox(height: 24),
+            Row(children: [
+              Expanded(child: OutlinedButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.grey[600],
+                  side: BorderSide(color: Colors.grey[300]!),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: Text('Annuler', style: GoogleFonts.poppins(fontSize: 14)),
+              )),
+              const SizedBox(width: 12),
+              Expanded(child: ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red[400], foregroundColor: Colors.white, elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: Text('Supprimer', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
+              )),
+            ]),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false), 
-            child: const Text('Annuler')
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true), 
-            child: const Text('Supprimer')
-          ),
-        ],
       ),
     );
 
@@ -309,16 +346,30 @@ class _IngredientTypesPageState extends State<IngredientTypesPage> {
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                IconButton(
-                                  icon: const Icon(Icons.edit_rounded,
-                                      color: Colors.blueAccent),
-                                  onPressed: () => _editType(
-                                      type.id, type.name, type.color),
+                                InkWell(
+                                  onTap: () => _editType(type.id, type.name, type.color),
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF6A5AE0).withOpacity(0.08),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: const Icon(Icons.edit_rounded, size: 18, color: Color(0xFF6A5AE0)),
+                                  ),
                                 ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete_outline_rounded,
-                                      color: Colors.redAccent),
-                                  onPressed: () => _deleteType(type.id),
+                                const SizedBox(width: 8),
+                                InkWell(
+                                  onTap: () => _deleteType(type.id),
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.red.withOpacity(0.08),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red[400]),
+                                  ),
                                 ),
                               ],
                             ),

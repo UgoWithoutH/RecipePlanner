@@ -226,33 +226,17 @@ class _RecipesPageState extends State<RecipesPage> {
                       ),
                       InkWell(
                         onTap: _openCategoriesPage,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(14),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
+                          padding: const EdgeInsets.all(10),
                           decoration: BoxDecoration(
                             color: const Color(0xFF6A5AE0).withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(14),
                           ),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.category_rounded,
-                                size: 18,
-                                color: Color(0xFF6A5AE0),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Catégories',
-                                style: GoogleFonts.poppins(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: const Color(0xFF6A5AE0),
-                                ),
-                              ),
-                            ],
+                          child: const Icon(
+                            Icons.local_offer_rounded,
+                            size: 22,
+                            color: Color(0xFF6A5AE0),
                           ),
                         ),
                       ),

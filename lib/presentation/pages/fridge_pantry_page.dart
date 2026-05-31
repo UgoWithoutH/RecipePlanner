@@ -142,54 +142,60 @@ class _FridgePantryPageState extends State<FridgePantryPage> {
   }
 
   Future<void> _deleteItem(PantryItem item) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-        contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-        actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-        title: Row(
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 24),
+                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
             Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFF6A5AE0).withOpacity(0.12),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.delete_outline_rounded, color: Color(0xFF6A5AE0), size: 22),
+              width: 56, height: 56,
+              decoration: BoxDecoration(color: Colors.red.withOpacity(0.08), shape: BoxShape.circle),
+              child: Icon(Icons.delete_outline_rounded, color: Colors.red[400], size: 28),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'Supprimer cet article ?',
-                style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
-              ),
-            ),
+            const SizedBox(height: 16),
+            Text('Supprimer cet article ?',
+              style: GoogleFonts.poppins(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.black87)),
+            const SizedBox(height: 8),
+            Text('Voulez-vous retirer "${item.name}" du frigo / placard ?',
+              style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey[500]), textAlign: TextAlign.center),
+            const SizedBox(height: 24),
+            Row(children: [
+              Expanded(child: OutlinedButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.grey[600],
+                  side: BorderSide(color: Colors.grey[300]!),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: Text('Annuler', style: GoogleFonts.poppins(fontSize: 14)),
+              )),
+              const SizedBox(width: 12),
+              Expanded(child: ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red[400], foregroundColor: Colors.white, elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: Text('Supprimer', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
+              )),
+            ]),
           ],
         ),
-        content: Text(
-          'Voulez-vous retirer "${item.name}" du frigo / placard ?',
-          style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            style: TextButton.styleFrom(foregroundColor: Colors.black54),
-            child: Text('Annuler', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF6A5AE0),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              elevation: 0,
-            ),
-            child: Text('Supprimer', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-          ),
-        ],
       ),
     );
     if (confirmed != true) return;
@@ -600,54 +606,60 @@ class _FridgePantryPageState extends State<FridgePantryPage> {
   }
 
   Future<void> _confirmDeleteAll() async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-        contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-        actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-        title: Row(
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 24),
+                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
             Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFF6A5AE0).withOpacity(0.12),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.delete_sweep_rounded, color: Color(0xFF6A5AE0), size: 22),
+              width: 56, height: 56,
+              decoration: BoxDecoration(color: Colors.red.withOpacity(0.08), shape: BoxShape.circle),
+              child: Icon(Icons.delete_sweep_rounded, color: Colors.red[400], size: 28),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'Tout vider ?',
-                style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
-              ),
-            ),
+            const SizedBox(height: 16),
+            Text('Tout vider ?',
+              style: GoogleFonts.poppins(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.black87)),
+            const SizedBox(height: 8),
+            Text('Voulez-vous supprimer tous les articles du frigo / placard ?',
+              style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey[500]), textAlign: TextAlign.center),
+            const SizedBox(height: 24),
+            Row(children: [
+              Expanded(child: OutlinedButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.grey[600],
+                  side: BorderSide(color: Colors.grey[300]!),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: Text('Annuler', style: GoogleFonts.poppins(fontSize: 14)),
+              )),
+              const SizedBox(width: 12),
+              Expanded(child: ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red[400], foregroundColor: Colors.white, elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: Text('Tout vider', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
+              )),
+            ]),
           ],
         ),
-        content: Text(
-          'Voulez-vous supprimer tous les articles du frigo / placard ?',
-          style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            style: TextButton.styleFrom(foregroundColor: Colors.black54),
-            child: Text('Annuler', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF6A5AE0),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              elevation: 0,
-            ),
-            child: Text('Tout vider', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-          ),
-        ],
       ),
     );
     if (confirmed != true) return;

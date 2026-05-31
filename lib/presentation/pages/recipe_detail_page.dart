@@ -36,21 +36,60 @@ class RecipeDetailPage extends StatefulWidget {
 
 class _RecipeDetailPageState extends State<RecipeDetailPage> {
     void _onDeleteRecipe() async {
-      final confirm = await showDialog<bool>(
+      final confirm = await showModalBottomSheet<bool>(
         context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('Supprimer la recette'),
-          content: const Text('Voulez-vous vraiment supprimer cette recette ?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Annuler'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Supprimer', style: TextStyle(color: Colors.red)),
-            ),
-          ],
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        builder: (ctx) => Padding(
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Center(
+                child: Container(
+                  width: 40, height: 4,
+                  margin: const EdgeInsets.only(bottom: 24),
+                  decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              Container(
+                width: 56, height: 56,
+                decoration: BoxDecoration(color: Colors.red.withOpacity(0.08), shape: BoxShape.circle),
+                child: Icon(Icons.delete_outline_rounded, color: Colors.red[400], size: 28),
+              ),
+              const SizedBox(height: 16),
+              Text('Supprimer la recette',
+                style: GoogleFonts.poppins(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.black87)),
+              const SizedBox(height: 8),
+              Text('Voulez-vous vraiment supprimer cette recette ?',
+                style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey[500]), textAlign: TextAlign.center),
+              const SizedBox(height: 24),
+              Row(children: [
+                Expanded(child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.grey[600],
+                    side: BorderSide(color: Colors.grey[300]!),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: Text('Annuler', style: GoogleFonts.poppins(fontSize: 14)),
+                )),
+                const SizedBox(width: 12),
+                Expanded(child: ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red[400], foregroundColor: Colors.white, elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: Text('Supprimer', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
+                )),
+              ]),
+            ],
+          ),
         ),
       );
       if (confirm == true) {

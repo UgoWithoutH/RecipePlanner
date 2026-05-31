@@ -37,6 +37,8 @@ class ShoppingItem {
   final bool isChecked;
   final List<RecipeContribution> contributions;
   final double totalRequiredBase; // total before pantry deduction, in base units (ml/g/piece)
+  final double validatedQuantity; // quantity already sent to pantry (0 = not yet validated)
+  final String validatedUnit; // unit used when validatedQuantity was set
 
   const ShoppingItem({
     required this.name,
@@ -46,6 +48,8 @@ class ShoppingItem {
     this.isChecked = false,
     this.contributions = const [],
     this.totalRequiredBase = 0,
+    this.validatedQuantity = 0,
+    this.validatedUnit = '',
   });
 
   ShoppingItem copyWith({
@@ -56,6 +60,8 @@ class ShoppingItem {
     bool? isChecked,
     List<RecipeContribution>? contributions,
     double? totalRequiredBase,
+    double? validatedQuantity,
+    String? validatedUnit,
   }) {
     return ShoppingItem(
       name: name ?? this.name,
@@ -65,6 +71,8 @@ class ShoppingItem {
       isChecked: isChecked ?? this.isChecked,
       contributions: contributions ?? this.contributions,
       totalRequiredBase: totalRequiredBase ?? this.totalRequiredBase,
+      validatedQuantity: validatedQuantity ?? this.validatedQuantity,
+      validatedUnit: validatedUnit ?? this.validatedUnit,
     );
   }
 
@@ -77,6 +85,8 @@ class ShoppingItem {
       'isChecked': isChecked,
       'contributions': contributions.map((c) => c.toMap()).toList(),
       'totalRequiredBase': totalRequiredBase,
+      'validatedQuantity': validatedQuantity,
+      'validatedUnit': validatedUnit,
     };
   }
 
@@ -105,6 +115,8 @@ class ShoppingItem {
       isChecked: map['isChecked'] ?? false,
       contributions: parsedContribs,
       totalRequiredBase: (map['totalRequiredBase'] as num?)?.toDouble() ?? 0.0,
+      validatedQuantity: (map['validatedQuantity'] as num?)?.toDouble() ?? 0.0,
+      validatedUnit: map['validatedUnit'] as String? ?? '',
     );
   }
 }

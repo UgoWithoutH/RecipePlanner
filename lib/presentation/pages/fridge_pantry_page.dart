@@ -864,29 +864,31 @@ class _FridgePantryPageState extends State<FridgePantryPage> {
                     Expanded(
                       flex: 3,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                         decoration: BoxDecoration(
                           color: Colors.grey[50],
                           borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey[200]!),
                         ),
                         child: DropdownButtonHideUnderline(
                           child: DropdownButton<Unit>(
                             value: _selectedUnit,
                             isExpanded: true,
-                            style: GoogleFonts.poppins(
-                                fontSize: 14,
-                                color: const Color(0xFF1A1A1A)),
-                            onChanged: (u) => setSheetState(
-                                () => _selectedUnit = u ?? Unit.piece),
-                            items: Unit.values
-                                .map((u) => DropdownMenuItem(
-                                      value: u,
-                                      child: Text(u.label,
-                                          style:
-                                              GoogleFonts.poppins(fontSize: 14)),
-                                    ))
-                                .toList(),
+                            icon: Icon(Icons.expand_more_rounded, color: Colors.grey[600], size: 20),
+                            dropdownColor: Colors.white,
+                            selectedItemBuilder: (context) => Unit.values.map((u) => Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('Unité', style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[500])),
+                                Text(u.label, style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
+                              ],
+                            )).toList(),
+                            onChanged: (u) => setSheetState(() => _selectedUnit = u ?? Unit.piece),
+                            items: Unit.values.map((u) => DropdownMenuItem<Unit>(
+                              value: u,
+                              child: Text(u.label, style: GoogleFonts.poppins(fontSize: 14)),
+                            )).toList(),
                           ),
                         ),
                       ),

@@ -78,6 +78,16 @@ class FirebaseShoppingListRepository {
     // Actually, let's expose updateShoppingList which takes the whole list.
   }
 
+  /// Deletes the shopping list document for the current group.
+  Future<void> deleteGroupShoppingList() async {
+    final groupId = await _getGroupId();
+    final snapshot = await _collection.where('groupId', isEqualTo: groupId).limit(1).get();
+    for (final doc in snapshot.docs) {
+      await doc.reference.delete();
+    }
+    invalidateCache();
+  }
+
   /// Update typeId for all shopping list items referencing a given ingredient name
   Future<void> updateShoppingItemsTypeForIngredient(String ingredientName, String? newTypeId) async {
     final groupId = await _getGroupId();

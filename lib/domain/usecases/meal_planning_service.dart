@@ -49,6 +49,7 @@ class MealPlanningService {
     double wastePenaltyWeight = 0.0,
     List<String> leftoverUserOrder = const [],
     bool strictNoWaste = false,
+    bool ignoreHistoryLeftovers = false,
   }) {
     if (recipes.isEmpty || users.isEmpty) {
       throw Exception('Recipes and users are required');
@@ -184,7 +185,7 @@ class MealPlanningService {
     final similarityCache = _buildSimilarityCache(recipes, ingredientWeights);
 
     // --- GESTION DES LEFTOVERS HISTORIQUES (calcul automatique des restes du J-1) ---
-    if (recentMeals != null && recentMeals.isNotEmpty) {
+    if (!ignoreHistoryLeftovers && recentMeals != null && recentMeals.isNotEmpty) {
       final expectedDate = startDate.subtract(const Duration(days: 1));
       // Filter J-1 meals that are NOT themselves leftovers (avoid double-cascading)
       final mealsJ1 = recentMeals.where((m) =>

@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../data/repositories/firebase_meal_plan_repository.dart';
 import '../../data/repositories/firebase_shopping_list_repository.dart';
 import '../../data/repositories/firebase_pantry_snapshot_repository.dart';
+import '../../data/repositories/firebase_ingredient_repository.dart';
+import '../../data/repositories/firebase_pantry_repository.dart';
 import '../../domain/entities/meal_plan.dart';
+import '../../domain/entities/pantry_item.dart';
 import '../../domain/entities/shopping_list.dart';
 import '../../domain/usecases/shopping_list_generator.dart';
 import '../../data/repositories/firebase_ingredient_type_repository.dart';
@@ -83,20 +87,819 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
 
   Future<void> _toggleItem(int index) async {
     if (_currentShoppingList == null) return;
-    
+
+    final item = _items[index];
+    final nowChecked = !item.isChecked;
+
+    // Empêcher de décocher un item déjà validé dans le frigo/placard
+    if (!nowChecked && item.validatedQuantity != 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Row(children: [
+            const Icon(Icons.lock_outline_rounded, color: Colors.white, size: 18),
+            const SizedBox(width: 10),
+            Expanded(child: Text(
+              'Cet article a déjà été validé. Utilisez le bouton d\'édition pour modifier la quantité.',
+              style: GoogleFonts.poppins(fontSize: 13, color: Colors.white),
+            )),
+          ]),
+          backgroundColor: const Color(0xFF6A5AE0),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.all(16),
+          duration: const Duration(seconds: 3),
+        ));
+      }
+      return;
+    }
+
     setState(() {
-      final item = _items[index];
-      // Create a modified copy
-      _items[index] = item.copyWith(isChecked: !item.isChecked);
+      _items[index] = item.copyWith(isChecked: nowChecked);
     });
 
-    // Save update to DB
     try {
       final updatedList = _currentShoppingList!.copyWith(items: _items);
       await FirebaseShoppingListRepository().saveShoppingList(updatedList);
       _currentShoppingList = updatedList;
-    } catch (e) {
+    } catch (e) {}
+
+    // Si l'item avait déjà été validé (validatedQuantity > 0) et qu'on le re-coche
+    // (après décoché + modification quantité), appliquer le delta au frigo/placard.
+    if (nowChecked && item.validatedQuantity > 0) {
+      final delta = _items[index].quantity - item.validatedQuantity;
+      if (delta.abs() > 0.001) {
+        await _applyPantryDelta(item: _items[index], delta: delta);
+        // Mettre à jour validatedQuantity
+        final updatedItem = _items[index].copyWith(validatedQuantity: _items[index].quantity);
+        setState(() => _items[index] = updatedItem);
+        final updatedList = _currentShoppingList!.copyWith(items: _items);
+        await FirebaseShoppingListRepository().saveShoppingList(updatedList);
+        _currentShoppingList = updatedList;
+      }
     }
+
+    // Si tout est coché ET qu'il reste des items non traités, proposer la validation
+    final hasPending = _items.any((i) =>
+        i.isChecked && (
+          i.validatedQuantity == 0 ||
+          (i.validatedQuantity > 0 && (i.quantity - i.validatedQuantity).abs() > 0.001)
+        ));
+    if (_items.isNotEmpty && _items.every((i) => i.isChecked) && hasPending) {
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (mounted) _showValidateDialog();
+    }
+  }
+
+  /// Applique un delta (positif = ajouter, négatif = déduire) sur l'ingrédient dans le pantry.
+  Future<void> _applyPantryDelta({required ShoppingItem item, required double delta}) async {
+    try {
+      final allIngredients = await FirebaseIngredientRepository().getAllIngredients();
+      final key = item.name.toLowerCase().trim();
+      final ing = allIngredients.cast<Map<String, dynamic>?>().firstWhere(
+        (i) => (i!['name'] as String).toLowerCase().trim() == key,
+        orElse: () => null,
+      );
+      if (ing == null) return;
+
+      final pantryRepo = FirebasePantryRepository.instance;
+      final pantryItems = await pantryRepo.getAll();
+      final existing = pantryItems.cast<PantryItem?>().firstWhere(
+        (p) => p!.name.toLowerCase().trim() == key,
+        orElse: () => null,
+      );
+
+      final unit = Unit.values.firstWhere(
+        (u) => u.name == item.unit,
+        orElse: () => Unit.piece,
+      );
+
+      if (existing != null) {
+        final newQty = existing.unit == unit
+            ? (existing.quantity + delta).clamp(0.0, double.infinity)
+            : (delta > 0 ? delta : 0.0);
+        if (newQty <= 0) {
+          await pantryRepo.delete(existing.id);
+        } else {
+          await pantryRepo.save(existing.copyWith(quantity: newQty, updatedAt: DateTime.now()));
+        }
+      } else if (delta > 0) {
+        // Pas encore dans le pantry, créer avec le delta positif
+        final typeId = ing['typeId'] as String? ?? '';
+        final typeName = _types.cast<IngredientType?>()
+            .firstWhere((t) => t!.id == typeId, orElse: () => null)
+            ?.name ?? '';
+        await pantryRepo.save(PantryItem(
+          id: '',
+          name: item.name,
+          ingredientId: ing['id'] as String? ?? '',
+          typeId: typeId,
+          typeName: typeName,
+          quantity: delta,
+          unit: unit,
+          isUrgent: false,
+          updatedAt: DateTime.now(),
+        ));
+      }
+    } catch (e) {}
+  }
+
+  void _showValidateDialog() {
+    final checkedItems = _items.where((i) => i.isChecked).toList();
+    final uncheckedItems = _items.where((i) => !i.isChecked).toList();
+    // Items réellement en attente de validation (jamais validés ou quantité modifiée)
+    final newItems = checkedItems.where((i) => i.validatedQuantity == 0).toList();
+    final updateItems = checkedItems.where((i) => i.validatedQuantity > 0 && (i.quantity - i.validatedQuantity).abs() > 0.001).toList();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom + 16),
+        child: SingleChildScrollView(
+        child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4CAF50).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.shopping_bag_outlined, color: Color(0xFF4CAF50), size: 22),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Valider les courses',
+                  style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            if (checkedItems.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.orange.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline_rounded, size: 18, color: Colors.orange[700]),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Aucun article coché. Cochez les articles achetés avant de valider.',
+                        style: GoogleFonts.poppins(fontSize: 13, color: Colors.orange[800]),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4CAF50).withOpacity(0.07),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.check_circle_outline_rounded, size: 18, color: Color(0xFF4CAF50)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        [
+                          if (newItems.isNotEmpty) '${newItems.length} article(s) ajouté(s) au frigo/placard.',
+                          if (updateItems.isNotEmpty) '${updateItems.length} article(s) mis à jour dans le frigo/placard.',
+                          if (newItems.isEmpty && updateItems.isEmpty) 'Aucun changement à appliquer.',
+                        ].join('  '),
+                        style: GoogleFonts.poppins(fontSize: 13, color: const Color(0xFF2E7D32)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (uncheckedItems.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.orange.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.warning_amber_rounded, size: 18, color: Colors.orange[700]),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          '${uncheckedItems.length} article(s) non coché(s) ne seront pas ajoutés.',
+                          style: GoogleFonts.poppins(fontSize: 13, color: Colors.orange[800]),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        side: BorderSide(color: Colors.grey.shade300),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text('Annuler', style: GoogleFonts.poppins(color: Colors.grey[700], fontWeight: FontWeight.w500)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF4CAF50),
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
+                      ),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _validateShoppingList();
+                      },
+                      child: Text('Valider', style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+      ),
+      ),
+    );
+  }
+
+  Future<void> _validateShoppingList() async {
+    debugPrint('[VALIDATE] ===== _validateShoppingList START =====');
+    debugPrint('[VALIDATE] total items=${_items.length} checked=${_items.where((i) => i.isChecked).length}');
+
+    // 1. Récupérer tous les ingrédients connus
+    final allIngredients = await FirebaseIngredientRepository().getAllIngredients();
+    final ingredientNames = <String, Map<String, dynamic>>{};
+    for (final ing in allIngredients) {
+      ingredientNames[(ing['name'] as String).toLowerCase().trim()] = ing;
+    }
+
+    // 2. Récupérer le pantry existant
+    final pantryRepo = FirebasePantryRepository.instance;
+    final pantryItems = await pantryRepo.getAll();
+
+    int added = 0;
+    int skipped = 0;
+
+    for (final item in _items.where((i) => i.isChecked)) {
+      final key = item.name.toLowerCase().trim();
+      debugPrint('[VALIDATE] item="${item.name}" qty=${item.quantity} unit=${item.unit} validatedQty=${item.validatedQuantity} knownIngredient=${ingredientNames.containsKey(key)}');
+
+      // Vérifier que l'ingrédient existe dans l'application
+      if (!ingredientNames.containsKey(key)) {
+        debugPrint('[VALIDATE]   → SKIPPED (ingrédient inconnu)');
+        skipped++;
+        continue;
+      }
+      final ing = ingredientNames[key]!;
+      final typeId = ing['typeId'] as String? ?? '';
+      final typeName = _types.cast<IngredientType?>()
+          .firstWhere((t) => t!.id == typeId, orElse: () => null)
+          ?.name ?? '';
+      final unit = Unit.values.firstWhere(
+        (u) => u.name == item.unit,
+        orElse: () => Unit.piece,
+      );
+
+      // Unité utilisée lors de la dernière validation (pour défaire la contribution précédente)
+      final validatedUnit = item.validatedUnit.isNotEmpty
+          ? Unit.values.firstWhere((u) => u.name == item.validatedUnit, orElse: () => unit)
+          : unit;
+      final unitChanged = item.validatedQuantity > 0 && validatedUnit != unit;
+
+      // Chercher si déjà dans le pantry
+      final existing = pantryItems.cast<PantryItem?>().firstWhere(
+        (p) => p!.name.toLowerCase().trim() == key,
+        orElse: () => null,
+      );
+
+      // Calculer la quantité à appliquer
+      // Si unité changée : qtyToApply n'a pas de sens, on gère séparément
+      final qtyToApply = (!unitChanged && item.validatedQuantity > 0)
+          ? item.quantity - item.validatedQuantity
+          : item.quantity;
+
+      debugPrint('[VALIDATE]   → existing=${existing != null ? "${existing.quantity} ${existing.unit.name}" : "null"} qtyToApply=$qtyToApply unitChanged=$unitChanged validatedUnit=${validatedUnit.name}');
+
+      // Si delta nul (même quantité ET même unité que déjà validée), rien à faire
+      if (!unitChanged && qtyToApply.abs() < 0.001 && item.validatedQuantity > 0) {
+        debugPrint('[VALIDATE]   → SKIP (delta nul, déjà validé à même quantité)');
+        added++;
+        continue;
+      }
+
+      if (existing != null) {
+        if (unitChanged) {
+          final pantryInOldUnit = existing.unit == validatedUnit;
+          if (pantryInOldUnit) {
+            final remaining = existing.quantity - item.validatedQuantity;
+            debugPrint('[VALIDATE]   → UNIT CHANGE ${validatedUnit.name}→${unit.name}: undo ${item.validatedQuantity} ${validatedUnit.name}, remaining=$remaining');
+            if (remaining <= 0.001) {
+              await pantryRepo.delete(existing.id);
+              final (normQty, normUnit) = unit.normalize(item.quantity);
+              debugPrint('[VALIDATE]   → CREATE (replace): $normQty ${normUnit.name}');
+              await pantryRepo.save(PantryItem(
+                id: '',
+                name: item.name,
+                ingredientId: ing['id'] as String? ?? '',
+                typeId: typeId,
+                typeName: typeName,
+                quantity: normQty,
+                unit: normUnit,
+                isUrgent: false,
+                updatedAt: DateTime.now(),
+              ));
+            } else {
+              final remainingConverted = validatedUnit.convertTo(remaining, unit);
+              if (remainingConverted != null) {
+                final merged = remainingConverted + item.quantity;
+                final (normQty, normUnit) = unit.normalize(merged);
+                debugPrint('[VALIDATE]   → MERGE: $remaining ${validatedUnit.name} → $remainingConverted ${unit.name} + ${item.quantity} ${unit.name} = $normQty ${normUnit.name}');
+                await pantryRepo.save(existing.copyWith(
+                  quantity: normQty,
+                  unit: normUnit,
+                  updatedAt: DateTime.now(),
+                ));
+              } else {
+                final (normQty, normUnit) = unit.normalize(item.quantity);
+                debugPrint('[VALIDATE]   → INCOMPATIBLE units, replace: $normQty ${normUnit.name}');
+                await pantryRepo.save(existing.copyWith(
+                  quantity: normQty,
+                  unit: normUnit,
+                  updatedAt: DateTime.now(),
+                ));
+              }
+            }
+          } else {
+            final total = existing.quantity + item.quantity;
+            final (normQty, normUnit) = unit.normalize(total);
+            debugPrint('[VALIDATE]   → UNIT CHANGE but pantry already in ${existing.unit.name}, adding ${item.quantity} ${unit.name} → $normQty ${normUnit.name}');
+            await pantryRepo.save(existing.copyWith(
+              quantity: normQty,
+              unit: normUnit,
+              updatedAt: DateTime.now(),
+            ));
+          }
+        } else {
+          // Même unité : appliquer le delta
+          final rawQty = (existing.quantity + qtyToApply).clamp(0.0, double.infinity);
+          final (normQty, normUnit) = unit.normalize(rawQty);
+          debugPrint('[VALIDATE]   → UPDATE pantry: ${existing.quantity} ${existing.unit.name} + $qtyToApply → $normQty ${normUnit.name}');
+          if (normQty <= 0) {
+            await pantryRepo.delete(existing.id);
+          } else {
+            await pantryRepo.save(existing.copyWith(
+              quantity: normQty,
+              unit: normUnit,
+              updatedAt: DateTime.now(),
+            ));
+          }
+        }
+      } else {
+        final (normQty, normUnit) = unit.normalize(item.quantity);
+        debugPrint('[VALIDATE]   → CREATE pantry: $normQty ${normUnit.name}');
+        await pantryRepo.save(PantryItem(
+          id: '',
+          name: item.name,
+          ingredientId: ing['id'] as String? ?? '',
+          typeId: typeId,
+          typeName: typeName,
+          quantity: normQty,
+          unit: normUnit,
+          isUrgent: false,
+          updatedAt: DateTime.now(),
+        ));
+      }
+      added++;
+    }
+
+    debugPrint('[VALIDATE] END added=$added skipped=$skipped');
+
+    // Sauvegarder validatedQuantity pour chaque item coché
+    int actualCreated = 0;
+    int actualUpdated = 0;
+
+    // Sauvegarder validatedQuantity pour chaque item coché (même ceux ignorés = ingrédient inconnu)
+    // validatedQuantity = quantity pour les items ajoutés au pantry
+    // validatedQuantity = -1 pour les items cochés mais ingrédient inconnu (marqués "traités")
+    if (_currentShoppingList != null) {
+      final updatedItems = _items.map((item) {
+        if (!item.isChecked) return item;
+        if (ingredientNames.containsKey(item.name.toLowerCase().trim())) {
+          final wasNew = item.validatedQuantity == 0;
+          final wasDifferent = item.validatedQuantity > 0 && (item.quantity - item.validatedQuantity).abs() > 0.001;
+          if (wasNew) actualCreated++;
+          if (wasDifferent) actualUpdated++;
+          return item.copyWith(validatedQuantity: item.quantity, validatedUnit: item.unit);
+        } else {
+          return item.copyWith(validatedQuantity: -1, validatedUnit: item.unit);
+        }
+      }).toList();
+      if (mounted) setState(() => _items = updatedItems);
+      final updatedList = _currentShoppingList!.copyWith(items: updatedItems);
+      await FirebaseShoppingListRepository().saveShoppingList(updatedList);
+      _currentShoppingList = updatedList;
+      debugPrint('[VALIDATE] validatedQuantity saved to Firestore');
+    }
+
+    if (mounted) {
+      final parts = [
+        if (actualCreated > 0) '$actualCreated article(s) ajouté(s) au frigo/placard',
+        if (actualUpdated > 0) '$actualUpdated article(s) mis à jour dans le frigo/placard',
+        if (skipped > 0) '$skipped ignoré(s) (ingrédient inconnu)',
+      ];
+      final msg = parts.isNotEmpty ? parts.join(' · ') : 'Aucun changement à appliquer.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(msg, style: GoogleFonts.poppins(fontSize: 13)),
+          backgroundColor: const Color(0xFF4CAF50),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+    }
+  }
+
+  Future<void> _deleteItem(int index) async {
+    if (_currentShoppingList == null) return;
+    final updated = List<ShoppingItem>.from(_items)..removeAt(index);
+    setState(() => _items = updated);
+    try {
+      final updatedList = _currentShoppingList!.copyWith(items: updated);
+      await FirebaseShoppingListRepository().saveShoppingList(updatedList);
+      _currentShoppingList = updatedList;
+    } catch (e) {}
+  }
+
+  Future<void> _saveItemEdit(int index, ShoppingItem newItem) async {
+    if (_currentShoppingList == null) return;
+    final updated = List<ShoppingItem>.from(_items);
+    updated[index] = newItem;
+    setState(() => _items = updated);
+    try {
+      final updatedList = _currentShoppingList!.copyWith(items: updated);
+      await FirebaseShoppingListRepository().saveShoppingList(updatedList);
+      _currentShoppingList = updatedList;
+    } catch (e) {}
+  }
+
+  Future<void> _saveNewItem(ShoppingItem newItem) async {
+    if (_currentShoppingList == null) return;
+    final updated = [..._items, newItem];
+    setState(() => _items = updated);
+    try {
+      final updatedList = _currentShoppingList!.copyWith(items: updated);
+      await FirebaseShoppingListRepository().saveShoppingList(updatedList);
+      _currentShoppingList = updatedList;
+    } catch (e) {}
+  }
+
+  void _showAddEditSheet({ShoppingItem? item, int? index}) {
+    final nameCtrl = TextEditingController(text: item?.name ?? '');
+    final qtyCtrl = TextEditingController(
+      text: (item != null && item.quantity > 0) ? fmtQty(item.quantity) : '',
+    );
+    Unit selectedUnit = Unit.values.firstWhere(
+      (u) => u.name == (item?.unit ?? ''),
+      orElse: () => Unit.piece,
+    );
+    String? selectedTypeId = item?.typeId;
+    List<Map<String, dynamic>> suggestions = [];
+    bool showSuggestions = false;
+
+    Future<void> fetchSuggestions(String query, void Function(void Function()) setSheetState) async {
+      if (query.trim().isEmpty) {
+        setSheetState(() { suggestions = []; showSuggestions = false; });
+        return;
+      }
+      final all = await FirebaseIngredientRepository().getAllIngredients();
+      final lower = query.toLowerCase();
+      final filtered = all
+          .where((i) => (i['name'] as String).toLowerCase().contains(lower))
+          .take(6)
+          .toList();
+      setSheetState(() { suggestions = filtered; showSuggestions = filtered.isNotEmpty; });
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) => SizedBox(
+          height: MediaQuery.of(ctx).size.height * 0.72,
+          child: Padding(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+              left: 24,
+              right: 24,
+              top: 8,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  item == null ? 'Ajouter un article' : 'Modifier l\'article',
+                  style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 16),
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Container(
+                          decoration: BoxDecoration(
+                            color: Colors.grey[50],
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey[200]!),
+                          ),
+                          child: TextField(
+                            controller: nameCtrl,
+                            autofocus: item == null,
+                            textCapitalization: TextCapitalization.sentences,
+                            style: GoogleFonts.poppins(fontSize: 14),
+                            decoration: InputDecoration(
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              border: InputBorder.none,
+                              hintText: 'Nom',
+                              hintStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 13),
+                            ),
+                            onChanged: (v) => fetchSuggestions(v, setSheetState),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.grey[50],
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey[200]!),
+                      ),
+                      child: TextField(
+                        controller: qtyCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+                        style: GoogleFonts.poppins(fontSize: 14),
+                        decoration: InputDecoration(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                          border: InputBorder.none,
+                          hintText: 'Qté',
+                          hintStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 13),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[50],
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey[200]!),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<Unit>(
+                          value: selectedUnit,
+                          isExpanded: true,
+                          icon: Icon(Icons.expand_more_rounded, color: Colors.grey[600], size: 20),
+                          dropdownColor: Colors.white,
+                          selectedItemBuilder: (context) => Unit.values.map((u) => Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('Unité', style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[500])),
+                              Text(u.label, style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
+                            ],
+                          )).toList(),
+                          onChanged: (u) { if (u != null) setSheetState(() => selectedUnit = u); },
+                          items: Unit.values.map((u) => DropdownMenuItem<Unit>(
+                            value: u,
+                            child: Text(u.label, style: GoogleFonts.poppins(fontSize: 14)),
+                          )).toList(),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  border: Border.all(color: Colors.grey[200]!),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String?>(
+                    value: selectedTypeId,
+                    isExpanded: true,
+                    icon: Icon(Icons.expand_more_rounded, color: Colors.grey[600], size: 20),
+                    dropdownColor: Colors.white,
+                    selectedItemBuilder: (context) {
+                      final allIds = <String?>[null, ..._types.where((t) => t.name != 'Autre').map((t) => t.id)];
+                      return allIds.map((id) {
+                        final name = id == null ? 'Autre' : _types.firstWhere((t) => t.id == id, orElse: () => IngredientType(id: '', name: 'Autre', color: 0)).name;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('Catégorie (optionnel)', style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[500])),
+                            Text(name, style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
+                          ],
+                        );
+                      }).toList();
+                    },
+                    onChanged: (v) => setSheetState(() => selectedTypeId = v),
+                    items: [
+                      DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('Autre', style: GoogleFonts.poppins(fontSize: 14)),
+                      ),
+                      ..._types.where((t) => t.name != 'Autre').map((t) => DropdownMenuItem<String?>(
+                        value: t.id,
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 10, height: 10,
+                              margin: const EdgeInsets.only(right: 8),
+                              decoration: BoxDecoration(color: Color(t.color), shape: BoxShape.circle),
+                            ),
+                            Text(t.name, style: GoogleFonts.poppins(fontSize: 14)),
+                          ],
+                        ),
+                      )),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6A5AE0),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                onPressed: () async {
+                  final name = nameCtrl.text.trim();
+                  if (name.isEmpty) return;
+                  final qty = double.tryParse(
+                          qtyCtrl.text.replaceAll(',', '.').replaceAll('\u00a0', '').replaceAll(' ', '')) ??
+                      0.0;
+                  final newItem = ShoppingItem(
+                    name: name,
+                    quantity: qty,
+                    unit: selectedUnit.name,
+                    typeId: selectedTypeId,
+                    isChecked: item?.isChecked ?? false,
+                    contributions: item?.contributions ?? [],
+                    totalRequiredBase: item?.totalRequiredBase ?? 0,
+                    validatedQuantity: item?.validatedQuantity ?? 0,
+                    validatedUnit: item?.validatedUnit ?? '',
+                  );
+                  Navigator.pop(ctx);
+                  if (index != null) {
+                    await _saveItemEdit(index, newItem);
+                  } else {
+                    await _saveNewItem(newItem);
+                  }
+                },
+                child: Text(
+                  item == null ? 'Ajouter' : 'Enregistrer',
+                  style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          if (showSuggestions)
+            Positioned(
+              top: 56,
+              left: 0,
+              right: 0,
+              child: Material(
+                elevation: 8,
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  constraints: const BoxConstraints(maxHeight: 220),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: suggestions.map((s) {
+                        final name = s['name'] as String;
+                        final typeId = s['typeId'] as String?;
+                        final typeName = typeId != null
+                            ? _types.firstWhere((t) => t.id == typeId, orElse: () => IngredientType(id: '', name: '', color: 0)).name
+                            : null;
+                        return InkWell(
+                          onTap: () {
+                            nameCtrl.text = name;
+                            setSheetState(() {
+                              showSuggestions = false;
+                              suggestions = [];
+                              if (typeId != null && typeId.isNotEmpty) selectedTypeId = typeId;
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(name, style: GoogleFonts.poppins(fontSize: 14)),
+                                ),
+                                if (typeName != null && typeName.isNotEmpty)
+                                  Text(
+                                    typeName,
+                                    style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[500]),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+        ),
+      ],
+      ),
+        ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddFab() {
+    return FloatingActionButton(
+      onPressed: () => _showAddEditSheet(),
+      backgroundColor: const Color(0xFF6A5AE0),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: const Icon(Icons.add_rounded, color: Colors.white),
+    );
   }
 
   @override
@@ -110,6 +913,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
     if (_items.isEmpty) {
       return Scaffold(
         backgroundColor: Colors.white,
+        floatingActionButton: _currentShoppingList != null ? _buildAddFab() : null,
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -159,6 +963,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
 
     return Scaffold(
       backgroundColor: Colors.white,
+      floatingActionButton: _currentShoppingList != null ? _buildAddFab() : null,
       body: Stack(
         children: [
           // Background Gradient
@@ -235,7 +1040,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                 // Progress bar
                 if (_items.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -257,12 +1062,32 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                     ),
                   ),
 
+                // Bouton valider — uniquement s'il y a des items cochés non encore validés
+                if (_currentShoppingList != null && _items.any((i) =>
+                    i.isChecked && (
+                      i.validatedQuantity == 0 ||
+                      (i.validatedQuantity > 0 && (i.quantity - i.validatedQuantity).abs() > 0.001)
+                    )))
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 12, 24, 4),
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF4CAF50),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                      ),
+                      onPressed: _showValidateDialog,
+                      icon: const Icon(Icons.check_circle_outline_rounded, color: Colors.white, size: 20),
+                      label: Text('Valider les courses', style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+
                 // List content
                 Expanded(
                   child: ListView(
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
                     children: [
-                      // Empty state for "All done" but items exist
+                      // Empty state when all items are checked
                       if (groupedUnchecked.isEmpty && checkedItems.isNotEmpty)
                          Padding(
                            padding: const EdgeInsets.symmetric(vertical: 40),
@@ -271,7 +1096,21 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                                children: [
                                  Icon(Icons.check_circle_outline_rounded, size: 60, color: Colors.green[300]),
                                  const SizedBox(height: 16),
-                                 Text("Tout est prêt !", style: GoogleFonts.poppins(fontSize: 18, color: Colors.green[700])),
+                                 Text(
+                                   checkedItems.every((i) => i.validatedQuantity != 0)
+                                       ? 'Tout a été validé !'
+                                       : 'Tout est coché !',
+                                   style: GoogleFonts.poppins(fontSize: 18, color: Colors.green[700]),
+                                 ),
+                                 if (checkedItems.every((i) => i.validatedQuantity != 0))
+                                   Padding(
+                                     padding: const EdgeInsets.only(top: 6),
+                                     child: Text(
+                                       'Les articles ont été ajoutés au frigo/placard.',
+                                       style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey[500]),
+                                       textAlign: TextAlign.center,
+                                     ),
+                                   ),
                                ],
                              ),
                            ),
@@ -381,6 +1220,64 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
     return _ShoppingListItemCard(
       item: item,
       onCheckTap: () => _toggleItem(originalIndex),
+      onEditTap: () => _showAddEditSheet(item: item, index: originalIndex),
+      onDeleteTap: () async {
+        final isValidated = item.isChecked && item.validatedQuantity > 0;
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Text('Supprimer l\'article', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Supprimer "${item.name}" de la liste ?', style: GoogleFonts.poppins(fontSize: 14)),
+                if (isValidated) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.orange.shade200),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.warning_amber_rounded, size: 16, color: Colors.orange[700]),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Cet article a déjà été validé. La quantité sera retirée de votre frigo/placard.',
+                            style: GoogleFonts.poppins(fontSize: 12, color: Colors.orange[800]),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text('Annuler', style: GoogleFonts.poppins(color: Colors.grey[600])),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text('Supprimer', style: GoogleFonts.poppins(color: Colors.red[400], fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+        );
+        if (confirmed == true) {
+          if (isValidated) {
+            await _applyPantryDelta(item: item, delta: -item.validatedQuantity);
+          }
+          _deleteItem(originalIndex);
+        }
+      },
       pantryMatch: pantryMatch,
       contributions: item.contributions,
       formatQuantity: _formatQuantity,
@@ -400,6 +1297,8 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
 class _ShoppingListItemCard extends StatefulWidget {
   final ShoppingItem item;
   final VoidCallback onCheckTap;
+  final VoidCallback onEditTap;
+  final VoidCallback onDeleteTap;
   final PantrySnapshotItem? pantryMatch;
   final List<RecipeContribution> contributions;
   final String Function(double) formatQuantity;
@@ -407,6 +1306,8 @@ class _ShoppingListItemCard extends StatefulWidget {
   const _ShoppingListItemCard({
     required this.item,
     required this.onCheckTap,
+    required this.onEditTap,
+    required this.onDeleteTap,
     required this.pantryMatch,
     required this.contributions,
     required this.formatQuantity,
@@ -671,10 +1572,52 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
                       GestureDetector(
                         onTap: () => _showContributionsSheet(context),
                         child: Padding(
-                          padding: const EdgeInsets.all(4),
+                          padding: const EdgeInsets.all(10),
                           child: Icon(Icons.info_outline_rounded,
-                              size: 18,
+                              size: 22,
                               color: const Color(0xFF6A5AE0).withOpacity(0.55)),
+                        ),
+                      ),
+                    ],
+                    if (item.isChecked) ...[
+                      const SizedBox(width: 4),
+                      GestureDetector(
+                        onTap: widget.onEditTap,
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Icon(Icons.edit_outlined,
+                              size: 22,
+                              color: const Color(0xFF6A5AE0).withOpacity(0.5)),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: widget.onDeleteTap,
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Icon(Icons.delete_outline_rounded,
+                              size: 22,
+                              color: Colors.red[200]),
+                        ),
+                      ),
+                    ],
+                    if (!item.isChecked) ...[  
+                      const SizedBox(width: 4),
+                      GestureDetector(
+                        onTap: widget.onEditTap,
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Icon(Icons.edit_outlined,
+                              size: 22,
+                              color: Colors.grey[400]),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: widget.onDeleteTap,
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Icon(Icons.delete_outline_rounded,
+                              size: 22,
+                              color: Colors.red[300]),
                         ),
                       ),
                     ],

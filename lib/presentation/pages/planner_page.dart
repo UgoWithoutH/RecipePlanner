@@ -23,6 +23,7 @@ import '../../domain/entities/user.dart';
 import '../../domain/entities/user_recipe_serving.dart';
 import '../../domain/usecases/meal_planning_service.dart';
 import '../../domain/usecases/shopping_list_generator.dart';
+import '../../data/repositories/firebase_shopping_list_repository.dart';
 import '../../core/utils/ingredient_name_cache.dart';
 import '../../data/repositories/firebase_recipe_repository.dart';
 import '../../data/repositories/firebase_user_repository.dart';
@@ -292,9 +293,9 @@ class _PlannerPageState extends State<PlannerPage> {
         _focusedDay = sortedDates.first;
         _calendarFormat = CalendarFormat.month;
       }
-      setState(() {});
+      if (mounted) setState(() {});
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -1230,6 +1231,7 @@ class _PlannerPageState extends State<PlannerPage> {
     try {
       await _mealPlanRepo.deleteMealPlan(_generatedMealPlan!.id);
       await FirebasePantrySnapshotRepository.instance.delete();
+      await FirebaseShoppingListRepository().deleteGroupShoppingList();
       final historyDates = _mealHistory.keys.toList()..sort((a, b) => b.compareTo(a));
       setState(() {
         _generatedMealPlan = null;
@@ -1436,6 +1438,7 @@ class _PlannerPageState extends State<PlannerPage> {
         urgentPantryIngredientNames: _urgentPantryNames,
         selectedCategories: _selectedCategories.toList(),
         leftoverUserOrder: _generatedMealPlan?.leftoverUserOrder ?? [],
+        ignoreHistoryLeftovers: true,
       );
 
       setState(() {
@@ -1864,6 +1867,7 @@ class _PlannerPageState extends State<PlannerPage> {
             similarityPenaltyWeight: 60.0,
             wastePenaltyWeight: 25.0,
             strictNoWaste: strict,
+            ignoreHistoryLeftovers: true,
           );
         }
         Meal? pickFromPlan(MealPlan plan) => plan.meals.where(
@@ -1983,6 +1987,20 @@ class _PlannerPageState extends State<PlannerPage> {
           final isWasteConstrained = cascadeUnresolvable ||
               pickFromPlan(runPlan(slotAvailable, strict: false)) != null;
           if (isWasteConstrained) {
+            // Pour un shuffle unitaire, accepter quand même une recette qui produit
+            // des restes plutôt que d'échouer (le slot suivant est verrouillé mais
+            // l'utilisateur veut juste changer de recette).
+            if (!isMultiShuffle) {
+              final nonStrictMeal = pickFromPlan(runPlan(slotAvailable, strict: false));
+              if (nonStrictMeal != null) {
+                debugPrint('[SHUFFLE] Passe1 slot $sk → waste-constrained, single-shuffle fallback → ${nonStrictMeal.recipe.id}');
+                selectedNewMeals.add(nonStrictMeal);
+                if (oldLeftoverSlotKeys.isNotEmpty) {
+                  slotsToLeaveEmpty.addAll(oldLeftoverSlotKeys);
+                }
+                continue;
+              }
+            }
             debugPrint('[SHUFFLE] Passe1 slot $sk → ALGO null (waste-constrained, aucune recette sans restes dispo). recipe=${mealToChange.recipe.id}');
             wasteConstrainedLabels.add('$typeLabel du $dayLabel');
           } else {
@@ -2116,6 +2134,7 @@ class _PlannerPageState extends State<PlannerPage> {
         leftoverUserOrder: _generatedMealPlan!.leftoverUserOrder,
         similarityPenaltyWeight: 60.0,
         wastePenaltyWeight: 25.0,
+        ignoreHistoryLeftovers: true,
       );
 
       // Supprimer les repas non-leftover dans les slots marqués vides

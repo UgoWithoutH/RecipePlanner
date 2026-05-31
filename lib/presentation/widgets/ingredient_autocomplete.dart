@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../data/repositories/group_repository.dart';
 
@@ -71,59 +72,89 @@ class _IngredientAutocompleteState extends State<IngredientAutocomplete> {
 
   @override
   Widget build(BuildContext context) {
-    return Autocomplete<Map<String, String>>(
-      optionsBuilder: (TextEditingValue textEditingValue) async {
-        return await _searchIngredients(textEditingValue.text.trim());
-      },
-      displayStringForOption: (option) => option['name']!,
-      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-        if (widget.controller != null && controller != widget.controller) {
-          controller.text = widget.controller!.text;
-          controller.selection = widget.controller!.selection;
-          widget.controller!.addListener(() {
-            if (controller.text != widget.controller!.text) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fieldWidth = constraints.maxWidth;
+        return Autocomplete<Map<String, String>>(
+          optionsBuilder: (TextEditingValue textEditingValue) async {
+            return await _searchIngredients(textEditingValue.text.trim());
+          },
+          displayStringForOption: (option) => option['name']!,
+          fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+            if (widget.controller != null && controller != widget.controller) {
               controller.text = widget.controller!.text;
               controller.selection = widget.controller!.selection;
+              widget.controller!.addListener(() {
+                if (controller.text != widget.controller!.text) {
+                  controller.text = widget.controller!.text;
+                  controller.selection = widget.controller!.selection;
+                }
+              });
             }
-          });
-        }
-        return TextField(
-          controller: widget.controller ?? controller,
-          focusNode: focusNode,
-          decoration: InputDecoration(
-            hintText: widget.hintText,
-            prefixIcon: const Icon(Icons.search),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            isDense: true,
-            contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-          ),
+            return TextField(
+              controller: widget.controller ?? controller,
+              focusNode: focusNode,
+              decoration: InputDecoration(
+                hintText: widget.hintText,
+                prefixIcon: const Icon(Icons.search),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+              ),
+            );
+          },
+          optionsViewBuilder: (context, onSelected, options) {
+            return Align(
+              alignment: Alignment.topLeft,
+              child: Material(
+                elevation: 8,
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                child: SizedBox(
+                  width: fieldWidth,
+                  child: Container(
+                    constraints: const BoxConstraints(maxHeight: 220),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: options.map((option) {
+                          return InkWell(
+                            onTap: () => onSelected(option),
+                            borderRadius: BorderRadius.circular(8),
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                child: Text(
+                                  option['name'] ?? '',
+                                  style: GoogleFonts.poppins(fontSize: 14),
+                                  textAlign: TextAlign.left,
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+          onSelected: (ingredient) {
+            if (widget.onIngredientSelected != null) widget.onIngredientSelected!(ingredient);
+            if (widget.onSelected != null) widget.onSelected!(ingredient);
+            if (widget.controller != null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                widget.controller!.clear();
+              });
+            }
+          },
         );
-      },
-      optionsViewBuilder: (context, onSelected, options) {
-        return Material(
-          elevation: 4,
-          borderRadius: BorderRadius.circular(12),
-          child: ListView(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            shrinkWrap: true,
-            children: options.map((option) {
-              return ListTile(
-                title: Text(option['name'] ?? ''),
-                onTap: () => onSelected(option),
-              );
-            }).toList(),
-          ),
-        );
-      },
-      onSelected: (ingredient) {
-        if (widget.onIngredientSelected != null) widget.onIngredientSelected!(ingredient);
-        if (widget.onSelected != null) widget.onSelected!(ingredient);
-        // Clear the controller if provided
-        if (widget.controller != null) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            widget.controller!.clear();
-          });
-        }
       },
     );
   }

@@ -277,16 +277,20 @@ class ShoppingListGenerator {
       
       List<ShoppingItem> finalItems = shoppingListMap.values.toList();
       
-      if (existingList != null) {
-          // Merge checked status
+      // Preserve checked status only when modifying the SAME plan (shuffle/edit/delete meal).
+      // For a brand-new plan (different mealPlanId), always start with a clean unchecked list.
+      if (existingList != null && existingList.mealPlanId == mealPlan.id) {
           finalItems = finalItems.map((newItem) {
-              // Try to find matching item in existing list
-              // Match by name or ID (key isn't stored in ShoppingItem, but name and unit usually match)
               try {
                   final oldItem = existingList.items.firstWhere(
                       (old) => old.name == newItem.name && old.unit == newItem.unit,
                   );
-                  return newItem.copyWith(isChecked: oldItem.isChecked);
+                  return newItem.copyWith(
+                    isChecked: oldItem.isChecked,
+                    validatedQuantity: oldItem.validatedQuantity,
+                    // Preserve user-edited quantity for checked items (bought amounts)
+                    quantity: oldItem.isChecked ? oldItem.quantity : newItem.quantity,
+                  );
               } catch (e) {
                   return newItem;
               }

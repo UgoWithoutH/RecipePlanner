@@ -514,8 +514,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                       Expanded(
                         flex: 3,
                         child: Container(
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 12),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                           decoration: BoxDecoration(
                             color: Colors.grey[50],
                             borderRadius: BorderRadius.circular(12),
@@ -525,18 +524,21 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                             child: DropdownButton<Unit>(
                               value: selectedUnit,
                               isExpanded: true,
-                              items: Unit.values
-                                  .map((u) => DropdownMenuItem(
-                                        value: u,
-                                        child: Text(u.label,
-                                            style: GoogleFonts.poppins(
-                                                fontSize: 13)),
-                                      ))
-                                  .toList(),
-                              onChanged: (v) {
-                                if (v != null)
-                                  setStateDialog(() => selectedUnit = v);
-                              },
+                              icon: Icon(Icons.expand_more_rounded, color: Colors.grey[600], size: 20),
+                              dropdownColor: Colors.white,
+                              selectedItemBuilder: (context) => Unit.values.map((u) => Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text('Unité', style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[500])),
+                                  Text(u.label, style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
+                                ],
+                              )).toList(),
+                              items: Unit.values.map((u) => DropdownMenuItem<Unit>(
+                                value: u,
+                                child: Text(u.label, style: GoogleFonts.poppins(fontSize: 14)),
+                              )).toList(),
+                              onChanged: (u) { if (u != null) setStateDialog(() => selectedUnit = u); },
                             ),
                           ),
                         ),
@@ -1158,7 +1160,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                   Expanded(
                     flex: 3,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                       decoration: BoxDecoration(
                         color: Colors.grey[50],
                         borderRadius: BorderRadius.circular(12),
@@ -1167,27 +1169,23 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                       child: DropdownButtonHideUnderline(
                         child: DropdownButton<Unit>(
                           value: _selectedIngredientUnit,
-                          hint: Text(
-                            'Unité',
-                            style: GoogleFonts.poppins(
-                              color: Colors.grey[400],
-                              fontSize: 13,
-                            ),
-                          ),
                           isExpanded: true,
-                          items: _units
-                              .map(
-                                (u) => DropdownMenuItem(
-                                  value: u,
-                                  child: Text(
-                                    u.label,
-                                    style: GoogleFonts.poppins(fontSize: 13),
-                                  ),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (v) =>
-                              setState(() => _selectedIngredientUnit = v),
+                          icon: Icon(Icons.expand_more_rounded, color: Colors.grey[600], size: 20),
+                          dropdownColor: Colors.white,
+                          hint: Text('Unité', style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey[400])),
+                          selectedItemBuilder: (context) => Unit.values.map((u) => Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('Unité', style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[500])),
+                              Text(u.label, style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
+                            ],
+                          )).toList(),
+                          items: Unit.values.map((u) => DropdownMenuItem<Unit>(
+                            value: u,
+                            child: Text(u.label, style: GoogleFonts.poppins(fontSize: 14)),
+                          )).toList(),
+                          onChanged: (u) => setState(() => _selectedIngredientUnit = u),
                         ),
                       ),
                     ),

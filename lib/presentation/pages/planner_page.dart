@@ -299,9 +299,14 @@ class _PlannerPageState extends State<PlannerPage> {
     }
   }
 
-  Future<void> _pickStartDate({VoidCallback? onDatePicked}) async {
-    DateTime tempSelectedDate = _selectedStartDate ?? DateTime.now();
-    DateTime focusedDay = tempSelectedDate;
+  Future<void> _pickDateRange({VoidCallback? onUpdated}) async {
+    DateTime tempStartDate = _selectedStartDate ?? DateTime.now();
+    int tempDuration = (_selectedDuration ?? 7).clamp(1, 31);
+    DateTime tempEndDate = tempStartDate.add(Duration(days: tempDuration - 1));
+    DateTime focusedDay = tempStartDate;
+    bool awaitingEnd = false;
+    bool startSelected = true; // false = start date cleared by user
+    const int maxDays = 31;
 
     await showModalBottomSheet(
       context: context,
@@ -311,108 +316,381 @@ class _PlannerPageState extends State<PlannerPage> {
         return StatefulBuilder(
           builder: (context, setStateSheet) {
             return Container(
+              height: MediaQuery.of(context).size.height * 0.9,
               decoration: const BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
               ),
-              padding: const EdgeInsets.all(24),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
                 children: [
-                   Container(
+                  // Handle bar
+                  Container(
                     width: 40,
                     height: 4,
-                    margin: const EdgeInsets.only(bottom: 20),
+                    margin: const EdgeInsets.only(top: 12, bottom: 16),
                     decoration: BoxDecoration(
                       color: Colors.grey[300],
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
-                  Text(
-                    'Sélectionnez une date de début',
-                    style: GoogleFonts.poppins(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: const Color(0xFF1A1A1A),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    height: 380, // Hauteur fixe pour éviter les sauts lors du changement de mois
-                    child: TableCalendar(
-                      shouldFillViewport: true,
-                      locale: 'fr_FR',
-                      startingDayOfWeek: StartingDayOfWeek.monday,
-                      firstDay: DateTime.now(),
-                      lastDay: DateTime.now().add(const Duration(days: 365)),
-                      focusedDay: focusedDay,
-                      currentDay: DateTime.now(),
-                      headerStyle: HeaderStyle(
-                        formatButtonVisible: false,
-                        titleCentered: true,
-                        titleTextStyle: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        leftChevronIcon:
-                            const Icon(Icons.chevron_left, color: Color(0xFF6A5AE0)),
-                        rightChevronIcon:
-                            const Icon(Icons.chevron_right, color: Color(0xFF6A5AE0)),
-                      ),
-                      calendarStyle: const CalendarStyle(
-                        selectedDecoration: BoxDecoration(
-                          color: Color(0xFF6A5AE0),
-                          shape: BoxShape.circle,
-                        ),
-                        todayDecoration: BoxDecoration(
-                          color: Color(0xFF6A5AE0),
-                          shape: BoxShape.circle,
-                        ), 
-                        todayTextStyle: TextStyle(color: Colors.white),
-                      ),
-                      selectedDayPredicate: (day) =>
-                          isSameDay(tempSelectedDate, day),
-                      onDaySelected: (selectedDay, focused) {
-                        setStateSheet(() {
-                          tempSelectedDate = selectedDay;
-                          focusedDay = focused;
-                        });
-                      },
-                      onPageChanged: (focused) {
-                        setStateSheet(() {
-                          focusedDay = focused;
-                        });
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        setState(() => _selectedStartDate = tempSelectedDate);
-                        if (onDatePicked != null) onDatePicked();
-                        Navigator.pop(context);
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6A5AE0),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        elevation: 0,
-                      ),
-                      child: Text(
-                        'Valider',
-                        style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
+                  // Title
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Text(
+                      'Période du plan',
+                      style: GoogleFonts.poppins(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF1A1A1A),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
+                  // Start / End date chips
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF6A5AE0).withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFF6A5AE0).withOpacity(0.3)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Début', style: GoogleFonts.poppins(fontSize: 10, color: const Color(0xFF6A5AE0))),
+                                Text(
+                                  startSelected
+                                      ? '${tempStartDate.day}/${tempStartDate.month}/${tempStartDate.year}'
+                                      : '—',
+                                  style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w700, color: const Color(0xFF6A5AE0)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          child: Icon(Icons.arrow_forward_rounded, color: Colors.grey[400], size: 16),
+                        ),
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF6A5AE0).withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFF6A5AE0).withOpacity(0.3)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Fin', style: GoogleFonts.poppins(fontSize: 10, color: const Color(0xFF6A5AE0))),
+                                Text(
+                                  (startSelected && !awaitingEnd)
+                                      ? '${tempEndDate.day}/${tempEndDate.month}/${tempEndDate.year}'
+                                      : '—',
+                                  style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w700, color: const Color(0xFF6A5AE0)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Hint when awaiting end date pick
+                  if (awaitingEnd && startSelected)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF6A5AE0).withOpacity(0.07),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.touch_app_rounded, size: 15, color: Color(0xFF6A5AE0)),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Sélectionnez maintenant la date de fin',
+                              style: GoogleFonts.poppins(fontSize: 11, color: const Color(0xFF6A5AE0)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                  // Calendar — takes all remaining space
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: TableCalendar(
+                        shouldFillViewport: true,
+                        locale: 'fr_FR',
+                        startingDayOfWeek: StartingDayOfWeek.monday,
+                        firstDay: DateTime.now(),
+                        lastDay: DateTime.now().add(const Duration(days: 365)),
+                        focusedDay: focusedDay,
+                        rangeStartDay: startSelected ? tempStartDate : null,
+                        rangeEndDay: (startSelected && !awaitingEnd) ? tempEndDate : null,
+                        rangeSelectionMode: RangeSelectionMode.disabled,
+                        headerStyle: HeaderStyle(
+                          formatButtonVisible: false,
+                          titleCentered: true,
+                          titleTextStyle: GoogleFonts.poppins(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          leftChevronIcon: const Icon(Icons.chevron_left, color: Color(0xFF6A5AE0)),
+                          rightChevronIcon: const Icon(Icons.chevron_right, color: Color(0xFF6A5AE0)),
+                        ),
+                        enabledDayPredicate: (day) {
+                          if (!startSelected || !awaitingEnd) return true;
+                          final startNorm = DateTime(tempStartDate.year, tempStartDate.month, tempStartDate.day);
+                          final dayNorm = DateTime(day.year, day.month, day.day);
+                          // Activer dans les ±(maxDays-1) jours autour du début :
+                          // - après : fin normale
+                          // - avant : swap intelligent (l'antérieure devient début)
+                          final diff = dayNorm.difference(startNorm).inDays.abs();
+                          return diff < maxDays;
+                        },
+                        calendarStyle: CalendarStyle(
+                          disabledDecoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.transparent,
+                          ),
+                          disabledTextStyle: TextStyle(color: Colors.grey[300]),
+                          rangeStartDecoration: const BoxDecoration(
+                            color: Color(0xFF6A5AE0),
+                            shape: BoxShape.circle,
+                          ),
+                          rangeEndDecoration: const BoxDecoration(
+                            color: Color(0xFF6A5AE0),
+                            shape: BoxShape.circle,
+                          ),
+                          rangeStartTextStyle: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          rangeEndTextStyle: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          withinRangeDecoration: BoxDecoration(
+                            color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                          ),
+                          withinRangeTextStyle: const TextStyle(
+                            color: Color(0xFF6A5AE0),
+                          ),
+                          rangeHighlightColor: const Color(0xFF6A5AE0).withOpacity(0.12),
+                          todayDecoration: BoxDecoration(
+                            color: const Color(0xFF6A5AE0).withOpacity(0.18),
+                            shape: BoxShape.circle,
+                          ),
+                          todayTextStyle: const TextStyle(
+                            color: Color(0xFF6A5AE0),
+                            fontWeight: FontWeight.w600,
+                          ),
+                          outsideDaysVisible: false,
+                        ),
+                        onDaySelected: (selected, focused) {
+                          setStateSheet(() {
+                            focusedDay = focused;
+                            if (!startSelected) {
+                              // Aucune sélection : choisir la date de début
+                              tempStartDate = selected;
+                              startSelected = true;
+                              awaitingEnd = true;
+                            } else if (awaitingEnd) {
+                              if (isSameDay(selected, tempStartDate)) {
+                                // Re-tap date début → tout désélectionner
+                                startSelected = false;
+                                awaitingEnd = false;
+                              } else if (!selected.isBefore(tempStartDate)) {
+                                // Choisir date de fin (limité à maxDays)
+                                final raw = selected.difference(tempStartDate).inDays + 1;
+                                if (raw > maxDays) return; // jour désactivé, ignorer
+                                tempEndDate = selected;
+                                final days = raw;
+                                tempDuration = days.clamp(1, maxDays);
+                                awaitingEnd = false;
+                              } else {
+                                // Date antérieure → swap : antérieure = début, ancienne = fin
+                                final oldStart = tempStartDate;
+                                tempStartDate = selected;
+                                tempEndDate = oldStart;
+                                final days = oldStart.difference(selected).inDays + 1;
+                                tempDuration = days.clamp(1, maxDays);
+                                awaitingEnd = false;
+                              }
+                            } else {
+                              // Plage complète
+                              if (isSameDay(selected, tempStartDate)) {
+                                // Re-tap début → garder la fin comme nouveau début, attendre nouvelle fin
+                                tempStartDate = tempEndDate;
+                                startSelected = true;
+                                awaitingEnd = true;
+                              } else if (isSameDay(selected, tempEndDate)) {
+                                // Re-tap fin → garder début, attendre nouvelle fin
+                                awaitingEnd = true;
+                              } else {
+                                // Autre jour → nouvelle date de début
+                                tempStartDate = selected;
+                                startSelected = true;
+                                awaitingEnd = true;
+                              }
+                            }
+                          });
+                        },
+                        onPageChanged: (focused) {
+                          setStateSheet(() => focusedDay = focused);
+                        },
+                      ),
+                    ),
+                  ),
+                  // Info max jours
+                  if (awaitingEnd && startSelected)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.info_outline_rounded, size: 13, color: Colors.grey[400]),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Maximum $maxDays jours',
+                            style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[400]),
+                          ),
+                        ],
+                      ),
+                    ),
+                  // Slider + presets + button
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 10),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Duration display
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.baseline,
+                          textBaseline: TextBaseline.alphabetic,
+                          children: [
+                            Text(
+                              '$tempDuration',
+                              style: GoogleFonts.poppins(
+                                fontSize: 36,
+                                fontWeight: FontWeight.bold,
+                                color: const Color(0xFF6A5AE0),
+                                height: 1,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              tempDuration > 1 ? 'jours' : 'jour',
+                              style: GoogleFonts.poppins(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            activeTrackColor: const Color(0xFF6A5AE0),
+                            inactiveTrackColor: Colors.grey[200],
+                            thumbColor: const Color(0xFF6A5AE0),
+                            overlayColor: const Color(0xFF6A5AE0).withOpacity(0.2),
+                            trackHeight: 6,
+                          ),
+                          child: Slider(
+                            value: tempDuration.clamp(1, maxDays).toDouble(),
+                            min: 1,
+                            max: maxDays.toDouble(),
+                            divisions: maxDays - 1,
+                            onChanged: (val) {
+                              setStateSheet(() {
+                                tempDuration = val.round();
+                                tempEndDate = tempStartDate.add(Duration(days: tempDuration - 1));
+                                awaitingEnd = false;
+                              });
+                            },
+                          ),
+                        ),
+                        // Quick presets
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [3, 5, 7, 10, 14].map((days) {
+                            final isSelected = tempDuration == days;
+                            return InkWell(
+                              onTap: () => setStateSheet(() {
+                                tempDuration = days;
+                                tempEndDate = tempStartDate.add(Duration(days: days - 1));
+                                awaitingEnd = false;
+                              }),
+                              borderRadius: BorderRadius.circular(12),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: isSelected ? const Color(0xFF6A5AE0) : Colors.grey[100],
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  '$days j',
+                                  style: GoogleFonts.poppins(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                    color: isSelected ? Colors.white : Colors.grey[700],
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: (startSelected && !awaitingEnd) ? () {
+                              setState(() {
+                                _selectedStartDate = tempStartDate;
+                                _selectedDuration = tempDuration;
+                              });
+                              _saveDuration(tempDuration);
+                              if (onUpdated != null) onUpdated();
+                              Navigator.pop(context);
+                            } : null,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF6A5AE0),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              elevation: 0,
+                            ),
+                            child: Text(
+                              'Valider',
+                              style: GoogleFonts.poppins(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             );
@@ -1018,161 +1296,7 @@ class _PlannerPageState extends State<PlannerPage> {
   }
 
   void _pickDuration({VoidCallback? onUpdated}) {
-    int tempDuration = _selectedDuration ?? 7;
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setStateSheet) {
-            return Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-              ),
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 40,
-                    height: 4,
-                    margin: const EdgeInsets.only(bottom: 20),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  Text(
-                    'Durée du planning',
-                    style: GoogleFonts.poppins(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: const Color(0xFF1A1A1A),
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  
-                  // Display value
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.baseline,
-                    textBaseline: TextBaseline.alphabetic,
-                    children: [
-                      Text(
-                        tempDuration.toString(),
-                        style: GoogleFonts.poppins(
-                          fontSize: 48,
-                          fontWeight: FontWeight.bold,
-                          color: const Color(0xFF6A5AE0),
-                          height: 1,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        tempDuration > 1 ? 'jours' : 'jour',
-                        style: GoogleFonts.poppins(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                    ],
-                  ),
-                  
-                  const SizedBox(height: 32),
-                  
-                  // Slider
-                  SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      activeTrackColor: const Color(0xFF6A5AE0),
-                      inactiveTrackColor: Colors.grey[200],
-                      thumbColor: const Color(0xFF6A5AE0),
-                      overlayColor: const Color(0xFF6A5AE0).withOpacity(0.2),
-                      trackHeight: 6,
-                    ),
-                    child: Slider(
-                      value: tempDuration.toDouble(),
-                      min: 1,
-                      max: 30,
-                      divisions: 29,
-                      onChanged: (val) {
-                        setStateSheet(() => tempDuration = val.round());
-                      },
-                    ),
-                  ),
-                  
-                  const SizedBox(height: 24),
-                  
-                  // Quick presets
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [3, 5, 7, 10, 14].map((days) {
-                       final isSelected = tempDuration == days;
-                       return InkWell(
-                         onTap: () => setStateSheet(() => tempDuration = days),
-                         borderRadius: BorderRadius.circular(12),
-                         child: AnimatedContainer(
-                           duration: const Duration(milliseconds: 200),
-                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                           decoration: BoxDecoration(
-                             color: isSelected ? const Color(0xFF6A5AE0) : Colors.grey[100],
-                             borderRadius: BorderRadius.circular(12),
-                             border: Border.all(
-                               color: isSelected ? const Color(0xFF6A5AE0) : Colors.transparent
-                             ),
-                           ),
-                           child: Text(
-                             '$days j',
-                             style: GoogleFonts.poppins(
-                               fontWeight: FontWeight.w600,
-                               color: isSelected ? Colors.white : Colors.grey[700],
-                             ),
-                           ),
-                         ),
-                       );
-                    }).toList(),
-                  ),
-
-                  const SizedBox(height: 32),
-                  
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () {
-                         setState(() => _selectedDuration = tempDuration);
-                         _saveDuration(tempDuration);
-                         if (onUpdated != null) onUpdated();
-                         Navigator.pop(context);
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6A5AE0),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        elevation: 0,
-                      ),
-                      child: Text(
-                        'Valider',
-                        style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
+    _pickDateRange(onUpdated: onUpdated);
   }
 
   Future<void> _deletePlan() async {
@@ -3793,13 +3917,8 @@ class _PlannerPageState extends State<PlannerPage> {
                                     Navigator.pop(context);
                                     _showCurrentPantryDialog();
                                   },
-                                  onPickStartDate: () {
-                                    _pickStartDate(onDatePicked: () => setModalState(() {}));
-                                  },
-                                  onPickDuration: () {
-                                    _pickDuration(
-                                      onUpdated: () => setModalState(() {}),
-                                    );
+                                  onPickDateRange: () {
+                                    _pickDateRange(onUpdated: () => setModalState(() {}));
                                   },
                                   onPickCategories: () {
                                     _pickCategories(onUpdated: () => setModalState(() {}));
@@ -4061,11 +4180,8 @@ class _PlannerPageState extends State<PlannerPage> {
                                 : _pantryIngredients.isNotEmpty
                                     ? _showCurrentPantryDialog
                                     : null,
-                            onPickStartDate: () {
-                              _pickStartDate(onDatePicked: () => setState(() {}));
-                            },
-                            onPickDuration: () {
-                              _pickDuration(onUpdated: () => setState(() {}));
+                            onPickDateRange: () {
+                              _pickDateRange(onUpdated: () => setState(() {}));
                             },
                             onPickCategories: () {
                               _pickCategories(onUpdated: () => setState(() {}));
@@ -5443,8 +5559,7 @@ class _ModernPlannerHeader extends StatelessWidget {
   final List<PantrySnapshotItem> pantrySnapshot;
   final VoidCallback? onViewPantrySnapshot;
 
-  final VoidCallback onPickStartDate;
-  final VoidCallback onPickDuration;
+  final VoidCallback onPickDateRange;
   final VoidCallback onPickCategories;
   final VoidCallback onLaunchPlanning;
   final bool isLoading;
@@ -5458,8 +5573,7 @@ class _ModernPlannerHeader extends StatelessWidget {
     required this.urgentCount,
     required this.pantrySnapshot,
     this.onViewPantrySnapshot,
-    required this.onPickStartDate,
-    required this.onPickDuration,
+    required this.onPickDateRange,
     required this.onPickCategories,
     required this.onLaunchPlanning,
     required this.isLoading,
@@ -5492,26 +5606,71 @@ class _ModernPlannerHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 20),
-          Row(
-            children: [
-              ModernSelectorCard(
-                icon: Icons.date_range_rounded,
-                title: 'Date de début',
-                value: selectedStartDate == null
-                    ? 'Choisir'
-                    : '${selectedStartDate!.day}/${selectedStartDate!.month}',
-                onTap: onPickStartDate,
+          InkWell(
+            onTap: onPickDateRange,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F7FA),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: (selectedStartDate != null && selectedDuration != null)
+                      ? const Color(0xFF6A5AE0).withOpacity(0.5)
+                      : Colors.grey.withOpacity(0.15),
+                ),
               ),
-              const SizedBox(width: 12),
-              ModernSelectorCard(
-                icon: Icons.timer_rounded,
-                title: 'Durée',
-                value: selectedDuration == null
-                    ? 'Choisir'
-                    : '$selectedDuration jours',
-                onTap: onPickDuration,
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.date_range_rounded, color: Color(0xFF6A5AE0), size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Période',
+                          style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[600]),
+                        ),
+                        const SizedBox(height: 2),
+                        Builder(
+                          builder: (ctx) {
+                            if (selectedStartDate == null || selectedDuration == null) {
+                              return Text(
+                                'Choisir une période',
+                                style: GoogleFonts.poppins(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFF2D2D2D),
+                                ),
+                              );
+                            }
+                            final endDate = selectedStartDate!.add(Duration(days: selectedDuration! - 1));
+                            return Text(
+                              'Du ${selectedStartDate!.day}/${selectedStartDate!.month} au ${endDate.day}/${endDate.month}\u00a0· $selectedDuration ${selectedDuration! > 1 ? 'jours' : 'jour'}',
+                              style: GoogleFonts.poppins(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: const Color(0xFF2D2D2D),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded, color: Colors.grey[400]),
+                ],
               ),
-            ],
+            ),
           ),
           const SizedBox(height: 12),
           InkWell(

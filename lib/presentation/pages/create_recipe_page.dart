@@ -53,6 +53,9 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   late TextEditingController _ingredientQuantityController;
   late TextEditingController _ingredientNotesController;
 
+  // Instruction inline form
+  late TextEditingController _instructionController;
+
   Unit? _selectedIngredientUnit;
   final List<Unit> _units = Unit.values;
 
@@ -102,6 +105,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     _ingredientNameController = TextEditingController();
     _ingredientQuantityController = TextEditingController();
     _ingredientNotesController = TextEditingController();
+    _instructionController = TextEditingController();
 
     _loadCategories();
     _loadUsers();
@@ -140,6 +144,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     _ingredientNameController.dispose();
     _ingredientQuantityController.dispose();
     _ingredientNotesController.dispose();
+    _instructionController.dispose();
     super.dispose();
   }
 
@@ -237,7 +242,21 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
 
   Future<void> _loadUsers() async {
     final users = await _userRepo.getUsers();
-    if (mounted) setState(() => _users = users);
+    if (!mounted) return;
+    setState(() => _users = users);
+    // Init default servings (1 lunch + 1 dinner) for new recipes
+    if (widget.recipe == null) {
+      for (final user in users) {
+        _userServings.putIfAbsent(user.id, () => UserRecipeServing(
+          userId: user.id,
+          recipeId: '',
+          lunchServings: 1,
+          dinnerServings: 1,
+          userName: user.name,
+          recipeTitle: '',
+        ));
+      }
+    }
   }
 
   Future<void> _loadExistingServings() async {
@@ -374,6 +393,88 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     });
   }
 
+  // ── Delete confirmation sheet ─────────────────────────────────────────────
+
+  Future<bool?> _showDeleteConfirmSheet({required String title, required String message}) {
+    return showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 24),
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            // Icône rouge
+            Container(
+              width: 56, height: 56,
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.08),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.delete_outline_rounded, color: Colors.red[400], size: 28),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: GoogleFonts.poppins(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.black87),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey[500]),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.grey[600],
+                      side: BorderSide(color: Colors.grey[300]!),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: Text('Annuler', style: GoogleFonts.poppins(fontSize: 14)),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red[400],
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: Text('Supprimer', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ── Edit ingredient ────────────────────────────────────────────────────────
 
   Future<void> _showEditIngredientDialog(int index) async {
@@ -384,9 +485,14 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     Unit selectedUnit = ingredient.unit;
     String resolvedId = ingredient.ingredient.id;
 
-    await showDialog(
+    await showModalBottomSheet(
       context: context,
-      builder: (context) {
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setStateDialog) {
             Widget inputBox({
@@ -417,27 +523,57 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                   ),
                 );
 
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24)),
-              title: Text('Modifier l\'ingrédient',
-                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-              content: Column(
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+                left: 24,
+                right: 24,
+                top: 8,
+              ),
+              child: Column(
                 mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // Handle
+                  Center(
+                    child: Container(
+                      width: 40, height: 4,
+                      margin: const EdgeInsets.only(bottom: 20),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  // Header
+                  Row(
+                    children: [
+                      Container(
+                        width: 40, height: 40,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.edit_rounded, size: 20, color: Color(0xFF6A5AE0)),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        'Modifier l\'ingrédient',
+                        style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.black87),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
                   // Nom avec autocomplete
                   Autocomplete<Map<String, String>>(
-                    initialValue:
-                        TextEditingValue(text: nameController.text),
+                    initialValue: TextEditingValue(text: nameController.text),
                     optionsBuilder: (tv) async {
                       final q = tv.text.trim();
                       if (q.isEmpty) return [];
-                      return await IngredientAutocomplete
-                          .suggestIngredients(q);
+                      return await IngredientAutocomplete.suggestIngredients(q);
                     },
                     displayStringForOption: (o) => o['name']!,
-                    fieldViewBuilder: (ctx, ctrl, fn, _) {
+                    fieldViewBuilder: (ctx2, ctrl, fn, _) {
                       ctrl.addListener(() {
                         nameController.text = ctrl.text;
                         resolvedId = '';
@@ -453,37 +589,29 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                           focusNode: fn,
                           style: GoogleFonts.poppins(fontSize: 14),
                           decoration: InputDecoration(
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 12),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                             border: InputBorder.none,
                             hintText: 'Nom de l\'ingrédient',
-                            hintStyle: GoogleFonts.poppins(
-                                color: Colors.grey[400], fontSize: 13),
+                            hintStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 13),
                           ),
                         ),
                       );
                     },
-                    optionsViewBuilder: (ctx, onSel, opts) => Align(
+                    optionsViewBuilder: (ctx2, onSel, opts) => Align(
                       alignment: Alignment.topLeft,
                       child: Material(
                         elevation: 4,
                         borderRadius: BorderRadius.circular(12),
                         child: ConstrainedBox(
-                          constraints:
-                              const BoxConstraints(maxHeight: 180),
+                          constraints: const BoxConstraints(maxHeight: 180),
                           child: ListView(
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 6),
+                            padding: const EdgeInsets.symmetric(vertical: 6),
                             shrinkWrap: true,
-                            children: opts
-                                .map((o) => ListTile(
-                                      dense: true,
-                                      title: Text(o['name']!,
-                                          style: GoogleFonts.poppins(
-                                              fontSize: 13)),
-                                      onTap: () => onSel(o),
-                                    ))
-                                .toList(),
+                            children: opts.map((o) => ListTile(
+                              dense: true,
+                              title: Text(o['name']!, style: GoogleFonts.poppins(fontSize: 13)),
+                              onTap: () => onSel(o),
+                            )).toList(),
                           ),
                         ),
                       ),
@@ -502,12 +630,8 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                         child: inputBox(
                           ctrl: qtyController,
                           hint: 'Qté',
-                          inputType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                          formatters: [
-                            FilteringTextInputFormatter.allow(
-                                RegExp(r'[0-9.,]'))
-                          ],
+                          inputType: const TextInputType.numberWithOptions(decimal: true),
+                          formatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -546,54 +670,66 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  inputBox(
-                      ctrl: notesController, hint: 'Préparation (ex: finement haché)'),
+                  inputBox(ctrl: notesController, hint: 'Préparation (ex: finement haché)'),
+                  const SizedBox(height: 16),
+                  // Boutons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.grey[600],
+                            side: BorderSide(color: Colors.grey[300]!),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          child: Text('Annuler', style: GoogleFonts.poppins(fontSize: 14)),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            final newName = nameController.text.trim();
+                            final newQty = parseQty(qtyController.text, fallback: ingredient.quantity);
+                            if (newName.isEmpty) return;
+                            setState(() {
+                              _ingredients[index] = RecipeIngredient(
+                                ingredient: ingredient.ingredient.copyWith(name: newName, id: resolvedId),
+                                quantity: newQty,
+                                unit: selectedUnit,
+                                notes: notesController.text.isEmpty ? null : notesController.text,
+                              );
+                              final pIdx = _pendingIngredients.indexWhere(
+                                  (p) => p.name == ingredient.ingredient.name);
+                              if (pIdx != -1) {
+                                final old = _pendingIngredients[pIdx];
+                                _pendingIngredients[pIdx] = PendingIngredient(
+                                  name: newName,
+                                  typeId: old.typeId,
+                                  quantity: newQty,
+                                  unit: selectedUnit,
+                                  notes: notesController.text.isEmpty ? null : notesController.text,
+                                );
+                              }
+                            });
+                            Navigator.pop(ctx);
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF6A5AE0),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          child: Text('Enregistrer', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: Text('Annuler',
-                      style: GoogleFonts.poppins(color: Colors.grey)),
-                ),
-                TextButton(
-                  onPressed: () {
-                    final newName = nameController.text.trim();
-                    final newQty = parseQty(qtyController.text, fallback: ingredient.quantity);
-                    if (newName.isEmpty) return;
-                    setState(() {
-                      _ingredients[index] = RecipeIngredient(
-                        ingredient: ingredient.ingredient
-                            .copyWith(name: newName, id: resolvedId),
-                        quantity: newQty,
-                        unit: selectedUnit,
-                        notes: notesController.text.isEmpty
-                            ? null
-                            : notesController.text,
-                      );
-                      final pIdx = _pendingIngredients.indexWhere(
-                          (p) => p.name == ingredient.ingredient.name);
-                      if (pIdx != -1) {
-                        final old = _pendingIngredients[pIdx];
-                        _pendingIngredients[pIdx] = PendingIngredient(
-                          name: newName,
-                          typeId: old.typeId,
-                          quantity: newQty,
-                          unit: selectedUnit,
-                          notes: notesController.text.isEmpty
-                              ? null
-                              : notesController.text,
-                        );
-                      }
-                    });
-                    Navigator.pop(context);
-                  },
-                  child: Text('Enregistrer',
-                      style: GoogleFonts.poppins(
-                          fontWeight: FontWeight.w600,
-                          color: const Color(0xFF6A5AE0))),
-                ),
-              ],
             );
           },
         );
@@ -604,94 +740,251 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   // ── Edit instruction ─────────────────────────────────────────────────────────
 
   /// [editIndex] null → ajout, non-null → modification de l'étape à cet index.
+  Future<void> _showEditInstructionDialog(int index) async {
+    final controller = TextEditingController(text: _instructions[index]);
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          left: 24,
+          right: 24,
+          top: 8,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Handle
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            // Header
+            Row(
+              children: [
+                Container(
+                  width: 40, height: 40,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    '${index + 1}',
+                    style: GoogleFonts.poppins(
+                      color: const Color(0xFF6A5AE0),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Modifier l\'étape ${index + 1}',
+                  style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.black87),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            // Text input
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey[200]!),
+              ),
+              child: TextField(
+                controller: controller,
+                autofocus: true,
+                minLines: 4,
+                maxLines: 8,
+                textAlignVertical: TextAlignVertical.top,
+                keyboardType: TextInputType.multiline,
+                textInputAction: TextInputAction.newline,
+                style: GoogleFonts.poppins(fontSize: 14, color: Colors.black87, height: 1.6),
+                decoration: InputDecoration(
+                  contentPadding: const EdgeInsets.all(12),
+                  border: InputBorder.none,
+                  hintText: 'Décrivez l\'étape...',
+                  hintStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 13),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.grey[600],
+                      side: BorderSide(color: Colors.grey[300]!),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: Text('Annuler', style: GoogleFonts.poppins(fontSize: 14)),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      final text = controller.text.trim();
+                      if (text.isEmpty) return;
+                      setState(() => _instructions[index] = text);
+                      Navigator.pop(ctx);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF6A5AE0),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: Text('Enregistrer', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _showInstructionDialog({int? editIndex}) async {
     final controller = TextEditingController(
       text: editIndex != null ? _instructions[editIndex] : '',
     );
     final isEdit = editIndex != null;
-    await showDialog(
+    final stepNumber = isEdit ? editIndex! + 1 : _instructions.length + 1;
+
+    await showModalBottomSheet(
       context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24)),
-        title: Text(
-          isEdit ? 'Étape ${editIndex + 1}' : 'Ajouter une étape',
-          style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          left: 24,
+          right: 24,
+          top: 8,
         ),
-        content: SizedBox(
-          width: 400,
-          height: 180,
-          child: Scrollbar(
-            thumbVisibility: true,
-            child: SingleChildScrollView(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(
-                  minHeight: 180,
-                  maxHeight: 180,
-                ),
-                child: TextField(
-                  controller: controller,
-                  style: GoogleFonts.poppins(),
-                  minLines: null,
-                  maxLines: null,
-                  expands: true,
-                  textAlignVertical: TextAlignVertical.top,
-                  decoration: InputDecoration(
-                    hintText: "Décrivez l'étape...",
-                    filled: true,
-                    fillColor: Colors.grey[50],
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 12,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.grey[300]!),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.grey[300]!),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide:
-                          const BorderSide(color: Color(0xFF6A5AE0)),
-                    ),
-                  ),
-                  keyboardType: TextInputType.multiline,
-                  textInputAction: TextInputAction.newline,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Handle
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
             ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child:
-                Text('Annuler', style: GoogleFonts.poppins(color: Colors.grey)),
-          ),
-          TextButton(
-            onPressed: () {
-              if (controller.text.isNotEmpty) {
+            // Header
+            Row(
+              children: [
+                Container(
+                  width: 36, height: 36,
+                  alignment: Alignment.center,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF6A5AE0),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    '$stepNumber',
+                    style: GoogleFonts.poppins(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  isEdit ? 'Modifier l\'étape' : 'Nouvelle étape',
+                  style: GoogleFonts.poppins(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            // Text input
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey[200]!),
+              ),
+              child: TextField(
+                controller: controller,
+                autofocus: true,
+                minLines: 7,
+                maxLines: 12,
+                textAlignVertical: TextAlignVertical.top,
+                keyboardType: TextInputType.multiline,
+                textInputAction: TextInputAction.newline,
+                style: GoogleFonts.poppins(fontSize: 14, color: Colors.black87, height: 1.6),
+                decoration: InputDecoration(
+                  contentPadding: const EdgeInsets.all(16),
+                  border: InputBorder.none,
+                  hintText: 'Décrivez l\'étape en détail...',
+                  hintStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 13),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Save button
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF6A5AE0),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+              ),
+              onPressed: () {
+                final text = controller.text.trim();
+                if (text.isEmpty) return;
                 setState(() {
                   if (isEdit) {
-                    _instructions[editIndex] = controller.text;
+                    _instructions[editIndex!] = text;
                   } else {
-                    _instructions.add(controller.text);
+                    _instructions.add(text);
                   }
                 });
-                Navigator.pop(context);
-              }
-            },
-            child: Text(
-              isEdit ? 'Enregistrer' : 'Ajouter',
-              style: GoogleFonts.poppins(
-                  color: const Color(0xFF6A5AE0),
-                  fontWeight: FontWeight.bold),
+                Navigator.pop(ctx);
+              },
+              child: Text(
+                isEdit ? 'Enregistrer' : 'Ajouter l\'étape',
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 15),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1245,10 +1538,11 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey[100]!),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.02),
-                            blurRadius: 4,
+                            color: Colors.black.withOpacity(0.04),
+                            blurRadius: 8,
                             offset: const Offset(0, 2),
                           ),
                         ],
@@ -1343,27 +1637,33 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                             children: [
                               InkWell(
                                 onTap: () => _showEditIngredientDialog(index),
-                                borderRadius: BorderRadius.circular(20),
-                                child: const Padding(
-                                  padding: EdgeInsets.all(8.0),
-                                  child: Icon(
-                                    Icons.edit_rounded,
-                                    size: 17,
-                                    color: Color(0xFF6A5AE0),
+                                borderRadius: BorderRadius.circular(10),
+                                child: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF6A5AE0).withOpacity(0.08),
+                                    borderRadius: BorderRadius.circular(10),
                                   ),
+                                  child: const Icon(Icons.edit_rounded, size: 18, color: Color(0xFF6A5AE0)),
                                 ),
                               ),
+                              const SizedBox(width: 8),
                               InkWell(
-                                onTap: () =>
-                                    setState(() => _ingredients.removeAt(index)),
-                                borderRadius: BorderRadius.circular(20),
-                                child: const Padding(
-                                  padding: EdgeInsets.all(8.0),
-                                  child: Icon(
-                                    Icons.close_rounded,
-                                    size: 18,
-                                    color: Colors.redAccent,
+                                onTap: () async {
+                                  final confirm = await _showDeleteConfirmSheet(
+                                    title: 'Supprimer l\'ingrédient',
+                                    message: 'Voulez-vous vraiment supprimer "${_ingredients[index].ingredient.name}" ?',
+                                  );
+                                  if (confirm == true) setState(() => _ingredients.removeAt(index));
+                                },
+                                borderRadius: BorderRadius.circular(10),
+                                child: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.red.withOpacity(0.08),
+                                    borderRadius: BorderRadius.circular(10),
                                   ),
+                                  child: Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red[400]),
                                 ),
                               ),
                             ],
@@ -1422,104 +1722,190 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Instructions',
-              style: GoogleFonts.poppins(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            TextButton.icon(
-              onPressed: () => _showInstructionDialog(),
-              icon: const Icon(Icons.add_circle_outline_rounded, size: 18),
-              label: Text(
-                "Ajouter",
-                style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-              ),
-              style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFF6A5AE0),
-              ),
-            ),
-          ],
+        Text(
+          'Instructions',
+          style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700),
         ),
-        const SizedBox(height: 8),
-        _instructions.isEmpty
-            ? Text(
-                'Aucune instruction',
-                style: GoogleFonts.poppins(
-                  color: Colors.grey,
-                  fontStyle: FontStyle.italic,
-                ),
-              )
-            : Column(
-                children: _instructions.asMap().entries.map((entry) {
-                  final index = entry.key;
-                  final instruction = entry.value;
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          width: 24,
-                          height: 24,
-                          alignment: Alignment.center,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF6A5AE0),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Text(
-                            '${index + 1}',
-                            style: GoogleFonts.poppins(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            instruction,
-                            style: GoogleFonts.poppins(fontSize: 14),
-                          ),
-                        ),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            InkWell(
-                              onTap: () => _showInstructionDialog(editIndex: index),
-                              child: const Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 6.0),
-                                child: Icon(
-                                  Icons.edit_rounded,
-                                  size: 16,
-                                  color: Color(0xFF6A5AE0),
-                                ),
-                              ),
-                            ),
-                            InkWell(
-                              onTap: () =>
-                                  setState(() => _instructions.removeAt(index)),
-                              child: const Padding(
-                                padding: EdgeInsets.only(left: 6.0),
-                                child: Icon(
-                                  Icons.close_rounded,
-                                  size: 16,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  );
-                }).toList(),
+        const SizedBox(height: 12),
+
+        // Inline add form
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey[200]!),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
               ),
+            ],
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey[200]!),
+                  ),
+                  child: TextField(
+                    controller: _instructionController,
+                    minLines: 3,
+                    maxLines: 6,
+                    textAlignVertical: TextAlignVertical.top,
+                    keyboardType: TextInputType.multiline,
+                    textInputAction: TextInputAction.newline,
+                    style: GoogleFonts.poppins(fontSize: 14, color: Colors.black87, height: 1.6),
+                    decoration: InputDecoration(
+                      contentPadding: const EdgeInsets.all(12),
+                      border: InputBorder.none,
+                      hintText: 'Décrivez l\'étape ${_instructions.length + 1}...',
+                      hintStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 13),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              FloatingActionButton.small(
+                heroTag: 'addInstruction',
+                onPressed: () {
+                  final text = _instructionController.text.trim();
+                  if (text.isEmpty) return;
+                  setState(() {
+                    _instructions.add(text);
+                    _instructionController.clear();
+                  });
+                },
+                backgroundColor: const Color(0xFF6A5AE0),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                child: const Icon(Icons.add_rounded),
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 16),
+
+        if (_instructions.isEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            decoration: BoxDecoration(
+              color: Colors.grey[50],
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.grey[200]!),
+            ),
+            child: Center(
+              child: Column(
+                children: [
+                  Icon(Icons.format_list_numbered_rounded, size: 32, color: Colors.grey[300]),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Aucune étape ajoutée',
+                    style: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          Column(
+            children: _instructions.asMap().entries.map((entry) {
+              final index = entry.key;
+              final instruction = entry.value;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey[100]!),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 28,
+                        height: 28,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          '${index + 1}',
+                          style: GoogleFonts.poppins(
+                            color: const Color(0xFF6A5AE0),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          instruction,
+                          style: GoogleFonts.poppins(fontSize: 14, height: 1.5),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          InkWell(
+                            onTap: () => _showEditInstructionDialog(index),
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF6A5AE0).withOpacity(0.08),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(Icons.edit_rounded, size: 18, color: Color(0xFF6A5AE0)),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          InkWell(
+                            onTap: () async {
+                              final confirm = await _showDeleteConfirmSheet(
+                                title: 'Supprimer l\'étape',
+                                message: 'Voulez-vous vraiment supprimer l\'étape ${index + 1} ?',
+                              );
+                              if (confirm == true) {
+                                setState(() => _instructions.removeAt(index));
+                              }
+                            },
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.red.withOpacity(0.08),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red[400]),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
       ],
     );
   }
@@ -1896,7 +2282,6 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                               const SizedBox(height: 32),
                               _buildInstructionsSection(),
                               _buildMealTimeSelectorSection(),
-                              _buildUserServingsSection(),
                             ],
                           ),
                         ),

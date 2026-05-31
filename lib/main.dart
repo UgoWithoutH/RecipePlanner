@@ -240,7 +240,7 @@ class _HomePageState extends State<HomePage> {
             label: 'Liste de courses',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.list),
+            icon: Icon(Icons.menu_book_rounded),
             label: 'Recettes',
           ),
           BottomNavigationBarItem(

@@ -5,21 +5,29 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   play-store-release:
     runs-on: ubuntu-latest
 
     steps:
+      # =========================================================
+      # Download latest AAB artifact from build workflow
+      # =========================================================
       - name: Download AAB artifact
         uses: dawidd6/action-download-artifact@v3
         with:
-          workflow: Flutter Build CI
+          workflow: build.yml
+          workflow_conclusion: success
           name: app-release-aab
 
       - name: Show downloaded files
         run: find . -type f
 
+      # =========================================================
+      # Setup Ruby for Fastlane
+      # =========================================================
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
@@ -28,9 +36,15 @@ jobs:
       - name: Install Fastlane
         run: gem install fastlane -NV
 
+      # =========================================================
+      # Create Google service account file
+      # =========================================================
       - name: Create service account file
         run: echo '${{ secrets.ANDROID_PUBLISH_SERVICE_ACCOUNT }}' > service-account.json
 
+      # =========================================================
+      # Upload to Google Play (Closed Testing Alpha)
+      # =========================================================
       - name: Upload to Google Play
         run: |
           fastlane supply \

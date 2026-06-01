@@ -1,5 +1,6 @@
 ﻿import 'dart:math';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -64,6 +65,7 @@ class _PlannerPageState extends State<PlannerPage> {
   int? _selectedDuration = 7;
   Set<String> _selectedCategories = {}; // category IDs
   List<RecipeIngredient> _pantryIngredients = [];
+  List<PantryItem> _rawPantryItems = [];
   Set<String> _urgentPantryNames = {};
   List<PantrySnapshotItem> _pantrySnapshot = [];
   
@@ -125,6 +127,7 @@ class _PlannerPageState extends State<PlannerPage> {
       setState(() {
         _pantryIngredients =
             items.map((i) => i.toRecipeIngredient()).toList();
+        _rawPantryItems = items;
         _urgentPantryNames = items
             .where((i) => i.isUrgent)
             .map((i) => i.name)
@@ -301,7 +304,7 @@ class _PlannerPageState extends State<PlannerPage> {
 
   Future<void> _pickDateRange({VoidCallback? onUpdated}) async {
     DateTime tempStartDate = _selectedStartDate ?? DateTime.now();
-    int tempDuration = (_selectedDuration ?? 7).clamp(1, 31);
+    int tempDuration = _selectedStartDate == null ? 0 : (_selectedDuration ?? 7).clamp(1, 31);
     DateTime tempEndDate = tempStartDate.add(Duration(days: tempDuration - 1));
     DateTime focusedDay = tempStartDate;
     bool awaitingEnd = false;
@@ -483,13 +486,13 @@ class _PlannerPageState extends State<PlannerPage> {
                             color: Colors.white,
                             fontWeight: FontWeight.w700,
                           ),
-                          withinRangeDecoration: BoxDecoration(
-                            color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                          withinRangeDecoration: const BoxDecoration(
+                            color: Colors.transparent,
                           ),
                           withinRangeTextStyle: const TextStyle(
-                            color: Color(0xFF6A5AE0),
+                            color: Color(0xFF1A1A1A),
                           ),
-                          rangeHighlightColor: const Color(0xFF6A5AE0).withOpacity(0.12),
+                          rangeHighlightColor: Color(0xFF6A5AE0).withOpacity(0.15),
                           todayDecoration: BoxDecoration(
                             color: const Color(0xFF6A5AE0).withOpacity(0.18),
                             shape: BoxShape.circle,
@@ -584,7 +587,7 @@ class _PlannerPageState extends State<PlannerPage> {
                           textBaseline: TextBaseline.alphabetic,
                           children: [
                             Text(
-                              '$tempDuration',
+                              startSelected ? '$tempDuration' : '0',
                               style: GoogleFonts.poppins(
                                 fontSize: 36,
                                 fontWeight: FontWeight.bold,
@@ -613,17 +616,17 @@ class _PlannerPageState extends State<PlannerPage> {
                             trackHeight: 6,
                           ),
                           child: Slider(
-                            value: tempDuration.clamp(1, maxDays).toDouble(),
-                            min: 1,
+                            value: (startSelected ? tempDuration.clamp(1, maxDays) : 0).toDouble(),
+                            min: 0,
                             max: maxDays.toDouble(),
-                            divisions: maxDays - 1,
-                            onChanged: (val) {
+                            divisions: maxDays,
+                            onChanged: startSelected ? (val) {
                               setStateSheet(() {
-                                tempDuration = val.round();
+                                tempDuration = val.round().clamp(1, maxDays);
                                 tempEndDate = tempStartDate.add(Duration(days: tempDuration - 1));
                                 awaitingEnd = false;
                               });
-                            },
+                            } : null,
                           ),
                         ),
                         // Quick presets
@@ -1079,28 +1082,54 @@ class _PlannerPageState extends State<PlannerPage> {
 
   /// Affiche le contenu ACTUEL du pantry (utilisé depuis la modale nouveau plan).
   void _showCurrentPantryDialog() {
-    final items = _pantryIngredients;
+    // Fallback : si _rawPantryItems n'est pas encore peuplé, utiliser _pantryIngredients
+    final items = _rawPantryItems.isNotEmpty
+        ? _rawPantryItems
+        : _pantryIngredients.map((ri) => PantryItem(
+              id: ri.ingredient.id,
+              name: ri.ingredient.name,
+              ingredientId: ri.ingredient.id,
+              quantity: ri.quantity,
+              unit: ri.unit,
+              isUrgent: _urgentPantryNames.contains(ri.ingredient.name),
+              updatedAt: DateTime.now(),
+            )).toList();
     if (items.isEmpty) return;
 
-    final urgentNames = _urgentPantryNames;
+    Map<String, List<PantryItem>> _groupPantry(List<PantryItem> list) {
+      final m = <String, List<PantryItem>>{};
+      for (final i in list) {
+        final k = i.typeName.isNotEmpty ? i.typeName : 'Autre';
+        m.putIfAbsent(k, () => []).add(i);
+      }
+      for (final k in m.keys) m[k]!.sort((a, b) => a.name.compareTo(b.name));
+      return m;
+    }
+    List<String> _sortedKeysPantry(Map<String, List<PantryItem>> g) =>
+        g.keys.toList()
+          ..sort((a, b) {
+            if (a == 'Autre') return 1;
+            if (b == 'Autre') return -1;
+            return a.compareTo(b);
+          });
 
-    final urgentList = items.where((i) => urgentNames.contains(i.ingredient.name)).toList()
-      ..sort((a, b) => a.ingredient.name.compareTo(b.ingredient.name));
-    final normalList = items.where((i) => !urgentNames.contains(i.ingredient.name)).toList()
-      ..sort((a, b) => a.ingredient.name.compareTo(b.ingredient.name));
+    final urgent = items.where((i) => i.isUrgent).toList();
+    final normal = items.where((i) => !i.isUrgent).toList();
+    final urgentGroups = _groupPantry(urgent);
+    final normalGroups = _groupPantry(normal);
 
-    Widget buildRow(RecipeIngredient item, bool isUrgent) => Padding(
+    Widget buildRow(PantryItem item) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
       child: Row(
         children: [
-          if (isUrgent)
+          if (item.isUrgent)
             const Text('🔥', style: TextStyle(fontSize: 13))
           else
             Icon(Icons.circle, size: 6, color: Colors.grey[300]),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              item.ingredient.name,
+              item.name,
               style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w500),
             ),
           ),
@@ -1185,15 +1214,21 @@ class _PlannerPageState extends State<PlannerPage> {
                   controller: controller,
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                   children: [
-                    if (urgentList.isNotEmpty) ...[
+                    if (urgent.isNotEmpty) ...[
                       _buildSnapshotSuperLabel('🔥 Urgents', Colors.orange.shade700),
-                      ...urgentList.map((i) => buildRow(i, true)),
+                      for (final key in _sortedKeysPantry(urgentGroups)) ...[
+                        _buildSnapshotCategoryLabel(key),
+                        ...urgentGroups[key]!.map(buildRow),
+                      ],
                       const SizedBox(height: 8),
                     ],
-                    if (normalList.isNotEmpty) ...[
-                      if (urgentList.isNotEmpty)
+                    if (normal.isNotEmpty) ...[
+                      if (urgent.isNotEmpty)
                         _buildSnapshotSuperLabel('Normaux', const Color(0xFF6A5AE0)),
-                      ...normalList.map((i) => buildRow(i, false)),
+                      for (final key in _sortedKeysPantry(normalGroups)) ...[
+                        _buildSnapshotCategoryLabel(key),
+                        ...normalGroups[key]!.map(buildRow),
+                      ],
                     ],
                   ],
                 ),
@@ -1221,16 +1256,41 @@ class _PlannerPageState extends State<PlannerPage> {
     ),
   );
 
-  Widget _buildSnapshotCategoryLabel(String label) => Padding(
-    padding: const EdgeInsets.only(left: 4, top: 8, bottom: 6),
-    child: Row(
-      children: [
-        Container(width: 3, height: 13, decoration: BoxDecoration(color: const Color(0xFF6A5AE0), borderRadius: BorderRadius.circular(2))),
-        const SizedBox(width: 8),
-        Text(label, style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: const Color(0xFF6A5AE0))),
-      ],
-    ),
-  );
+  static const _categoryPalette = [
+    Color(0xFF6A5AE0), // violet
+    Color(0xFF4CAF50), // vert
+    Color(0xFFFF9800), // orange
+    Color(0xFF2196F3), // bleu
+    Color(0xFFE91E63), // rose
+    Color(0xFF009688), // teal
+    Color(0xFFFF5722), // orange foncé
+    Color(0xFF9C27B0), // violet foncé
+    Color(0xFF795548), // marron
+    Color(0xFF607D8B), // bleu-gris
+  ];
+
+  Color _categoryColor(String name) {
+    if (name.isEmpty || name == 'Autre') return Colors.grey.shade500;
+    final idx = name.codeUnits.fold(0, (sum, c) => sum + c) % _categoryPalette.length;
+    return _categoryPalette[idx];
+  }
+
+  Widget _buildSnapshotCategoryLabel(String label, {Color? color}) {
+    final c = color ?? _categoryColor(label);
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, top: 8, bottom: 6),
+      child: Row(
+        children: [
+          Container(
+            width: 3, height: 13,
+            decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(2)),
+          ),
+          const SizedBox(width: 8),
+          Text(label, style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
+        ],
+      ),
+    );
+  }
 
   Widget _buildSnapshotItemRow(PantrySnapshotItem item) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
@@ -1584,7 +1644,34 @@ class _PlannerPageState extends State<PlannerPage> {
         _calendarFormat = null; // Reset to recalculate format
       });
 
-      // Automatic plan saving
+      // ── LOG plan généré ──
+      if (kDebugMode) {
+        debugPrint('[PLAN] ===== Plan généré =====');
+        debugPrint('[PLAN] Début: ${plan.startDate.day}/${plan.startDate.month}/${plan.startDate.year}  |  Durée: ${plan.durationDays} jours');
+        debugPrint('[PLAN] Nombre de repas total: ${plan.meals.length}');
+        final mealsByDay = <String, List<Meal>>{};
+        for (final m in plan.meals) {
+          final key = '${m.date.year}-${m.date.month.toString().padLeft(2,'0')}-${m.date.day.toString().padLeft(2,'0')}';
+          mealsByDay.putIfAbsent(key, () => []).add(m);
+        }
+        for (final day in (mealsByDay.keys.toList()..sort())) {
+          final meals = mealsByDay[day]!..sort((a, b) => a.type.index.compareTo(b.type.index));
+          for (final m in meals) {
+            final type = m.type == MealType.lunch ? 'MIDI ' : 'SOIR ';
+            final leftover = m.isLeftoverMeal ? ' [RESTE]' : '';
+            final mult = m.recipeMultiplier > 1 ? ' x${m.recipeMultiplier}' : '';
+            final portions = m.userServings.isEmpty
+                ? '${m.totalServings} portion(s)'
+                : m.userServings.entries.map((e) => '${e.key.substring(0,6)}:${e.value}p').join(', ');
+            debugPrint('[PLAN]   $day $type| ${m.recipe.title}$mult$leftover  ($portions)');
+          }
+        }
+        debugPrint('[PLAN] ========================');
+      }
+
+      // ── Détection des restes non injectés (portions perdues) ──
+      _showWastedLeftoversSnackbar(plan);
+
       final savedId = await _saveMealPlan(plan);
 
       // Figer le snapshot frigo/placard pour ce plan
@@ -1733,8 +1820,10 @@ class _PlannerPageState extends State<PlannerPage> {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
 
-    debugPrint('[SHUFFLE] ===== _shuffleFreeSlots START =====');
-    debugPrint('[SHUFFLE] freeSlotKeys (${freeSlotKeys.length}): $freeSlotKeys');
+    if (kDebugMode) {
+      debugPrint('[SHUFFLE] ===== _shuffleFreeSlots START =====');
+      debugPrint('[SHUFFLE] freeSlotKeys (${freeSlotKeys.length}): $freeSlotKeys');
+    }
 
     // Bannir la recette courante de chaque slot libre dans son ban par slot.
     for (final m in _generatedMealPlan!.meals) {
@@ -1747,15 +1836,33 @@ class _PlannerPageState extends State<PlannerPage> {
     }
 
     // Log ban state AFTER banning current recipes.
-    for (final sk in freeSlotKeys) {
-      final banned = _autoChangeBannedRecipes[sk] ?? {};
-      debugPrint('[SHUFFLE] BAN state for $sk : ${banned.length} banned = $banned');
+    if (kDebugMode) {
+      for (final sk in freeSlotKeys) {
+        final banned = _autoChangeBannedRecipes[sk] ?? {};
+        debugPrint('[SHUFFLE] BAN state for $sk : ${banned.length} banned = $banned');
+      }
     }
 
     // Repas verrouillés = passés + tous les slots futurs non libres.
+    // Exception : les repas RESTES qui se trouvent sur un slot libre mais dont
+    // la SOURCE (repas non-reste de même recette et même type) n'est PAS dans
+    // les slots libres → ce sont des restes indépendants (d'un autre slot
+    // verrouillé) qui doivent rester intacts.
     final lockedMeals = _generatedMealPlan!.meals.where((m) {
-      if (m.isLeftoverMeal) return false;
       final mealDay = DateTime(m.date.year, m.date.month, m.date.day);
+      if (m.isLeftoverMeal) {
+        final sk = _slotKey(m.date, m.type);
+        // Reste sur un slot NON libre → exclu (comportement normal, on ne touche pas aux slots non libres via les lockedMeals)
+        if (!freeSlotKeys.contains(sk)) return false;
+        // Reste sur un slot libre : y inclure seulement si sa source n'est pas elle-même libre.
+        if (mealDay.isBefore(today)) return false;
+        final sourceIsBeingShuffled = _generatedMealPlan!.meals.any((src) =>
+            !src.isLeftoverMeal &&
+            src.recipe.id == m.recipe.id &&
+            src.type == m.type &&
+            freeSlotKeys.contains(_slotKey(src.date, src.type)));
+        return !sourceIsBeingShuffled; // lock si la source n'est pas shufflée
+      }
       if (mealDay.isBefore(today)) return true;
       return !freeSlotKeys.contains(_slotKey(m.date, m.type));
     }).toList();
@@ -1795,7 +1902,7 @@ class _PlannerPageState extends State<PlannerPage> {
               .where((r) => r.categoryIds.any((c) => validSelectedCategories.contains(c)))
               .toList();
 
-      debugPrint('[SHUFFLE] allCategoryRecipes count: ${allCategoryRecipes.length}');
+      if (kDebugMode) debugPrint('[SHUFFLE] allCategoryRecipes count: ${allCategoryRecipes.length}');
 
       // Vérification d'épuisement PER-SLOT.
       final exhaustedSlotLabels = <String>[];
@@ -1817,12 +1924,12 @@ class _PlannerPageState extends State<PlannerPage> {
           }
         }
       }
-      debugPrint('[SHUFFLE] exhaustedSlots (${exhaustedSlotLabels.length}/${freeSlotKeys.length}): $exhaustedSlotLabels');
+      if (kDebugMode) debugPrint('[SHUFFLE] exhaustedSlots (${exhaustedSlotLabels.length}/${freeSlotKeys.length}): $exhaustedSlotLabels');
 
       // Si TOUS les slots libres sont épuisés, retourner tôt (rien à faire).
       // Si seulement CERTAINS sont épuisés, passe 1 les traitera via failedSlotMeals.
       if (exhaustedSlotLabels.length == freeSlotKeys.length) {
-        debugPrint('[SHUFFLE] All slots exhausted → reset bans and early return');
+        if (kDebugMode) debugPrint('[SHUFFLE] All slots exhausted → reset bans and early return');
         // Réinitialiser les bans pour ces slots : le cycle repart depuis le début.
         // On reban uniquement la recette actuelle de chaque slot (pour ne pas
         // reproposer immédiatement ce qui est déjà affiché).
@@ -1974,12 +2081,12 @@ class _PlannerPageState extends State<PlannerPage> {
         final slotAvailable = allCategoryRecipes
             .where((r) => !slotBanned.contains(r.id) && !sameDayRecipeIds.contains(r.id))
             .toList();
-        debugPrint('[SHUFFLE] Passe1 slot $sk : banned=${slotBanned.length}, available=${slotAvailable.length}');
+        if (kDebugMode) debugPrint('[SHUFFLE] Passe1 slot $sk : banned=${slotBanned.length}, available=${slotAvailable.length}');
         if (slotAvailable.isEmpty || _algoExhaustedSlots.contains(sk)) {
           if (slotAvailable.isEmpty) _algoExhaustedSlots.add(sk);
           final dayLabel = '${mealToChange.date.day.toString().padLeft(2, '0')}/${mealToChange.date.month.toString().padLeft(2, '0')}';
           final typeLabel = mealToChange.type == MealType.lunch ? 'déjeuner' : 'dîner';
-          debugPrint('[SHUFFLE] Passe1 slot $sk → EXHAUSTED (added to failedSlotMeals, recipe=${mealToChange.recipe.id})');
+          if (kDebugMode) debugPrint('[SHUFFLE] Passe1 slot $sk → EXHAUSTED (added to failedSlotMeals, recipe=${mealToChange.recipe.id})');
           unfilledLabels.add('$typeLabel du $dayLabel');
           failedSlotMeals.add(mealToChange);
           continue;
@@ -2044,7 +2151,7 @@ class _PlannerPageState extends State<PlannerPage> {
             batchRecipeIds.contains(m.recipe.id),
           );
           if (coveredByBatchLeftover) {
-            debugPrint('[SHUFFLE] Passe1 slot $sk → covered by batch leftover, skip');
+            if (kDebugMode) debugPrint('[SHUFFLE] Passe1 slot $sk → covered by batch leftover, skip');
             // L'ancienne recette avait peut-être ses propres restes : les marquer
             // à vider car ce slot sera désormais occupé par un reste du batch.
             slotsToLeaveEmpty.addAll(oldLeftoverSlotKeys);
@@ -2083,14 +2190,14 @@ class _PlannerPageState extends State<PlannerPage> {
                 );
                 if (coveredByAnyLeftover) {
                   coveredByLeftover = true;
-                  debugPrint('[SHUFFLE] Passe1 slot $sk → cascade cleared but covered by external leftover, skip');
+                  if (kDebugMode) debugPrint('[SHUFFLE] Passe1 slot $sk → cascade cleared but covered by external leftover, skip');
                 }
               }
-              debugPrint('[SHUFFLE] Passe1 slot $sk → cascade cleared, pool=${currentPool.length}, newMeal=${newMeal?.recipe.id}');
+              if (kDebugMode) debugPrint('[SHUFFLE] Passe1 slot $sk → cascade cleared, pool=${currentPool.length}, newMeal=${newMeal?.recipe.id}');
               break;
             }
             poolExcluded.add(cascading.recipe.id);
-            debugPrint('[SHUFFLE] Passe1 slot $sk → leftover-source ${cascading.recipe.id} excluded, poolLeft=${currentPool.length - 1}');
+            if (kDebugMode) debugPrint('[SHUFFLE] Passe1 slot $sk → leftover-source ${cascading.recipe.id} excluded, poolLeft=${currentPool.length - 1}');
           }
           if (coveredByLeftover) {
             slotsToLeaveEmpty.addAll(oldLeftoverSlotKeys);
@@ -2098,12 +2205,12 @@ class _PlannerPageState extends State<PlannerPage> {
           }
           cascadeUnresolvable = newMeal == null && poolExcluded.isNotEmpty;
           if (cascadeUnresolvable) {
-            debugPrint('[SHUFFLE] Passe1 slot $sk → cascade unresolvable after ${poolExcluded.length} exclusions');
+            if (kDebugMode) debugPrint('[SHUFFLE] Passe1 slot $sk → cascade unresolvable after ${poolExcluded.length} exclusions');
           }
         }
 
         if (newMeal != null) {
-          debugPrint('[SHUFFLE] Passe1 slot $sk → SUCCESS new recipe=${newMeal.recipe.id} (${newMeal.recipe.title})');
+          if (kDebugMode) debugPrint('[SHUFFLE] Passe1 slot $sk → SUCCESS new recipe=${newMeal.recipe.id} (${newMeal.recipe.title})');
           selectedNewMeals.add(newMeal);
           // L'ancienne recette avait des restes : libérer ces slots.
           // La nouvelle recette peut elle aussi produire des restes, mais
@@ -2129,7 +2236,7 @@ class _PlannerPageState extends State<PlannerPage> {
             if (!isMultiShuffle) {
               final nonStrictMeal = pickFromPlan(runPlan(slotAvailable, strict: false));
               if (nonStrictMeal != null) {
-                debugPrint('[SHUFFLE] Passe1 slot $sk → waste-constrained, single-shuffle fallback → ${nonStrictMeal.recipe.id}');
+                if (kDebugMode) debugPrint('[SHUFFLE] Passe1 slot $sk → waste-constrained, single-shuffle fallback → ${nonStrictMeal.recipe.id}');
                 selectedNewMeals.add(nonStrictMeal);
                 if (oldLeftoverSlotKeys.isNotEmpty) {
                   slotsToLeaveEmpty.addAll(oldLeftoverSlotKeys);
@@ -2137,7 +2244,7 @@ class _PlannerPageState extends State<PlannerPage> {
                 continue;
               }
             }
-            debugPrint('[SHUFFLE] Passe1 slot $sk → ALGO null (waste-constrained, aucune recette sans restes dispo). recipe=${mealToChange.recipe.id}');
+            if (kDebugMode) debugPrint('[SHUFFLE] Passe1 slot $sk → ALGO null (waste-constrained, aucune recette sans restes dispo). recipe=${mealToChange.recipe.id}');
             wasteConstrainedLabels.add('$typeLabel du $dayLabel');
           } else {
             // Blocage contextuel (diversité, pantry, etc.).
@@ -2145,10 +2252,10 @@ class _PlannerPageState extends State<PlannerPage> {
             final exhaustionThreshold = (allCategoryRecipes.length * 0.25).ceil();
             if (slotAvailable.length <= exhaustionThreshold) {
               _algoExhaustedSlots.add(sk);
-              debugPrint('[SHUFFLE] Passe1 slot $sk → ALGO null (near-exhaustion ${slotAvailable.length}/${allCategoryRecipes.length}, not waste-constrained). recipe=${mealToChange.recipe.id}');
+              if (kDebugMode) debugPrint('[SHUFFLE] Passe1 slot $sk → ALGO null (near-exhaustion ${slotAvailable.length}/${allCategoryRecipes.length}, not waste-constrained). recipe=${mealToChange.recipe.id}');
               unfilledLabels.add('$typeLabel du $dayLabel');
             } else {
-              debugPrint('[SHUFFLE] Passe1 slot $sk → ALGO returned null (contextual, ${slotAvailable.length} available preserved). recipe=${mealToChange.recipe.id}');
+              if (kDebugMode) debugPrint('[SHUFFLE] Passe1 slot $sk → ALGO returned null (contextual, ${slotAvailable.length} available preserved). recipe=${mealToChange.recipe.id}');
               contextualFailedLabels.add('$typeLabel du $dayLabel');
             }
           }
@@ -2156,8 +2263,10 @@ class _PlannerPageState extends State<PlannerPage> {
         }
       }
 
-      debugPrint('[SHUFFLE] Passe1 END: selectedNewMeals=${selectedNewMeals.map((m) => '${_slotKey(m.date, m.type)}=${m.recipe.id}').toList()}');
-      debugPrint('[SHUFFLE] Passe1 END: failedSlotMeals=${failedSlotMeals.map((m) => '${_slotKey(m.date, m.type)}=${m.recipe.id}').toList()}');
+      if (kDebugMode) {
+        debugPrint('[SHUFFLE] Passe1 END: selectedNewMeals=${selectedNewMeals.map((m) => '${_slotKey(m.date, m.type)}=${m.recipe.id}').toList()}');
+        debugPrint('[SHUFFLE] Passe1 END: failedSlotMeals=${failedSlotMeals.map((m) => '${_slotKey(m.date, m.type)}=${m.recipe.id}').toList()}');
+      }
 
       // Signaler les slots non remplis.
       if (unfilledLabels.isNotEmpty) {
@@ -2235,6 +2344,19 @@ class _PlannerPageState extends State<PlannerPage> {
         ...failedSlotMeals.map((m) => _slotKey(m.date, m.type)),
         ...selectedNewMeals.map((m) => _slotKey(m.date, m.type)),
       };
+      // Repas co-localisés sur un free slot mais qui ne sont PAS le repas shufflé
+      // (ex : steak haché + purée sur 25/6 midi où crêpes est le nouveau repas).
+      // Ces repas ne sont dans aucun des sets ci-dessus et doivent être préservés.
+      final coLocatedMainMeals = _generatedMealPlan!.meals.where((m) {
+        if (m.isLeftoverMeal) return false;
+        final sk = _slotKey(m.date, m.type);
+        if (!freeSlotKeys.contains(sk)) return false;
+        if (DateTime(m.date.year, m.date.month, m.date.day).isBefore(today)) return false;
+        // Ne garder que les repas principaux du free slot absents de selectedNewMeals
+        // et de failedSlotMeals (ils coexistent dans un slot partagé).
+        return !selectedNewMeals.any((n) => n.recipe.id == m.recipe.id && _slotKey(n.date, n.type) == sk)
+            && !failedSlotMeals.any((f) => f.recipe.id == m.recipe.id && _slotKey(f.date, f.type) == sk);
+      }).map((m) => m.copyWith(userSelected: true)).toList();
       final preservedOriginalMeals = _generatedMealPlan!.meals.where((m) {
         final sk = _slotKey(m.date, m.type);
         if (freeSlotKeys.contains(sk)) return false;        // slot shufflé
@@ -2249,11 +2371,14 @@ class _PlannerPageState extends State<PlannerPage> {
         ...lockedMeals.map((m) => m.copyWith(userSelected: true)),
         ...failedSlotMeals.map((m) => m.copyWith(userSelected: true)),
         ...selectedNewMeals.map((m) => m.copyWith(userSelected: true)),
+        ...coLocatedMainMeals,
         ...preservedOriginalMeals,
       ];
-      debugPrint('[SHUFFLE] Passe2 allUserSelectedFinal (${allUserSelectedFinal.length}):');
-      for (final m in allUserSelectedFinal) {
-        debugPrint('[SHUFFLE]   ${_slotKey(m.date, m.type)} recipe=${m.recipe.id} (${m.recipe.title}) leftover=${m.isLeftoverMeal} userSelected=${m.userSelected}');
+      if (kDebugMode) {
+        debugPrint('[SHUFFLE] Passe2 allUserSelectedFinal (${allUserSelectedFinal.length}):');
+        for (final m in allUserSelectedFinal) {
+          debugPrint('[SHUFFLE]   ${_slotKey(m.date, m.type)} recipe=${m.recipe.id} (${m.recipe.title}) leftover=${m.isLeftoverMeal} userSelected=${m.userSelected}');
+        }
       }
 
       final finalPlan = MealPlanningService.generateMealPlan(
@@ -2336,13 +2461,134 @@ class _PlannerPageState extends State<PlannerPage> {
         planToSave = planToSave.copyWith(meals: prunedMeals);
       }
 
+      // ── Re-inject co-located leftovers dropped by generateMealPlan ────────
+      // When a free slot has both a new main meal (crêpes) AND a leftover from
+      // another source (croque monsieur [RESTE]), generateMealPlan may silently
+      // drop the leftover because it sees the slot already occupied by the main
+      // meal.  Locked leftovers on free slots are in lockedMeals; re-add any
+      // that are missing from the pruned plan.
+      {
+        final coLocatedLockedLeftovers = lockedMeals.where((m) => m.isLeftoverMeal).toList();
+        if (coLocatedLockedLeftovers.isNotEmpty) {
+          final reinjectedMeals = planToSave.meals.toList();
+          for (final leftover in coLocatedLockedLeftovers) {
+            final sk = _slotKey(leftover.date, leftover.type);
+            final alreadyPresent = reinjectedMeals.any((m) =>
+                m.isLeftoverMeal &&
+                m.recipe.id == leftover.recipe.id &&
+                _slotKey(m.date, m.type) == sk);
+            if (!alreadyPresent) {
+              if (kDebugMode) debugPrint('[SHUFFLE] Re-inject co-located leftover ${leftover.recipe.title} @ $sk');
+              reinjectedMeals.add(leftover);
+            }
+          }
+          if (reinjectedMeals.length != planToSave.meals.length) {
+            planToSave = planToSave.copyWith(meals: reinjectedMeals);
+          }
+        }
+      }
+
+      // ── Re-inject selectedNewMeals dropped by generateMealPlan ────────────
+      // The reverse situation: the slot also has a co-located leftover, and
+      // generateMealPlan keeps the leftover but drops the new main meal.
+      // Re-add any selectedNewMeal that is absent from the final plan.
+      {
+        final reinjectedMeals = planToSave.meals.toList();
+        for (final newMeal in selectedNewMeals) {
+          final sk = _slotKey(newMeal.date, newMeal.type);
+          final alreadyPresent = reinjectedMeals.any((m) =>
+              !m.isLeftoverMeal &&
+              m.recipe.id == newMeal.recipe.id &&
+              _slotKey(m.date, m.type) == sk);
+          if (!alreadyPresent) {
+            if (kDebugMode) debugPrint('[SHUFFLE] Re-inject dropped new meal ${newMeal.recipe.title} @ $sk');
+            reinjectedMeals.add(newMeal);
+          }
+        }
+        if (reinjectedMeals.length != planToSave.meals.length) {
+          planToSave = planToSave.copyWith(meals: reinjectedMeals);
+        }
+      }
+
       await _mealPlanRepo.saveMealPlan(planToSave);
       await ShoppingListGenerator().generateAndSaveShoppingList(planToSave);
 
       if (mounted) setState(() => _generatedMealPlan = planToSave);
+      _showWastedLeftoversSnackbar(planToSave);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  /// Affiche un snackbar orange si des repas produisent des restes non injectés
+  /// (créneau du lendemain occupé ou fin de plan).
+  void _showWastedLeftoversSnackbar(MealPlan plan) {
+    if (!mounted) return;
+    final wastedLeftovers = <String>[];
+    for (final m in plan.meals) {
+      if (m.isLeftoverMeal) continue;
+      final cooked = m.recipe.servings * m.recipeMultiplier;
+      final leftoverPortions = cooked - m.totalServings;
+      if (leftoverPortions <= 0) continue;
+      // Suivre la chaîne consécutive de restes à partir de J+1.
+      // On s'arrête dès qu'un jour n'a pas de reste pour cette recette+créneau,
+      // évitant de comptabiliser une autre occurrence de la même recette plus tard.
+      int injectedPortions = 0;
+      // Normalise le curseur à minuit local pour éviter tout décalage UTC/local.
+      DateTime cursor = DateTime(m.date.year, m.date.month, m.date.day)
+          .add(const Duration(days: 1));
+      while (true) {
+        final cY = cursor.year, cM = cursor.month, cD = cursor.day;
+        final leftoverOnDay = plan.meals.where((other) =>
+            other.isLeftoverMeal &&
+            other.recipe.id == m.recipe.id &&
+            other.type == m.type &&
+            other.date.year == cY &&
+            other.date.month == cM &&
+            other.date.day == cD);
+        if (kDebugMode) {
+          debugPrint('[WASTED] ${m.recipe.title} cursor=$cY-$cM-$cD found=${leftoverOnDay.length}p=${leftoverOnDay.fold(0, (s, o) => s + (o as Meal).totalServings)}');
+        }
+        if (leftoverOnDay.isEmpty) break;
+        injectedPortions += leftoverOnDay.fold<int>(0, (s, o) => s + o.totalServings);
+        cursor = DateTime(cY, cM, cD).add(const Duration(days: 1));
+      }
+      final wasted = leftoverPortions - injectedPortions;
+      if (wasted <= 0) continue;
+      final typeLabel = m.type == MealType.lunch ? 'midi' : 'soir';
+      wastedLeftovers.add(
+        '${m.recipe.title} (${m.date.day}/${m.date.month} $typeLabel)'
+        ' — $wasted portion${wasted > 1 ? 's' : ''}'
+        ' non utilisée${wasted > 1 ? 's' : ''}',
+      );
+    }
+    if (wastedLeftovers.isEmpty) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      duration: const Duration(seconds: 8),
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.all(16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      backgroundColor: Colors.orange[800],
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Icon(Icons.info_outline_rounded, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text(
+              'Portions non utilisées faute de créneau libre :',
+              style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+            )),
+          ]),
+          const SizedBox(height: 4),
+          ...wastedLeftovers.map((label) => Padding(
+            padding: const EdgeInsets.only(left: 26, top: 2),
+            child: Text('• $label', style: GoogleFonts.poppins(color: Colors.white70, fontSize: 12)),
+          )),
+        ],
+      ),
+    ));
   }
 
   /// Remplit les slots vides apparus après un multi-shuffle
@@ -2536,6 +2782,35 @@ class _PlannerPageState extends State<PlannerPage> {
     Meal mealToChange, {
     bool suppressDialogs = false,
   }) async {
+    // Cas particulier : le repas à shuffler est un reste sur un slot partagé avec
+    // un repas principal (slot fractionné). _shuffleFreeSlots traiterait tout le
+    // slot comme libre et écraserait le repas de l'autre utilisateur.
+    // Dans ce cas, on retire simplement ce reste du plan sans toucher aux autres repas.
+    if (mealToChange.isLeftoverMeal && _generatedMealPlan != null) {
+      final sk = _slotKey(mealToChange.date, mealToChange.type);
+      final hasSiblingMain = _generatedMealPlan!.meals.any(
+        (m) => !m.isLeftoverMeal && _slotKey(m.date, m.type) == sk,
+      );
+      if (hasSiblingMain) {
+        setState(() => _isLoading = true);
+        try {
+          final updatedMeals = _generatedMealPlan!.meals
+              .where((m) => !(
+                  m.isLeftoverMeal &&
+                  m.recipe.id == mealToChange.recipe.id &&
+                  _slotKey(m.date, m.type) == sk))
+              .toList();
+          final updatedPlan = _generatedMealPlan!.copyWith(meals: updatedMeals);
+          await _mealPlanRepo.saveMealPlan(updatedPlan);
+          await ShoppingListGenerator().generateAndSaveShoppingList(updatedPlan);
+          if (mounted) setState(() => _generatedMealPlan = updatedPlan);
+          _showWastedLeftoversSnackbar(updatedPlan);
+        } finally {
+          if (mounted) setState(() => _isLoading = false);
+        }
+        return;
+      }
+    }
     await _shuffleFreeSlots(
       {_slotKey(mealToChange.date, mealToChange.type)},
       suppressDialogs: suppressDialogs,
@@ -3541,6 +3816,14 @@ class _PlannerPageState extends State<PlannerPage> {
         _generatedMealPlan = updatedPlan;
       });
 
+      if (kDebugMode) {
+        final _typeLabel = savedMeal.type == MealType.lunch ? 'MIDI' : 'SOIR';
+        final _cooked = savedMeal.recipe.servings * savedMeal.recipeMultiplier;
+        debugPrint('[MANUAL] Recette modifiée — ${savedMeal.date.day}/${savedMeal.date.month} $_typeLabel');
+        debugPrint('[MANUAL]   Recette   : ${savedMeal.recipe.title}');
+        debugPrint('[MANUAL]   Portions cuisinées : $_cooked  |  Consommées : ${savedMeal.totalServings}  |  Restes : ${(_cooked - savedMeal.totalServings).clamp(0, 999)}');
+      }
+
       // --- RESTES : proposer de cascader si la recette en produit ---
       if (!suppressLeftoverDialog && fullMeal == null) {
         final cookedServings = savedMeal.recipe.servings * savedMeal.recipeMultiplier;
@@ -3581,6 +3864,7 @@ class _PlannerPageState extends State<PlannerPage> {
         }
       }
 
+      if (_generatedMealPlan != null) _showWastedLeftoversSnackbar(_generatedMealPlan!);
       if (!mounted) return;
       if (showSnackbar)
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3671,6 +3955,13 @@ class _PlannerPageState extends State<PlannerPage> {
       setState(() {
         _generatedMealPlan = updatedPlan;
       });
+      if (kDebugMode) {
+        final _addTypeLabel = newMeal.type == MealType.lunch ? 'MIDI' : 'SOIR';
+        debugPrint('[MANUAL] Repas ajouté — ${newMeal.date.day}/${newMeal.date.month} $_addTypeLabel');
+        debugPrint('[MANUAL]   Recette   : ${newMeal.recipe.title}');
+        debugPrint('[MANUAL]   Portions cuisinées : ${newMeal.recipe.servings}  |  Consommées : ${newMeal.totalServings}  |  Restes : ${(newMeal.recipe.servings - newMeal.totalServings).clamp(0, 999)}');
+      }
+      _showWastedLeftoversSnackbar(updatedPlan);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -3854,7 +4145,7 @@ class _PlannerPageState extends State<PlannerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      floatingActionButton: Padding(
+      floatingActionButton: _generatedMealPlan == null ? null : Padding(
         padding: const EdgeInsets.only(bottom: 16, right: 16),
         child: Material(
           elevation: 6,
@@ -4528,9 +4819,12 @@ class _PlannerPageState extends State<PlannerPage> {
       final planEnd = planStart.add(
         Duration(days: _generatedMealPlan!.durationDays - 1),
       );
-      firstDay = historyMin != null && historyMin.isBefore(planStart)
+      // Include today so days between today and planStart are reachable
+      final today = DateTime.now();
+      final effectiveStart = today.isBefore(planStart) ? today : planStart;
+      firstDay = historyMin != null && historyMin.isBefore(effectiveStart)
           ? historyMin
-          : planStart;
+          : effectiveStart;
       lastDay = historyMax != null && historyMax.isAfter(planEnd)
           ? historyMax
           : planEnd;
@@ -4739,10 +5033,14 @@ class _PlannerPageState extends State<PlannerPage> {
               : null,
           child: Stack(
             children: [
-              Column(
-                children: [
-                  // ── Main content (tap to open recipe) ──
-                  InkWell(
+              // ── Main content + right-side buttons in a Row ──
+              IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                  // ── Left: tap to open recipe ──
+                  Expanded(
+                    child: InkWell(
                     onTap: isSelectableMeal ? null : () => _openRecipeDetail(meal),
               child: Stack(
                 children: [
@@ -4801,12 +5099,6 @@ class _PlannerPageState extends State<PlannerPage> {
                                 ],
                               ),
                               const SizedBox(height: 4),
-                              Text(
-                                meal.recipe.description,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 13),
-                              ),
                               // Badges
                               if (meal.isLeftoverMeal) ...[
                                 const SizedBox(height: 5),
@@ -4835,136 +5127,101 @@ class _PlannerPageState extends State<PlannerPage> {
                     ),
                 ],
               ),
-            ),
-            // ── Action bar (hidden in multi-shuffle mode) ──
-            if (!_isMultiShuffleMode)
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.grey.shade50,
-                border: Border(top: BorderSide(color: Colors.grey.shade200)),
-              ),
-              child: IntrinsicHeight(
-                child: Row(
-                  children: [
-                    if (!isPastDay) ...[
-                      Expanded(
-                        child: InkWell(
-                          onTap: () => _autoChangeMealRecipe(meal),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.autorenew, color: Colors.grey.shade500, size: 22),
-                                const SizedBox(height: 3),
-                                Text('Aléatoire', style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade500, fontWeight: FontWeight.w500)),
-                              ],
+                  ), // InkWell (left content)
+                  ), // Expanded (left)
+                  // ── Right: action buttons row (hidden in multi-shuffle) ──
+                  if (!_isMultiShuffleMode)
+                  Builder(builder: (context) {
+                    final btnHPad = (MediaQuery.of(context).size.width * 0.014).clamp(10.0, 20.0);
+                  return Container(
+                    decoration: BoxDecoration(
+                      border: Border(left: BorderSide(color: Colors.grey.shade200)),
+                    ),
+                    child: IntrinsicWidth(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (!isPastDay) ...[
+                            InkWell(
+                              onTap: () => _autoChangeMealRecipe(meal),
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(horizontal: btnHPad, vertical: 12),
+                                child: Icon(Icons.autorenew, color: Colors.grey.shade500, size: 20),
+                              ),
+                            ),
+                            VerticalDivider(width: 1, thickness: 1, color: Colors.grey.shade200),
+                          ],
+                          InkWell(
+                            onTap: () async {
+                              final now = DateTime.now();
+                              final today = DateTime(now.year, now.month, now.day);
+                              final mealDate = DateTime(meal.date.year, meal.date.month, meal.date.day);
+                              final isHistory = mealDate.isBefore(today);
+                              if (isHistory) {
+                                final confirmed = await showDialog<bool>(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                    titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+                                    contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                                    actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                                    title: Row(children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(8),
+                                        decoration: BoxDecoration(color: Colors.orange.withOpacity(0.12), shape: BoxShape.circle),
+                                        child: const Icon(Icons.history, color: Colors.orange, size: 22),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(child: Text('Repas historique', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16))),
+                                    ]),
+                                    content: Text("Ce repas fait partie de l'historique. Voulez-vous vraiment modifier la recette ?",
+                                        style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54)),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context, false),
+                                        style: TextButton.styleFrom(foregroundColor: Colors.black54),
+                                        child: Text('Annuler', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () => Navigator.pop(context, true),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF6A5AE0), foregroundColor: Colors.white,
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10), elevation: 0,
+                                        ),
+                                        child: Text('Oui, modifier', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirmed != true) return;
+                              } else {
+                                _autoChangeBannedRecipes.clear();
+                              }
+                              _showRecipeSelector(mealToUpdate: meal, requireConfirmation: false);
+                            },
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(horizontal: btnHPad, vertical: 12),
+                              child: Icon(Icons.search, color: Colors.grey.shade500, size: 20),
                             ),
                           ),
-                        ),
-                      ),
-                      VerticalDivider(width: 1, color: Colors.grey.shade200),
-                    ],
-                    Expanded(
-                      child: InkWell(
-                        onTap: () async {
-                          final now = DateTime.now();
-                          final today = DateTime(now.year, now.month, now.day);
-                          final mealDate = DateTime(meal.date.year, meal.date.month, meal.date.day);
-                          final isHistory = mealDate.isBefore(today);
-                          if (isHistory) {
-                            final confirmed = await showDialog<bool>(
-                              context: context,
-                              builder: (context) => AlertDialog(
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                                titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-                                contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-                                actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                                title: Row(
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.all(8),
-                                      decoration: BoxDecoration(
-                                        color: Colors.orange.withOpacity(0.12),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: const Icon(Icons.history, color: Colors.orange, size: 22),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        'Repas historique',
-                                        style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                content: Text(
-                                  "Ce repas fait partie de l'historique. Voulez-vous vraiment modifier la recette ?",
-                                  style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54),
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(context, false),
-                                    style: TextButton.styleFrom(foregroundColor: Colors.black54),
-                                    child: Text('Annuler', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
-                                  ),
-                                  ElevatedButton(
-                                    onPressed: () => Navigator.pop(context, true),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF6A5AE0),
-                                      foregroundColor: Colors.white,
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                                      elevation: 0,
-                                    ),
-                                    child: Text('Oui, modifier', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-                                  ),
-                                ],
-                              ),
-                            );
-                            if (confirmed != true) return;
-                          } else {
-                            _autoChangeBannedRecipes.clear();
-                          }
-                          _showRecipeSelector(mealToUpdate: meal, requireConfirmation: false);
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.search, color: Colors.grey.shade500, size: 22),
-                              const SizedBox(height: 3),
-                              Text('Chercher', style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade500, fontWeight: FontWeight.w500)),
-                            ],
+                          VerticalDivider(width: 1, thickness: 1, color: Colors.grey.shade200),
+                          InkWell(
+                            onTap: () => _deleteMeal(meal),
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(horizontal: btnHPad, vertical: 12),
+                              child: Icon(Icons.delete_outline, color: Colors.red.shade300, size: 20),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
                     ),
-                    VerticalDivider(width: 1, color: Colors.grey.shade200),
-                    Expanded(
-                      child: InkWell(
-                        onTap: () => _deleteMeal(meal),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.delete_outline, color: Colors.red.shade300, size: 22),
-                              const SizedBox(height: 3),
-                              Text('Supprimer', style: GoogleFonts.poppins(fontSize: 10, color: Colors.red.shade300, fontWeight: FontWeight.w500)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-                ], // Column children
-              ), // Column
+                  );
+                  }), // Builder (responsive btn padding)
+                  ], // Row children (left content + right buttons)
+                ), // Row
+              ), // IntrinsicHeight
               // ── Selection overlay (multi-shuffle mode) ──
               if (isSelectableMeal)
                 Positioned.fill(
@@ -5038,13 +5295,6 @@ class _PlannerPageState extends State<PlannerPage> {
       }
 
       Widget compactRow(Meal meal) {
-        final userLabels = meal.userServings.isNotEmpty
-            ? (meal.userServings.keys
-                .map((uid) => _userNames[uid] ?? uid)
-                .toList()
-                ..sort((a, b) => a.compareTo(b)))
-            : <String>[];
-
         final isKeptCompact = _multiShuffleKeptSlots.contains(_slotKey(meal.date, meal.type));
         final isSelectableCompact = _isMultiShuffleMode && !meal.isLeftoverMeal && !isPastDay;
 
@@ -5107,24 +5357,6 @@ class _PlannerPageState extends State<PlannerPage> {
                       ),
                     ),
                     const SizedBox(width: 6),
-                    // Chips noms utilisateurs
-                    ...userLabels.map((name) => Container(
-                          margin: const EdgeInsets.only(left: 4),
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF6A5AE0).withOpacity(0.10),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                                color: const Color(0xFF6A5AE0).withOpacity(0.30)),
-                          ),
-                          child: Text(
-                            name,
-                            style: GoogleFonts.poppins(
-                                fontSize: 11,
-                                color: const Color(0xFF6A5AE0),
-                                fontWeight: FontWeight.w600),
-                          ),
-                        )),
                     const SizedBox(width: 4),
                     // Bouton Aléatoire (plan futur seulement)
                     if (!isPastDay && !_isMultiShuffleMode)

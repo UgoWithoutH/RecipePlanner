@@ -16,26 +16,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout source code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Setup Flutter SDK
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      # Install Dart/Flutter dependencies
       - name: Install dependencies
         run: flutter pub get
 
-      # Build Flutter Web application
       - name: Build Flutter Web
         run: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
 
-      # Upload Web build artifact for GitHub Pages (no commit to repo)
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -45,8 +40,10 @@ jobs:
     needs: web-build
     runs-on: ubuntu-latest
 
+    environment:
+      name: github-pages
+
     steps:
-      # Deploy Web app to GitHub Pages
       - name: Deploy to GitHub Pages
         uses: actions/deploy-pages@v4
 
@@ -54,27 +51,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout source code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Setup Flutter SDK
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      # Install Dart/Flutter dependencies
       - name: Install dependencies
         run: flutter pub get
 
-      # Decode Android keystore from GitHub Secrets
       - name: Decode keystore
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/upload-keystore.jks
 
-      # Create key.properties file dynamically for Android signing
       - name: Create key.properties
         run: |
           cat <<EOF > android/key.properties
@@ -84,11 +76,9 @@ jobs:
           storeFile=upload-keystore.jks
           EOF
 
-      # Build Android App Bundle (AAB)
       - name: Build Android App Bundle
         run: flutter build appbundle --release
 
-      # Upload AAB as private GitHub Actions artifact
       - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:

@@ -1,0 +1,70 @@
+{
+  "project_info": {
+    "project_number": "1027242987088",
+    "project_id": "recipe-planner-22416",
+    "storage_bucket": "recipe-planner-22416.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1027242987088:android:b1ffe0d08f6d2152f70b55",
+        "android_client_info": {
+          "package_name": "fr.ugowithouth.recipe_planner"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1027242987088-8sbs49c91ad9os2vfkbpuoe5bgvbgkfd.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "fr.ugowithouth.recipe_planner",
+            "certificate_hash": "bf26496421c956dbb21d967ace4453c0105f9b36"
+          }
+        },
+        {
+          "client_id": "1027242987088-fp52al3lpg5k9ru04nissu7vl8rmkg2m.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "fr.ugowithouth.recipe_planner",
+            "certificate_hash": "7744ff6cc037a101d721007e1a1ee9efa244f5d4"
+          }
+        },
+        {
+          "client_id": "1027242987088-jv58qmi7j0ulb30ohnk4oaoh2pv62uj2.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "fr.ugowithouth.recipe_planner",
+            "certificate_hash": "35865c69510c290143568f031864b560995bf06d"
+          }
+        },
+        {
+          "client_id": "1027242987088-ntf90e4e346ut8mm3adiov1fps70de53.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBLB4BGYWwz41q8jbH6ZSwHmNTGP05Ix3c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1027242987088-ntf90e4e346ut8mm3adiov1fps70de53.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "1027242987088-qk9da2duuo19tosd7rtm9h0lqe4geukg.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.recipePlanner"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

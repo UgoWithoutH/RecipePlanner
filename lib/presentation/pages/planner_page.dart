@@ -226,10 +226,10 @@ class _PlannerPageState extends State<PlannerPage> {
   }
 
   Future<void> _loadMostRecentMealPlanAndHistory() async {
-    setState(() => _isLoading = true);
-    // Charger les noms en premier, indépendamment du reste — jamais bloqué
-    await _loadUserNames();
     try {
+      if (mounted) setState(() => _isLoading = true);
+      // Charger les noms en premier, indépendamment du reste — jamais bloqué
+      await _loadUserNames();
       // Load recipe count to calculate the history window size
       final allRecipes = await _loadRecipes(forceRefresh: true);
       _maxHistoryDays = allRecipes.length;
@@ -270,13 +270,11 @@ class _PlannerPageState extends State<PlannerPage> {
           _focusedDay = planStart;
         }
         _calendarFormat = null; // Reset to recalculate format
-        // Update history from loaded plan.
-        // La méthode retourne l'historique final — pas besoin de rappeler getHistory().
-        final updatedHistory = await _historyRepo.updateHistoryFromPlan(
-          _generatedMealPlan,
-          _maxHistoryDays,
-        );
-        _mealHistory = updatedHistory;
+        // Lecture rapide de l'historique existant (une seule requête Firestore).
+        // La mise à jour de l'historique avec les repas passés du plan (écriture
+        // séquentielle potentiellement longue) est effectuée en arrière-plan
+        // ci-dessous pour ne pas bloquer l'affichage du plan.
+        _mealHistory = await _historyRepo.getHistory();
         // Planifie silencieusement les notifications (pour tous les utilisateurs)
         _autoScheduleNotifications(loadedPlan).ignore();
 
@@ -299,6 +297,18 @@ class _PlannerPageState extends State<PlannerPage> {
       if (mounted) setState(() {});
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+    // Mise à jour de l'historique en arrière-plan : inscrit les repas passés du plan
+    // dans l'historique et déduit les ingrédients du frigo/placard.
+    // Cette opération peut nécessiter de nombreuses écritures Firestore (une par jour
+    // passé non encore enregistré), c'est pourquoi elle est découplée du chargement
+    // initial pour éviter de bloquer l'affichage du plan.
+    if (_generatedMealPlan != null) {
+      _historyRepo
+          .updateHistoryFromPlan(_generatedMealPlan, _maxHistoryDays)
+          .then((updatedHistory) {
+        if (mounted) setState(() => _mealHistory = updatedHistory);
+      }).ignore();
     }
   }
 

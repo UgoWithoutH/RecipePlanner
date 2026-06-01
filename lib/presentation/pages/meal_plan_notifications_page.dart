@@ -222,6 +222,11 @@ class _MealPlanNotificationsPageState
         return;
       }
 
+      // Demande la permission d'alarme exacte (Android 12+).
+      // Ouvre "Alarmes & rappels" dans les paramètres si nécessaire.
+      // Si refusée, on retombe sur le mode inexact — pas de crash.
+      await notifService.requestExactAlarmPermission();
+
       await notifService.scheduleMealPlanNotifications(
         plan: widget.mealPlan!,
         notificationTime: _notificationTime,

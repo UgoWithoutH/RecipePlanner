@@ -72,7 +72,9 @@ class NotificationService {
   // Permissions
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Demande les permissions nécessaires selon la plateforme.
+  /// Demande la permission de notification (POST_NOTIFICATIONS sur Android 13+).
+  /// Ne demande PAS la permission d'alarme exacte pour ne pas ouvrir
+  /// les paramètres système silencieusement lors de l'auto-planification.
   /// Retourne `true` si les permissions sont accordées.
   Future<bool> requestPermissions() async {
     final android = _plugin.resolvePlatformSpecificImplementation<
@@ -96,6 +98,18 @@ class NotificationService {
     return true;
   }
 
+  /// Demande la permission d'alarme exacte (Android 12+).
+  /// À appeler uniquement depuis un flux initialisé par l'utilisateur
+  /// (ex : bouton "Sauvegarder" de la page notifications), car cela
+  /// peut ouvrir l'écran "Alarmes & rappels" des paramètres système.
+  /// En cas de refus, scheduleMealPlanNotifications() retombe sur le mode
+  /// inexact automatiquement — aucun crash.
+  Future<void> requestExactAlarmPermission() async {
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    await android?.requestExactAlarmsPermission();
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Planification
   // ─────────────────────────────────────────────────────────────────────────
@@ -113,6 +127,17 @@ class NotificationService {
     int offsetDays = -1,
   }) async {
     await cancelAllMealPlanNotifications();
+
+    // Android 12+ : utilise exactAllowWhileIdle si la permission est accordée,
+    // sinon tombe sur inexactAllowWhileIdle pour éviter la PlatformException.
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    final canExact = android != null
+        ? (await android.canScheduleExactNotifications() ?? false)
+        : true;
+    final scheduleMode = canExact
+        ? AndroidScheduleMode.exactAllowWhileIdle
+        : AndroidScheduleMode.inexactAllowWhileIdle;
 
     final now = DateTime.now();
 
@@ -160,7 +185,7 @@ class NotificationService {
             presentSound: true,
           ),
         ),
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        androidScheduleMode: scheduleMode,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
       );

@@ -1,84 +1,87 @@
-name: Flutter CI (Web + Android AAB)
+name: Flutter CI (Web + Android AAB + Play Store)
 
 on:
   push:
     branches:
       - main
+
   workflow_dispatch:
+    inputs:
+      publish_play:
+        description: "Publish AAB to Google Play Closed Testing"
+        required: false
+        default: "false"
 
 permissions:
   contents: write
   pages: write
   id-token: write
 
+
 jobs:
+  # =========================================================
+  # WEB BUILD + DEPLOY
+  # =========================================================
   web-build:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout repository source code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Setup Flutter SDK
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      # Install dependencies
       - name: Install dependencies
         run: flutter pub get
 
-      # Build Flutter Web application
       - name: Build Flutter Web
         run: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
 
-      # Upload Web build artifact for GitHub Pages
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: build/web
 
+
   web-deploy:
     needs: web-build
     runs-on: ubuntu-latest
 
-    # GitHub Pages deployment environment (required by deploy-pages v4)
     environment:
       name: github-pages
 
     steps:
-      # Deploy Web app to GitHub Pages
       - name: Deploy to GitHub Pages
         uses: actions/deploy-pages@v4
 
+
+  # =========================================================
+  # ANDROID BUILD (AAB)
+  # =========================================================
   android-build:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout repository source code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Setup Flutter SDK
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      # Install dependencies
       - name: Install dependencies
         run: flutter pub get
 
-      # Decode Android keystore from GitHub Secrets
       - name: Decode keystore
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/upload-keystore.jks
 
-      # Create Android signing properties file
       - name: Create key.properties
         run: |
           cat <<EOF > android/key.properties
@@ -88,13 +91,46 @@ jobs:
           storeFile=upload-keystore.jks
           EOF
 
-      # Build Android App Bundle (AAB)
       - name: Build Android App Bundle
         run: flutter build appbundle --release
 
-      # Upload AAB artifact to GitHub Actions
       - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release-aab
           path: build/app/outputs/bundle/release/app-release.aab
+
+
+  # =========================================================
+  # PLAY STORE RELEASE (MANUAL ONLY)
+  # =========================================================
+  play-store-release:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish_play == 'true'
+    needs: android-build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download AAB artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app-release-aab
+
+      - name: Setup Ruby (for Fastlane)
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+
+      - name: Install Fastlane
+        run: gem install fastlane -NV
+
+      - name: Create service account file
+        run: echo '${{ secrets.ANDROID_PUBLISH_SERVICE_ACCOUNT }}' > service-account.json
+
+      - name: Upload to Google Play (Closed Testing)
+        run: |
+          fastlane supply \
+            --json_key service-account.json \
+            --package_name "${{ secrets.PLAY_STORE_PACKAGE_NAME }}" \
+            --aab app-release.aab \
+            --track internal \
+            --release_status completed

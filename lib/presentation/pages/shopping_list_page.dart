@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../data/repositories/firebase_meal_plan_repository.dart';
 import '../../data/repositories/firebase_shopping_list_repository.dart';
@@ -47,7 +48,10 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
         typeRepo.getTypes(),
         FirebasePantrySnapshotRepository.instance.get(),
       ]);
-      _types = results[0] as List<IngredientType>;
+      // Dédupliquer par id pour éviter les doublons Firestore
+      final rawTypes = results[0] as List<IngredientType>;
+      final seenIds = <String>{};
+      _types = rawTypes.where((t) => seenIds.add(t.id)).toList();
       _pantrySnapshot = results[1] as List<PantrySnapshotItem>;
 
       // 1. Load the latest meal plan
@@ -600,7 +604,14 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
       (u) => u.name == (item?.unit ?? ''),
       orElse: () => Unit.piece,
     );
-    String? selectedTypeId = item?.typeId;
+    // Normalise: keep typeId only if it exists in the dropdown (excludes 'Autre'-named types)
+    final _validTypeIds = _types
+        .where((t) => t.name != 'Autre' && t.id.isNotEmpty)
+        .map((t) => t.id)
+        .toSet();
+    String? selectedTypeId = (item?.typeId != null && _validTypeIds.contains(item!.typeId))
+        ? item.typeId
+        : null;
     List<Map<String, dynamic>> suggestions = [];
     bool showSuggestions = false;
 
@@ -753,40 +764,57 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                     isExpanded: true,
                     icon: Icon(Icons.expand_more_rounded, color: Colors.grey[600], size: 20),
                     dropdownColor: Colors.white,
-                    selectedItemBuilder: (context) {
-                      final allIds = <String?>[null, ..._types.where((t) => t.name != 'Autre').map((t) => t.id)];
-                      return allIds.map((id) {
-                        final name = id == null ? 'Autre' : _types.firstWhere((t) => t.id == id, orElse: () => IngredientType(id: '', name: 'Autre', color: 0)).name;
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text('Catégorie (optionnel)', style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[500])),
-                            Text(name, style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
-                          ],
-                        );
-                      }).toList();
-                    },
                     onChanged: (v) => setSheetState(() => selectedTypeId = v),
+                    // _types is already deduplicated — filter 'Autre'-named and empty-id entries
                     items: [
                       DropdownMenuItem<String?>(
                         value: null,
                         child: Text('Autre', style: GoogleFonts.poppins(fontSize: 14)),
                       ),
-                      ..._types.where((t) => t.name != 'Autre').map((t) => DropdownMenuItem<String?>(
-                        value: t.id,
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 10, height: 10,
-                              margin: const EdgeInsets.only(right: 8),
-                              decoration: BoxDecoration(color: Color(t.color), shape: BoxShape.circle),
+                      ..._types
+                          .where((t) => t.name != 'Autre' && t.id.isNotEmpty)
+                          .map((t) => DropdownMenuItem<String?>(
+                            value: t.id,
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 10, height: 10,
+                                  margin: const EdgeInsets.only(right: 8),
+                                  decoration: BoxDecoration(
+                                      color: Color(t.color), shape: BoxShape.circle),
+                                ),
+                                Text(t.name,
+                                    style: GoogleFonts.poppins(fontSize: 14)),
+                              ],
                             ),
-                            Text(t.name, style: GoogleFonts.poppins(fontSize: 14)),
-                          ],
-                        ),
-                      )),
+                          )),
                     ],
+                    selectedItemBuilder: (context) {
+                      final validTypes =
+                          _types.where((t) => t.name != 'Autre' && t.id.isNotEmpty).toList();
+                      final allIds = <String?>[null, ...validTypes.map((t) => t.id)];
+                      return allIds.map((id) {
+                        final name = id == null
+                            ? 'Autre'
+                            : validTypes
+                                .firstWhere((t) => t.id == id,
+                                    orElse: () =>
+                                        IngredientType(id: '', name: 'Autre', color: 0))
+                                .name;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('Catégorie (optionnel)',
+                                style: GoogleFonts.poppins(
+                                    fontSize: 11, color: Colors.grey[500])),
+                            Text(name,
+                                style:
+                                    GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
+                          ],
+                        );
+                      }).toList();
+                    },
                   ),
                 ),
               ),
@@ -1084,6 +1112,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
 
                 // List content
                 Expanded(
+                  child: SlidableAutoCloseBehavior(
                   child: ListView(
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
                     children: [
@@ -1205,6 +1234,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                         const SizedBox(height: 40), // Bottom padding
                       ]
                     ],
+                  ),
                   ),
                 ),
               ],
@@ -1495,7 +1525,8 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
     final item = widget.item;
     final hasDetail = !item.isChecked &&
         (item.totalRequiredBase > 0 || widget.pantryMatch != null);
-    return AnimatedContainer(
+
+    final card = AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       decoration: BoxDecoration(
         color: item.isChecked ? Colors.grey[50] : Colors.white,
@@ -1523,147 +1554,136 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
         borderRadius: BorderRadius.circular(16),
         child: Column(
           children: [
-            InkWell(
-              onTap: hasDetail ? () => setState(() => _expanded = !_expanded) : null,
-              borderRadius: _expanded
-                  ? const BorderRadius.vertical(top: Radius.circular(15))
-                  : BorderRadius.circular(15),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Row(
-                  children: [
-                    GestureDetector(
-                      onTap: widget.onCheckTap,
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        width: 24,
-                        height: 24,
-                        decoration: BoxDecoration(
-                          color: item.isChecked
-                              ? const Color(0xFF6A5AE0)
-                              : Colors.transparent,
-                          shape: BoxShape.circle,
-                          border: Border.all(
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Zone de coche pleine hauteur — séparée du tap d'expansion
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: widget.onCheckTap,
+                    child: Container(
+                      width: 44,
+                      decoration: BoxDecoration(
+                        color: item.isChecked
+                            ? const Color(0xFF4CAF50).withOpacity(0.08)
+                            : Colors.grey[50],
+                        borderRadius: const BorderRadius.horizontal(
+                            left: Radius.circular(15)),
+                        border: Border(
+                          right: BorderSide(
                             color: item.isChecked
-                                ? const Color(0xFF6A5AE0)
-                                : Colors.grey[400]!,
-                            width: 2,
+                                ? const Color(0xFF4CAF50).withOpacity(0.25)
+                                : Colors.grey.withOpacity(0.15),
+                            width: 1,
                           ),
                         ),
-                        child: item.isChecked
-                            ? const Icon(Icons.check, size: 16, color: Colors.white)
-                            : null,
+                      ),
+                      child: Center(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 200),
+                          child: item.isChecked
+                              ? const Icon(
+                                  Icons.check_rounded,
+                                  key: ValueKey('checked'),
+                                  size: 22,
+                                  color: Color(0xFF4CAF50),
+                                )
+                              : Icon(
+                                  Icons.check_rounded,
+                                  key: const ValueKey('unchecked'),
+                                  size: 22,
+                                  color: Colors.grey[300],
+                                ),
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            item.name,
-                            style: GoogleFonts.poppins(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w500,
-                              color: item.isChecked
-                                  ? Colors.grey[400]
-                                  : const Color(0xFF1A1A1A),
-                              decoration:
-                                  item.isChecked ? TextDecoration.lineThrough : null,
-                              decorationColor: Colors.grey[400],
+                  ),
+                  // Contenu + bouton d'expansion
+                  Expanded(
+                    child: InkWell(
+                      onTap: hasDetail
+                          ? () => setState(() => _expanded = !_expanded)
+                          : null,
+                      borderRadius: _expanded
+                          ? const BorderRadius.only(
+                              topRight: Radius.circular(15))
+                          : const BorderRadius.only(
+                              topRight: Radius.circular(15),
+                              bottomRight: Radius.circular(15)),
+                      child: Padding(
+                        padding: const EdgeInsets.only(
+                            top: 12, bottom: 12, left: 10, right: 12),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                item.name,
+                                style: GoogleFonts.poppins(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w500,
+                                  color: item.isChecked
+                                      ? Colors.grey[400]
+                                      : const Color(0xFF1A1A1A),
+                                  decoration: item.isChecked
+                                      ? TextDecoration.lineThrough
+                                      : null,
+                                  decorationColor: Colors.grey[400],
+                                ),
+                              ),
                             ),
-                          ),
-
-                        ],
+                            const SizedBox(width: 6),
+                            if (item.quantity > 0)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: item.isChecked
+                                      ? Colors.transparent
+                                      : const Color(0xFFF3F4F6),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  '${widget.formatQuantity(item.quantity)} ${Unit.labelOf(item.unit)}',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: item.isChecked
+                                        ? Colors.grey[400]
+                                        : const Color(0xFF6A5AE0),
+                                  ),
+                                ),
+                              ),
+                            if (!item.isChecked &&
+                                widget.contributions.isNotEmpty) ...[  
+                              const SizedBox(width: 2),
+                              GestureDetector(
+                                onTap: () =>
+                                    _showContributionsSheet(context),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(7),
+                                  child: Icon(Icons.info_outline_rounded,
+                                      size: 20,
+                                      color: const Color(0xFF6A5AE0)
+                                          .withOpacity(0.55)),
+                                ),
+                              ),
+                            ],
+                            if (hasDetail) ...[  
+                              const SizedBox(width: 2),
+                              AnimatedRotation(
+                                turns: _expanded ? 0.5 : 0.0,
+                                duration: const Duration(milliseconds: 200),
+                                child: Icon(Icons.expand_more_rounded,
+                                    size: 20, color: Colors.grey[400]),
+                              ),
+                            ],
+                          ],
+                        ),
                       ),
                     ),
-
-                    if (item.quantity > 0)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: item.isChecked
-                              ? Colors.transparent
-                              : const Color(0xFFF3F4F6),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '${widget.formatQuantity(item.quantity)} ${Unit.labelOf(item.unit)}',
-                          style: GoogleFonts.poppins(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: item.isChecked
-                                ? Colors.grey[400]
-                                : const Color(0xFF6A5AE0),
-                          ),
-                        ),
-                      ),
-                    if (!item.isChecked && widget.contributions.isNotEmpty) ...[  
-                      const SizedBox(width: 4),
-                      GestureDetector(
-                        onTap: () => _showContributionsSheet(context),
-                        child: Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: Icon(Icons.info_outline_rounded,
-                              size: 22,
-                              color: const Color(0xFF6A5AE0).withOpacity(0.55)),
-                        ),
-                      ),
-                    ],
-                    if (item.isChecked) ...[
-                      const SizedBox(width: 4),
-                      GestureDetector(
-                        onTap: widget.onEditTap,
-                        child: Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: Icon(Icons.edit_outlined,
-                              size: 22,
-                              color: const Color(0xFF6A5AE0).withOpacity(0.5)),
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: widget.onDeleteTap,
-                        child: Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: Icon(Icons.delete_outline_rounded,
-                              size: 22,
-                              color: Colors.red[200]),
-                        ),
-                      ),
-                    ],
-                    if (!item.isChecked) ...[  
-                      const SizedBox(width: 4),
-                      GestureDetector(
-                        onTap: widget.onEditTap,
-                        child: Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: Icon(Icons.edit_outlined,
-                              size: 22,
-                              color: Colors.grey[400]),
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: widget.onDeleteTap,
-                        child: Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: Icon(Icons.delete_outline_rounded,
-                              size: 22,
-                              color: Colors.red[300]),
-                        ),
-                      ),
-                    ],
-                    if (hasDetail) ...[
-                      const SizedBox(width: 6),
-                      AnimatedRotation(
-                        turns: _expanded ? 0.5 : 0.0,
-                        duration: const Duration(milliseconds: 200),
-                        child: Icon(Icons.expand_more_rounded,
-                            size: 20, color: Colors.grey[400]),
-                      ),
-                    ],
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
             AnimatedSize(
@@ -1674,6 +1694,37 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
           ],
         ),
       ),
+    );
+
+    return Slidable(
+      key: ValueKey(item.name),
+      endActionPane: ActionPane(
+        motion: const DrawerMotion(),
+        extentRatio: 0.36,
+        children: [
+          CustomSlidableAction(
+            onPressed: (_) => widget.onEditTap(),
+            backgroundColor: const Color(0xFF6A5AE0),
+            foregroundColor: Colors.white,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(12),
+              bottomLeft: Radius.circular(12),
+            ),
+            child: const Icon(Icons.edit_outlined, size: 24),
+          ),
+          CustomSlidableAction(
+            onPressed: (_) => widget.onDeleteTap(),
+            backgroundColor: Colors.red[400]!,
+            foregroundColor: Colors.white,
+            borderRadius: const BorderRadius.only(
+              topRight: Radius.circular(12),
+              bottomRight: Radius.circular(12),
+            ),
+            child: const Icon(Icons.delete_outline_rounded, size: 24),
+          ),
+        ],
+      ),
+      child: card,
     );
   }
 

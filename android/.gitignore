@@ -13,5 +13,5 @@ key.properties
 **/*.keystore
 **/*.jks
 
-# Firebase configuration - contains sensitive API keys
-app/google-services.json
+# Firebase config (required for build)
+!app/google-services.json

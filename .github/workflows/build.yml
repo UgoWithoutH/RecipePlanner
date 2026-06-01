@@ -1,24 +1,17 @@
-name: Flutter CI (Web + Android AAB + Play Store)
+name: Flutter Build CI
 
 on:
   push:
     branches:
       - main
 
-  workflow_dispatch:
-    inputs:
-      publish_play:
-        description: "Publish AAB to Google Play Closed Testing"
-        required: false
-        default: "false"
-
 permissions:
   contents: write
   pages: write
   id-token: write
 
-
 jobs:
+
   # =========================================================
   # WEB BUILD + DEPLOY
   # =========================================================
@@ -50,7 +43,6 @@ jobs:
   web-deploy:
     needs: web-build
     runs-on: ubuntu-latest
-
     environment:
       name: github-pages
 
@@ -79,8 +71,7 @@ jobs:
         run: flutter pub get
 
       - name: Decode keystore
-        run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/upload-keystore.jks
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/upload-keystore.jks
 
       - name: Create key.properties
         run: |
@@ -99,38 +90,3 @@ jobs:
         with:
           name: app-release-aab
           path: build/app/outputs/bundle/release/app-release.aab
-
-
-  # =========================================================
-  # PLAY STORE RELEASE (MANUAL ONLY)
-  # =========================================================
-  play-store-release:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish_play == 'true'
-    needs: android-build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download AAB artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: app-release-aab
-
-      - name: Setup Ruby (for Fastlane)
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.2"
-
-      - name: Install Fastlane
-        run: gem install fastlane -NV
-
-      - name: Create service account file
-        run: echo '${{ secrets.ANDROID_PUBLISH_SERVICE_ACCOUNT }}' > service-account.json
-
-      - name: Upload to Google Play (Closed Testing)
-        run: |
-          fastlane supply \
-            --json_key service-account.json \
-            --package_name "${{ secrets.PLAY_STORE_PACKAGE_NAME }}" \
-            --aab app-release.aab \
-            --track internal \
-            --release_status completed

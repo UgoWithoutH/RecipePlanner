@@ -1,4 +1,4 @@
-name: Play Store Release (Manual)
+name: Publish Android to Play Alpha
 
 on:
   workflow_dispatch:
@@ -22,16 +22,13 @@ jobs:
           workflow_conclusion: success
           name: app-release-aab
 
-      - name: Show downloaded files
-        run: find . -type f
-
       # =========================================================
       # Setup Ruby for Fastlane
       # =========================================================
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: "3.2"
+          ruby-version: "3.3"
 
       - name: Install Fastlane
         run: gem install fastlane -NV

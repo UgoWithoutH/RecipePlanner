@@ -817,32 +817,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                           },
                         ),
 
-                        const SizedBox(height: 40),
 
-                        // USER SERVINGS
-                        ...[
-                          Text(
-                            'Portions par utilisateur',
-                            style: GoogleFonts.poppins(
-                              fontSize: 20,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.black87,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          if (_isLoadingServings)
-                            const Center(child: CircularProgressIndicator())
-                          else if (_userServings.isEmpty)
-                            Text(
-                              'Aucune portion enregistrée',
-                              style: GoogleFonts.poppins(
-                                color: Colors.grey,
-                                fontStyle: FontStyle.italic,
-                              ),
-                            )
-                          else
-                            _buildUserServingsList(),
-                        ],
                       ],
                     ),
                   ),
@@ -982,12 +957,15 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                   ),
                 ),
               ),
-              if (_recipe?.mealTime != MealTime.dinnerOnly)
-                _buildServingBadge(Icons.wb_sunny_rounded, '${s.lunchServings}', Colors.orange),
-              if (_recipe?.mealTime != MealTime.lunchOnly && _recipe?.mealTime != MealTime.dinnerOnly)
-                const SizedBox(width: 8),
-              if (_recipe?.mealTime != MealTime.lunchOnly)
-                _buildServingBadge(Icons.nights_stay_rounded, '${s.dinnerServings}', const Color(0xFF5C6BC0)),
+              Opacity(
+                opacity: _recipe?.mealTime == MealTime.dinnerOnly ? 0.3 : 1.0,
+                child: _buildServingBadge(Icons.wb_sunny_rounded, '${s.lunchServings}', Colors.orange),
+              ),
+              const SizedBox(width: 8),
+              Opacity(
+                opacity: _recipe?.mealTime == MealTime.lunchOnly ? 0.3 : 1.0,
+                child: _buildServingBadge(Icons.nights_stay_rounded, '${s.dinnerServings}', const Color(0xFF5C6BC0)),
+              ),
             ],
           ),
         );

@@ -55,48 +55,56 @@ class _RecipesPageState extends State<RecipesPage> {
   
   Future<void> _fetchCategories() async {
     setState(() => _categoriesLoading = true);
-    final groupId = await GroupRepository.instance.getCurrentGroupId();
-    if (groupId == null) {
+    try {
+      final groupId = await GroupRepository.instance.getCurrentGroupId();
+      if (groupId == null) {
+        if (mounted) setState(() => _categoriesLoading = false);
+        return;
+      }
+      final snap = await FirebaseFirestore.instance
+          .collection('categories')
+          .where('groupId', isEqualTo: groupId)
+          .get();
+      if (!mounted) return;
+      setState(() {
+        _allCategories = snap.docs.map((doc) {
+          final data = doc.data();
+          return <String, dynamic>{
+            'id': doc.id,
+            'name': data['name'] as String,
+            'color': data.containsKey('color') ? data['color'] as int : 0xFF6A5AE0,
+          };
+        }).toList();
+      });
+    } catch (_) {
+    } finally {
       if (mounted) setState(() => _categoriesLoading = false);
-      return;
     }
-    final snap = await FirebaseFirestore.instance
-        .collection('categories')
-        .where('groupId', isEqualTo: groupId)
-        .get();
-    if (!mounted) return;
-    setState(() {
-      _allCategories = snap.docs.map((doc) {
-        final data = doc.data();
-        return <String, dynamic>{
-          'id': doc.id,
-          'name': data['name'] as String,
-          'color': data.containsKey('color') ? data['color'] as int : 0xFF6A5AE0,
-        };
-      }).toList();
-      _categoriesLoading = false;
-    });
   }
 
   Future<void> _fetchAllIngredients() async {
     setState(() => _ingredientsLoading = true);
-    final groupId = await GroupRepository.instance.getCurrentGroupId();
-    if (groupId == null) {
+    try {
+      final groupId = await GroupRepository.instance.getCurrentGroupId();
+      if (groupId == null) {
+        if (mounted) setState(() => _ingredientsLoading = false);
+        return;
+      }
+      final snap = await FirebaseFirestore.instance
+          .collection('ingredients')
+          .where('groupId', isEqualTo: groupId)
+          .get();
+      if (!mounted) return;
+      setState(() {
+        _allIngredients = snap.docs.map((doc) => {
+          'id': doc.id,
+          'name': doc.get('name') as String,
+        }).toList();
+      });
+    } catch (_) {
+    } finally {
       if (mounted) setState(() => _ingredientsLoading = false);
-      return;
     }
-    final snap = await FirebaseFirestore.instance
-        .collection('ingredients')
-        .where('groupId', isEqualTo: groupId)
-        .get();
-    if (!mounted) return;
-    setState(() {
-      _allIngredients = snap.docs.map((doc) => {
-        'id': doc.id,
-        'name': doc.get('name') as String,
-      }).toList();
-      _ingredientsLoading = false;
-    });
   }
 
   // =========================

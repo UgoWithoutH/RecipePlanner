@@ -131,18 +131,18 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   }
 
   Future<void> _loadUsageCount() async {
-    final counts = await FirebaseStatsRepository.instance.getRecipeUsageCounts();
-    final id = widget.recipeId;
-    if (mounted) setState(() => _usageCount = counts[id] ?? 0);
+    try {
+      final counts = await FirebaseStatsRepository.instance.getRecipeUsageCounts();
+      final id = widget.recipeId;
+      if (mounted) setState(() => _usageCount = counts[id] ?? 0);
+    } catch (_) {}
   }
 
   Future<void> _loadIngredientTypes() async {
-    final types = await _ingredientTypeRepo.getTypes();
-    if (mounted) {
-      setState(() {
-        _ingredientTypes = types;
-      });
-    }
+    try {
+      final types = await _ingredientTypeRepo.getTypes();
+      if (mounted) setState(() => _ingredientTypes = types);
+    } catch (_) {}
   }
 
   Future<void> _loadFullRecipe() async {
@@ -220,19 +220,22 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
           .where((id) => id.isNotEmpty)
           .toList();
 
-      // Enrich ingredient names via cache
-      final names = ingredientIds.isNotEmpty
-          ? await IngredientNameCache.instance.fetchNamesForIds(ingredientIds)
-          : <String, String>{};
+      // Enrich ingredient names + fetch typeIds in parallel (independent queries)
+      final namesFuture = ingredientIds.isNotEmpty
+          ? IngredientNameCache.instance.fetchNamesForIds(ingredientIds)
+          : Future.value(<String, String>{});
+      final typeIdFuture = ingredientIds.isNotEmpty
+          ? FirebaseFirestore.instance
+              .collection('ingredients')
+              .where(FieldPath.documentId, whereIn: ingredientIds)
+              .get()
+          : Future.value(null);
 
-      // Fetch all ingredient docs to get typeId
+      final names = await namesFuture;
       Map<String, String?> ingredientIdToTypeId = {};
-      if (ingredientIds.isNotEmpty) {
-        final snap = await FirebaseFirestore.instance
-            .collection('ingredients')
-            .where(FieldPath.documentId, whereIn: ingredientIds)
-            .get();
-        for (final doc in snap.docs) {
+      final typeIdSnap = await typeIdFuture;
+      if (typeIdSnap != null) {
+        for (final doc in typeIdSnap.docs) {
           final data = doc.data();
           ingredientIdToTypeId[doc.id] = data.containsKey('typeId') ? data['typeId'] as String? : null;
         }
@@ -335,26 +338,31 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   Future<void> _loadUserServings() async {
     if (_recipe == null || _recipe!.id.isEmpty) return;
-    final servings = await _userServingRepo.fetchServingsForRecipe(_recipe!.id);
-    if (!mounted) return;
-    setState(() {
-      _userServings = servings;
-      _isLoadingServings = false;
-    });
+    try {
+      final servings = await _userServingRepo.fetchServingsForRecipe(_recipe!.id);
+      if (!mounted) return;
+      setState(() {
+        _userServings = servings;
+        _isLoadingServings = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingServings = false);
+    }
   }
 
   Future<void> _loadCategories() async {
-    final categories = await _categoryRepo.getCategories();
-    if (!mounted) return;
-
-    setState(() {
-      _categories = categories;
-      if (_recipe != null) {
-        _currentCategories = _categories.where((c) =>
-          _recipe!.categoryIds.contains(c.id) || _recipe!.categoryIds.contains(c.name)
-        ).toList();
-      }
-    });
+    try {
+      final categories = await _categoryRepo.getCategories();
+      if (!mounted) return;
+      setState(() {
+        _categories = categories;
+        if (_recipe != null) {
+          _currentCategories = _categories.where((c) =>
+            _recipe!.categoryIds.contains(c.id) || _recipe!.categoryIds.contains(c.name)
+          ).toList();
+        }
+      });
+    } catch (_) {}
   }
 
   Future<void> _deleteRecipe() async {

@@ -62,24 +62,28 @@ class _MealPlanNotificationsPageState
   }
 
   Future<void> _loadSettings() async {
-    final settings = await _repo.load();
-    if (!mounted) return;
-    setState(() {
-      _notificationTime = settings.time;
-      _offsetDays = settings.offsetDays;
-      _defaultEnabled = settings.defaultNotificationsEnabled;
-      if (widget.mealPlan != null) {
-        final days = settings.effectiveNotificationDaysForPlan(
-          widget.mealPlan!.id,
-          widget.mealPlan!.durationDays,
-        );
-        _activeDays = {
-          for (int i = 0; i < days.length; i++)
-            if (days[i]) i,
-        };
-      }
-      _isLoading = false;
-    });
+    try {
+      final settings = await _repo.load();
+      if (!mounted) return;
+      setState(() {
+        _notificationTime = settings.time;
+        _offsetDays = settings.offsetDays;
+        _defaultEnabled = settings.defaultNotificationsEnabled;
+        if (widget.mealPlan != null) {
+          final days = settings.effectiveNotificationDaysForPlan(
+            widget.mealPlan!.id,
+            widget.mealPlan!.durationDays,
+          );
+          _activeDays = {
+            for (int i = 0; i < days.length; i++)
+              if (days[i]) i,
+          };
+        }
+      });
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   // ---------------------------------------------------------------------------

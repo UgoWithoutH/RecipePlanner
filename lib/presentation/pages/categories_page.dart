@@ -25,12 +25,12 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
   Future<void> _loadCategories() async {
     setState(() => _isLoading = true);
-    final categories = await _categoryRepo.getCategories();
-    if (mounted) {
-      setState(() {
-        _categories = categories;
-        _isLoading = false;
-      });
+    try {
+      final categories = await _categoryRepo.getCategories();
+      if (mounted) setState(() => _categories = categories);
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -185,9 +185,14 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
     if (result == true && controller.text.trim().isNotEmpty) {
       setState(() => _isUpdating = true);
-      await _categoryRepo.addCategory(controller.text.trim(), selectedColor);
-      final updated = await _categoryRepo.getCategories();
-      if (mounted) setState(() { _categories = updated; _isUpdating = false; });
+      try {
+        await _categoryRepo.addCategory(controller.text.trim(), selectedColor);
+        final updated = await _categoryRepo.getCategories();
+        if (mounted) setState(() => _categories = updated);
+      } catch (_) {
+      } finally {
+        if (mounted) setState(() => _isUpdating = false);
+      }
     }
   }
 
@@ -301,9 +306,14 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
     if (result == true && controller.text.trim().isNotEmpty) {
       setState(() => _isUpdating = true);
-      await _categoryRepo.updateCategory(id, controller.text.trim(), selectedColor);
-      final updated = await _categoryRepo.getCategories();
-      if (mounted) setState(() { _categories = updated; _isUpdating = false; });
+      try {
+        await _categoryRepo.updateCategory(id, controller.text.trim(), selectedColor);
+        final updated = await _categoryRepo.getCategories();
+        if (mounted) setState(() => _categories = updated);
+      } catch (_) {
+      } finally {
+        if (mounted) setState(() => _isUpdating = false);
+      }
     }
   }
 
@@ -378,9 +388,14 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
     if (confirm == true) {
       setState(() => _isUpdating = true);
-      await _categoryRepo.deleteCategory(id);
-      final updated = await _categoryRepo.getCategories();
-      if (mounted) setState(() { _categories = updated; _isUpdating = false; });
+      try {
+        await _categoryRepo.deleteCategory(id);
+        final updated = await _categoryRepo.getCategories();
+        if (mounted) setState(() => _categories = updated);
+      } catch (_) {
+      } finally {
+        if (mounted) setState(() => _isUpdating = false);
+      }
     }
   }
 

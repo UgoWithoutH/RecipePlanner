@@ -28,12 +28,16 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   Future<void> _showGroupDialog({DocumentSnapshot? group}) async {
-    List<Map<String, dynamic>> allUsers = await _fetchAllUsers();
+    // Fetch users and groups in parallel — they are independent
+    final results = await Future.wait([
+      _fetchAllUsers(),
+      FirebaseFirestore.instance.collection('groups').get(),
+    ]);
+    List<Map<String, dynamic>> allUsers = results[0] as List<Map<String, dynamic>>;
     allUsers.sort((a, b) =>
         a['name'].toString().toLowerCase().compareTo(b['name'].toString().toLowerCase()));
 
-    final allGroupsSnap =
-        await FirebaseFirestore.instance.collection('groups').get();
+    final allGroupsSnap = results[1] as QuerySnapshot<Map<String, dynamic>>;
     final currentGroupId = group?.id;
     final Map<String, String> userToGroup = {};
     for (final g in allGroupsSnap.docs) {
@@ -438,16 +442,18 @@ class _AdminPageState extends State<AdminPage> {
     );
     if (confirm != true) return;
 
+    // Fetch recipes and ingredients in parallel — independent queries
     final batch = FirebaseFirestore.instance.batch();
+    final snapshots = await Future.wait([
+      FirebaseFirestore.instance.collection('recipes').get(),
+      FirebaseFirestore.instance.collection('ingredients').get(),
+    ]);
+    final recipesSnap = snapshots[0];
+    final ingredientsSnap = snapshots[1];
 
-    final recipesSnap =
-        await FirebaseFirestore.instance.collection('recipes').get();
     for (final doc in recipesSnap.docs) {
       batch.update(doc.reference, {'usageCount': 0});
     }
-
-    final ingredientsSnap =
-        await FirebaseFirestore.instance.collection('ingredients').get();
     for (final doc in ingredientsSnap.docs) {
       batch.update(doc.reference, {'usageCount': 0});
     }

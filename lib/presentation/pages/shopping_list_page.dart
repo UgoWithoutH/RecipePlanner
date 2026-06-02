@@ -1710,7 +1710,9 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
               topLeft: Radius.circular(12),
               bottomLeft: Radius.circular(12),
             ),
-            child: const Icon(Icons.edit_outlined, size: 24),
+            child: const Center(
+              child: Icon(Icons.edit_outlined, size: 24, color: Colors.white),
+            ),
           ),
           CustomSlidableAction(
             onPressed: (_) => widget.onDeleteTap(),
@@ -1720,7 +1722,9 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
               topRight: Radius.circular(12),
               bottomRight: Radius.circular(12),
             ),
-            child: const Icon(Icons.delete_outline_rounded, size: 24),
+            child: const Center(
+              child: Icon(Icons.delete_outline_rounded, size: 24, color: Colors.white),
+            ),
           ),
         ],
       ),

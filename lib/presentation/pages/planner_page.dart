@@ -207,15 +207,18 @@ class _PlannerPageState extends State<PlannerPage> {
   Future<void> _loadUserNames() async {
     // Garde : si les noms sont déjà chargés, pas besoin de relire Firestore.
     if (_userNames.isNotEmpty) return;
+    // Les deux sources sont indépendantes : on les lance en parallèle.
+    final usersFuture = FirebaseUserRepository().getUsers();
+    final servingsFuture = _userServingRepo.fetchAllGroupServings();
     try {
-      final realUsers = await FirebaseUserRepository().getUsers();
+      final realUsers = await usersFuture;
       for (final u in realUsers) {
         if (u.name.isNotEmpty) _userNames[u.id] = u.name;
       }
     } catch (_) {}
     // Fallback depuis les servings (userName stocké dans recipeServings)
     try {
-      final servingsForNames = await _userServingRepo.fetchAllGroupServings();
+      final servingsForNames = await servingsFuture;
       for (final s in servingsForNames) {
         if (s.userName.isNotEmpty && s.userName != s.userId) {
           // Toujours mettre à jour : les servings peuvent avoir un nom plus récent
@@ -228,13 +231,16 @@ class _PlannerPageState extends State<PlannerPage> {
   Future<void> _loadMostRecentMealPlanAndHistory() async {
     try {
       if (mounted) setState(() => _isLoading = true);
-      // Charger les noms en premier, indépendamment du reste — jamais bloqué
-      await _loadUserNames();
+      // Lancer noms, recettes et plans en parallèle — indépendants les uns des autres.
+      final userNamesFuture = _loadUserNames();
+      final recipesFuture = _loadRecipes(forceRefresh: true);
+      final plansFuture = _mealPlanRepo.getAllMealPlans();
       // Load recipe count to calculate the history window size
-      final allRecipes = await _loadRecipes(forceRefresh: true);
+      final allRecipes = await recipesFuture;
       _maxHistoryDays = allRecipes.length;
 
-      final plans = await _mealPlanRepo.getAllMealPlans();
+      final plans = await plansFuture;
+      await userNamesFuture;
       if (plans.isNotEmpty) {
         plans.sort((a, b) => b.startDate.compareTo(a.startDate));
         final loadedPlan = plans.first;
@@ -270,17 +276,16 @@ class _PlannerPageState extends State<PlannerPage> {
           _focusedDay = planStart;
         }
         _calendarFormat = null; // Reset to recalculate format
-        // Lecture rapide de l'historique existant (une seule requête Firestore).
-        // La mise à jour de l'historique avec les repas passés du plan (écriture
-        // séquentielle potentiellement longue) est effectuée en arrière-plan
-        // ci-dessous pour ne pas bloquer l'affichage du plan.
-        _mealHistory = await _historyRepo.getHistory();
+        // Lecture rapide de l'historique existant et snapshot en parallèle.
+        final historyFuture = _historyRepo.getHistory();
+        final snapshotFuture = FirebasePantrySnapshotRepository.instance.get();
+        _mealHistory = await historyFuture;
         // Planifie silencieusement les notifications (pour tous les utilisateurs)
         _autoScheduleNotifications(loadedPlan).ignore();
 
         // Charger le snapshot frigo/placard figé de ce plan
         try {
-          final snapshot = await FirebasePantrySnapshotRepository.instance.get();
+          final snapshot = await snapshotFuture;
           if (mounted) setState(() => _pantrySnapshot = snapshot);
         } catch (_) {}
       } else {
@@ -769,7 +774,7 @@ class _PlannerPageState extends State<PlannerPage> {
                             color: Colors.white,
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(Icons.category_rounded, color: Color(0xFF6A5AE0), size: 24),
+                          child: const Icon(Icons.local_offer_rounded, color: Color(0xFF6A5AE0), size: 24),
                         ),
                         const SizedBox(width: 16),
                         Expanded(
@@ -5938,7 +5943,7 @@ class _ModernPlannerHeader extends StatelessWidget {
                       color: Colors.white,
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.category_rounded, color: Color(0xFF6A5AE0), size: 18),
+                    child: const Icon(Icons.local_offer_rounded, color: Color(0xFF6A5AE0), size: 18),
                   ),
                   const SizedBox(width: 12),
                   Expanded(

@@ -43,17 +43,22 @@ class _RecipeSelectorState extends State<RecipeSelector> {
   }
 
   Future<void> _initData() async {
-    final recipes = await _fetchRecipesWithNames();
-    final ingredients = await _fetchAllIngredients();
-    final categories = await _fetchCategories();
-    if (!mounted) return;
-    setState(() {
-      _allRecipes = recipes;
-      _allIngredients = ingredients;
-      _allCategories = categories;
-      _ingredientsLoading = false;
-      _categoriesLoading = false;
-    });
+    try {
+      final results = await Future.wait([
+        _fetchRecipesWithNames(),
+        _fetchAllIngredients(),
+        _fetchCategories(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _allRecipes = results[0] as List<Recipe>;
+        _allIngredients = results[1] as List<Map<String, String>>;
+        _allCategories = results[2] as List<Map<String, dynamic>>;
+      });
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() { _ingredientsLoading = false; _categoriesLoading = false; });
+    }
   }
 
   Future<List<Map<String, dynamic>>> _fetchCategories() async {

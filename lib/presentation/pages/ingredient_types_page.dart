@@ -25,12 +25,12 @@ class _IngredientTypesPageState extends State<IngredientTypesPage> {
 
   Future<void> _loadTypes() async {
     setState(() => _isLoading = true);
-    final types = await _repo.getTypes();
-    if (mounted) {
-      setState(() {
-        _types = types;
-        _isLoading = false;
-      });
+    try {
+      final types = await _repo.getTypes();
+      if (mounted) setState(() => _types = types);
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -92,14 +92,13 @@ class _IngredientTypesPageState extends State<IngredientTypesPage> {
     if (result == true && controller.text.trim().isNotEmpty) {
       final name = controller.text.trim();
       setState(() => _isUpdating = true);
-      await _repo.addType(name, selectedColor);
-      
-      final updated = await _repo.getTypes();
-      if (mounted) {
-        setState(() {
-          _types = updated;
-          _isUpdating = false;
-        });
+      try {
+        await _repo.addType(name, selectedColor);
+        final updated = await _repo.getTypes();
+        if (mounted) setState(() => _types = updated);
+      } catch (_) {
+      } finally {
+        if (mounted) setState(() => _isUpdating = false);
       }
     }
   }
@@ -162,14 +161,13 @@ class _IngredientTypesPageState extends State<IngredientTypesPage> {
     if (result == true && controller.text.trim().isNotEmpty) {
       final newName = controller.text.trim();
       setState(() => _isUpdating = true);
-      await _repo.updateType(id, newName, selectedColor);
-
-      final updated = await _repo.getTypes();
-      if (mounted) {
-        setState(() {
-          _types = updated;
-          _isUpdating = false;
-        });
+      try {
+        await _repo.updateType(id, newName, selectedColor);
+        final updated = await _repo.getTypes();
+        if (mounted) setState(() => _types = updated);
+      } catch (_) {
+      } finally {
+        if (mounted) setState(() => _isUpdating = false);
       }
     }
   }
@@ -233,18 +231,14 @@ class _IngredientTypesPageState extends State<IngredientTypesPage> {
     );
 
     if (confirmed == true) {
-      setState(() => _isUpdating = true); // Loader
+      setState(() => _isUpdating = true);
       try {
         await _repo.deleteType(id);
-      } catch (e) {
-        // Handle error?
-      }
-      final updated = await _repo.getTypes();
-      if (mounted) {
-        setState(() {
-          _isUpdating = false;
-          _types = updated;
-        });
+        final updated = await _repo.getTypes();
+        if (mounted) setState(() => _types = updated);
+      } catch (_) {
+      } finally {
+        if (mounted) setState(() => _isUpdating = false);
       }
     }
   }

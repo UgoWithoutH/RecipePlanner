@@ -433,44 +433,54 @@ class _IngredientsPageState extends State<IngredientsPage> {
     final groupId = await GroupRepository.instance.getCurrentGroupId();
     if (groupId == null) return;
 
-    final groupSnap = await FirebaseFirestore.instance
-        .collection('recipes')
-        .where('groupId', isEqualTo: groupId)
-        .get();
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs = [];
+    try {
+      final groupSnap = await FirebaseFirestore.instance
+          .collection('recipes')
+          .where('groupId', isEqualTo: groupId)
+          .get();
+      docs = groupSnap.docs;
+    } catch (_) {
+      // Réseau indisponible ou erreur Firestore : on affiche la modale vide
+    }
     if (!mounted) return;
     final groupRecipes = <Recipe>[];
     final Map<String, int> groupRecipeCounts = {};
-    for (final doc in groupSnap.docs) {
-      final data = doc.data() as Map<String, dynamic>;
-      final ingredients = data['ingredients'] as List<dynamic>? ?? [];
-      if (ingredients.any((i) => i['ingredientId'] == ingredientId)) {
-        final usage = (data['usageCount'] as num?)?.toInt() ?? 0;
-        if (usage > 0) groupRecipeCounts[doc.id] = usage;
-        final rawIngredients = data['ingredients'] as List<dynamic>? ?? [];
-        final mappedIngredients = rawIngredients.map((i) {
-          return RecipeIngredient(
-            ingredient: Ingredient(id: i['ingredientId'], name: '...'),
-            quantity: (i['quantity'] as num).toDouble(),
-            unit: Unit.values.firstWhere((u) => u.label == i['unit'], orElse: () => Unit.g),
-            notes: i['notes'],
-          );
-        }).toList();
-        groupRecipes.add(Recipe(
-          id: doc.id,
-          title: data['title'] ?? '',
-          description: data['description'] ?? '',
-          preparationTime: (data['preparationTime'] as num?)?.toInt() ?? 0,
-          cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
-          servings: (data['servings'] as num?)?.toInt() ?? 1,
-          categoryIds: (data['categoryIds'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
-              ((data['category'] as String?)?.isNotEmpty == true ? [data['category'] as String] : []),
-          ingredients: mappedIngredients,
-          instructions: List<String>.from(data['instructions'] ?? []),
-          createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
-          isFavorite: data['isFavorite'] ?? false,
-          rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
-          mealTime: MealTime.fromString(data['mealTime'] as String?),
-        ));
+    for (final doc in docs) {
+      try {
+        final data = doc.data() as Map<String, dynamic>;
+        final ingredients = data['ingredients'] as List<dynamic>? ?? [];
+        if (ingredients.any((i) => i['ingredientId'] == ingredientId)) {
+          final usage = (data['usageCount'] as num?)?.toInt() ?? 0;
+          if (usage > 0) groupRecipeCounts[doc.id] = usage;
+          final rawIngredients = data['ingredients'] as List<dynamic>? ?? [];
+          final mappedIngredients = rawIngredients.map((i) {
+            return RecipeIngredient(
+              ingredient: Ingredient(id: i['ingredientId'] ?? '', name: '...'),
+              quantity: (i['quantity'] as num?)?.toDouble() ?? 0.0,
+              unit: Unit.values.firstWhere((u) => u.label == i['unit'], orElse: () => Unit.g),
+              notes: i['notes'],
+            );
+          }).toList();
+          groupRecipes.add(Recipe(
+            id: doc.id,
+            title: data['title'] ?? '',
+            description: data['description'] ?? '',
+            preparationTime: (data['preparationTime'] as num?)?.toInt() ?? 0,
+            cookingTime: (data['cookingTime'] as num?)?.toInt() ?? 0,
+            servings: (data['servings'] as num?)?.toInt() ?? 1,
+            categoryIds: (data['categoryIds'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
+                ((data['category'] as String?)?.isNotEmpty == true ? [data['category'] as String] : []),
+            ingredients: mappedIngredients,
+            instructions: List<String>.from(data['instructions'] ?? []),
+            createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
+            isFavorite: data['isFavorite'] ?? false,
+            rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
+            mealTime: MealTime.fromString(data['mealTime'] as String?),
+          ));
+        }
+      } catch (_) {
+        // Données malformées pour cette recette, on l'ignore
       }
     }
     groupRecipes.sort((a, b) => a.title.compareTo(b.title));

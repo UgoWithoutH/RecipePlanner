@@ -107,9 +107,16 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     _ingredientNotesController = TextEditingController();
     _instructionController = TextEditingController();
 
-    _loadCategories();
+    // Si presetData présent : attendre types ET catégories ensemble avant de pré-remplir
+    if (widget.presetData != null && widget.recipe == null) {
+      Future.wait([_loadIngredientTypes(), _loadCategories()]).then((_) {
+        if (mounted && widget.presetData != null) _prefillFromPreset(widget.presetData!);
+      });
+    } else {
+      _loadCategories();
+      _loadIngredientTypes();
+    }
     _loadUsers();
-    _loadIngredientTypes();
 
     if (widget.recipe != null) {
       final r = widget.recipe!;
@@ -129,8 +136,10 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   }
 
   Future<void> _loadIngredientTypes() async {
-    final types = await _ingredientTypeRepo.getTypes() ?? [];
-    if (mounted) setState(() => _ingredientTypes = types);
+    try {
+      final types = await _ingredientTypeRepo.getTypes() ?? [];
+      if (mounted) setState(() => _ingredientTypes = types);
+    } catch (_) {}
   }
 
   @override
@@ -149,27 +158,13 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   }
 
   Future<void> _loadCategories() async {
-    final categories = await _categoryRepo.getCategories();
-    if (mounted) {
-      setState(() => _categories = categories);
-      if (widget.presetData != null && widget.recipe == null) {
-        // Wait for types to be loaded too before prefilling
-        await _waitForTypesAndPrefill();
-      }
-    }
+    try {
+      final categories = await _categoryRepo.getCategories();
+      if (mounted) setState(() => _categories = categories);
+    } catch (_) {}
   }
 
-  Future<void> _waitForTypesAndPrefill() async {
-    // Poll until ingredient types are loaded (they load in parallel)
-    int attempts = 0;
-    while (_ingredientTypes.isEmpty && attempts < 20) {
-      await Future.delayed(const Duration(milliseconds: 50));
-      attempts++;
-    }
-    if (mounted && widget.presetData != null) {
-      _prefillFromPreset(widget.presetData!);
-    }
-  }
+  // _waitForTypesAndPrefill supprimé : remplacé par Future.wait dans initState
 
   void _prefillFromPreset(Map<String, dynamic> preset) {
     // Libérer le focus avant de modifier les controllers pour éviter RangeError
@@ -1129,32 +1124,29 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     setState(() => _isSaving = true);
 
     try {
-      // 1. Créer les nouveaux ingrédients en base et mettre à jour les IDs dans _ingredients
-      for (int i = 0; i < _pendingIngredients.length; i++) {
-        final pending = _pendingIngredients[i];
-        final newId = await _ingredientRepo.createIngredientWithType(
-          pending.name,
-          pending.typeId,
+      // 1. Créer les nouveaux ingrédients en parallèle et récupérer les IDs
+      if (_pendingIngredients.isNotEmpty) {
+        final creates = await Future.wait(
+          _pendingIngredients.map((p) => _ingredientRepo.createIngredientWithType(p.name, p.typeId)),
         );
-        // Met à jour l'ID dans la liste _ingredients
-        final idx = _ingredients.indexWhere(
-          (ri) => ri.ingredient.id == '' && ri.ingredient.name == pending.name,
-        );
-        if (idx != -1) {
-          final old = _ingredients[idx];
-          _ingredients[idx] = RecipeIngredient(
-            ingredient: Ingredient(
-              id: newId,
-              name: pending.name,
-              typeId: pending.typeId,
-            ),
-            quantity: old.quantity,
-            unit: old.unit,
-            notes: old.notes,
+        for (int i = 0; i < _pendingIngredients.length; i++) {
+          final pending = _pendingIngredients[i];
+          final newId = creates[i];
+          final idx = _ingredients.indexWhere(
+            (ri) => ri.ingredient.id == '' && ri.ingredient.name == pending.name,
           );
+          if (idx != -1) {
+            final old = _ingredients[idx];
+            _ingredients[idx] = RecipeIngredient(
+              ingredient: Ingredient(id: newId, name: pending.name, typeId: pending.typeId),
+              quantity: old.quantity,
+              unit: old.unit,
+              notes: old.notes,
+            );
+          }
         }
+        _pendingIngredients.clear();
       }
-      _pendingIngredients.clear();
 
       // 2. Sauvegarde la recette normalement
       String recipeId;
@@ -1178,20 +1170,21 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
         await _recipeRepo.updateRecipe(recipe);
         recipeId = recipe.id;
 
-        // If updating a recipe, propagate changes to existing meal plans
-        // and regenerate their shopping lists.
+        // Si mise à jour d'une recette : propager les changements aux plans existants
+        // et regénérer leurs listes de courses en parallèle.
         final planRepo = FirebaseMealPlanRepository();
         final updatedPlans = await planRepo.updatePlansForRecipe(recipe);
-
-        for (final plan in updatedPlans) {
-          await ShoppingListGenerator().generateAndSaveShoppingList(plan);
+        if (updatedPlans.isNotEmpty) {
+          await Future.wait(
+            updatedPlans.map((plan) => ShoppingListGenerator().generateAndSaveShoppingList(plan)),
+          );
         }
       }
 
-      for (var userServing in _userServings.values) {
-        final updatedServing = userServing.copyWith(recipeId: recipeId);
-        await _userServingRepo.save(updatedServing);
-      }
+      // Sauvegarder les portions utilisateurs en parallèle
+      await Future.wait(
+        _userServings.values.map((s) => _userServingRepo.save(s.copyWith(recipeId: recipeId))),
+      );
 
       if (!mounted) return;
       final recipeToReturn = recipe.copyWith(id: recipeId);

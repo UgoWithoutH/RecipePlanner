@@ -25,7 +25,7 @@ class MealPlanningService {
   /// [recencyPenaltyWeight]: penalty for recently used recipes (default: 100)
   /// [similarityPenaltyWeight]: penalty for ingredient similarity (default: 60)
   /// [coverageBonusWeight]: bonus multiplier for portion coverage (default: 2)
-  static MealPlan generateMealPlan({
+  static Future<MealPlan> generateMealPlan({
     required List<Recipe> recipes,
     required List<UserRecipeServing> servings,
     required List<User> users,
@@ -50,7 +50,8 @@ class MealPlanningService {
     List<String> leftoverUserOrder = const [],
     bool strictNoWaste = false,
     bool ignoreHistoryLeftovers = false,
-  }) {
+    void Function(int filled, int total)? onProgress,
+  }) async {
     if (recipes.isEmpty || users.isEmpty) {
       throw Exception('Recipes and users are required');
     }
@@ -283,6 +284,10 @@ class MealPlanningService {
     }
 
     for (int i = 0; i < numMeals; i++) {
+      if (onProgress != null) {
+        onProgress(i, numMeals);
+        await Future.delayed(Duration.zero);
+      }
       // 1. Process pending leftover meals for this slot (may cover some or all users)
       // On track les users déjà couverts par un leftover pour ce slot afin
       // de ne pas leur générer un repas normal en plus.
@@ -575,6 +580,7 @@ class MealPlanningService {
         }
       }
     }
+    if (onProgress != null) onProgress(numMeals, numMeals);
 
     final finalMeals = [
       ...meals.whereType<Meal>(),

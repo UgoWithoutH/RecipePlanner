@@ -69,6 +69,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   // Categories
   List<Category> _categories = [];
   List<String> _selectedCategoryIds = [];
+  bool _isLoadingCategories = true;
 
   // Meal time preference
   MealTime _selectedMealTime = MealTime.both;
@@ -160,8 +161,13 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   Future<void> _loadCategories() async {
     try {
       final categories = await _categoryRepo.getCategories();
-      if (mounted) setState(() => _categories = categories);
-    } catch (_) {}
+      if (mounted) setState(() {
+        _categories = categories;
+        _isLoadingCategories = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingCategories = false);
+    }
   }
 
   // _waitForTypesAndPrefill supprimé : remplacé par Future.wait dans initState
@@ -1311,8 +1317,10 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
             ),
           ),
           const SizedBox(height: 12),
-          if (_categories.isEmpty)
+          if (_isLoadingCategories)
             const Center(child: CircularProgressIndicator())
+          else if (_categories.isEmpty)
+            const SizedBox.shrink()
           else
             SizedBox(
               height: 40,

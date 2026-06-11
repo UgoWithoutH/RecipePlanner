@@ -212,28 +212,29 @@ class GoogleAuthService {
     if (existingQuery.docs.isNotEmpty) {
       // Pre-existing user (e.g. seeded doc) – update name, keep document ID
       final seededDoc = existingQuery.docs.first;
-      userRef = seededDoc.reference;
       debugPrint('[Auth] _verifyUserAccess: document users existant trouvé (id=${seededDoc.id}), mise à jour des champs email/name.');
-      // On ne modifie pas le rôle existant
-      await userRef.set({
-        'email': email,
-        'name': firebaseUser.displayName ?? '',
-      }, SetOptions(merge: true));
 
-      // Si le doc seedé a un ID différent du Firebase UID :
-      // 1. Créer users/{uid} pour que isAuthorised() passe.
-      // 2. Ajouter le Firebase UID dans le groupe pour que getCurrentGroupId() fonctionne.
-      if (seededDoc.id != firebaseUser.uid) {
+      if (seededDoc.id == firebaseUser.uid) {
+        // IDs match: safe to update directly
+        userRef = seededDoc.reference;
+        await userRef.set({
+          'email': email,
+          'name': firebaseUser.displayName ?? '',
+        }, SetOptions(merge: true));
+      } else {
+        // Seeded doc has a different ID: cannot update it (Firestore rule requires uid match).
+        // Create/update the mirror doc at users/{uid} instead.
         debugPrint('[Auth] _verifyUserAccess: doc ID (${seededDoc.id}) ≠ Firebase UID (${firebaseUser.uid}) → migration en cours...');
-
-        // 1. Doc miroir
-        await _firestore
-            .collection('users')
-            .doc(firebaseUser.uid)
-            .set({'email': email, 'name': firebaseUser.displayName ?? ''}, SetOptions(merge: true));
+        userRef = _firestore.collection('users').doc(firebaseUser.uid);
+        final seededData = seededDoc.data() as Map<String, dynamic>;
+        await userRef.set({
+          'email': email,
+          'name': firebaseUser.displayName ?? seededData['name'] ?? '',
+          'role': seededData['role'] ?? 'user',
+        }, SetOptions(merge: true));
         debugPrint('[Auth] _verifyUserAccess: users/${firebaseUser.uid} créé.');
 
-        // 2. Ajout du Firebase UID dans le groupe qui contient le seeded doc ID
+        // Add Firebase UID to the group containing the seeded doc ID
         final groupSnap = await _firestore
             .collection('groups')
             .where('members', arrayContains: seededDoc.id)

@@ -3,11 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:recipe_planner/presentation/widgets/ingredient_autocomplete.dart' show IngredientAutocomplete;
 
-import '../../core/constants/unit.dart' show Unit;
-import '../../core/constants/meal_time.dart';
-import '../../domain/entities/ingredient.dart';
 import '../../domain/entities/recipe.dart';
-import '../../domain/entities/recipe_ingredient.dart';
 import '../../core/utils/ingredient_name_cache.dart';
 
 import 'recipe_detail_page.dart';
@@ -35,6 +31,13 @@ class _RecipesPageState extends State<RecipesPage> {
     List<Map<String, dynamic>> _allCategories = [];
     bool _categoriesLoading = true;
 
+  // Catalog mode
+  bool _showCatalog = false;
+  List<Map<String, dynamic>> _catalogRecipes = [];
+  bool _catalogLoading = false;
+  Set<String> _groupRecipeTitles = {};
+  String _catalogImportFilter = 'notImported'; // 'all', 'imported', 'notImported'
+
   Map<String, int> _recipeCounts = {};
   String _sortMode = 'alpha'; // 'alpha' | 'usage' | 'unused'
 
@@ -43,12 +46,17 @@ class _RecipesPageState extends State<RecipesPage> {
   @override
   void initState() {
     super.initState();
-    _recipesFuture = fetchRecipes();
+    _recipesFuture = fetchRecipes().then((recipes) {
+      if (mounted) setState(() => _groupRecipeTitles = recipes.map((r) => r.title.toLowerCase().trim()).toSet());
+      return recipes;
+    });
 
     // Fetch all ingredients for filter
     _fetchAllIngredients();
     // Fetch all categories for filter
     _fetchCategories();
+    // Fetch catalog recipes from visible groups
+    _fetchCatalogRecipes();
     // Load recipe usage stats from history
     _loadRecipeCounts();
   }
@@ -146,7 +154,60 @@ class _RecipesPageState extends State<RecipesPage> {
   void _refreshRecipes() {
     if (!mounted) return;
     setState(() {
-      _recipesFuture = fetchRecipes();
+      _recipesFuture = fetchRecipes().then((recipes) {
+        if (mounted) setState(() => _groupRecipeTitles = recipes.map((r) => r.title.toLowerCase().trim()).toSet());
+        return recipes;
+      });
+    });
+  }
+
+  Future<void> _fetchCatalogRecipes() async {
+    setState(() => _catalogLoading = true);
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    if (groupId == null) {
+      if (mounted) setState(() { _catalogRecipes = []; _catalogLoading = false; });
+      return;
+    }
+    final groupDoc = await FirebaseFirestore.instance.collection('groups').doc(groupId).get();
+    if (!groupDoc.exists) {
+      if (mounted) setState(() { _catalogRecipes = []; _catalogLoading = false; });
+      return;
+    }
+    final visibleGroupIds = List<String>.from(
+      (groupDoc.data() as Map<String, dynamic>)['visibleGroupIds'] ?? [],
+    );
+    if (visibleGroupIds.isEmpty) {
+      if (mounted) setState(() { _catalogRecipes = []; _catalogLoading = false; });
+      return;
+    }
+    // Fetch group names and recipes in parallel
+    final groupNameFutures = visibleGroupIds.map(
+      (gid) => FirebaseFirestore.instance.collection('groups').doc(gid).get(),
+    );
+    final recipesFuture = FirebaseFirestore.instance
+        .collection('recipes')
+        .where('groupId', whereIn: visibleGroupIds)
+        .get();
+    final results = await Future.wait([Future.wait(groupNameFutures), recipesFuture]);
+    if (!mounted) return;
+    final groupSnaps = (results[0] as List).cast<DocumentSnapshot>();
+    final groupNames = <String, String>{};
+    for (final snap in groupSnaps) {
+      if (snap.exists) {
+        groupNames[snap.id] = (snap.data() as Map<String, dynamic>)['name'] as String? ?? snap.id;
+      }
+    }
+    final recipesSnap = results[1] as QuerySnapshot;
+    final recipes = recipesSnap.docs.map((doc) {
+      final data = Map<String, dynamic>.from(doc.data() as Map<String, dynamic>);
+      data['_id'] = doc.id;
+      data['_groupName'] = groupNames[data['groupId'] as String? ?? ''] ?? '';
+      return data;
+    }).toList()
+      ..sort((a, b) => (a['title'] as String? ?? '').compareTo(b['title'] as String? ?? ''));
+    setState(() {
+      _catalogRecipes = recipes;
+      _catalogLoading = false;
     });
   }
 
@@ -252,8 +313,37 @@ class _RecipesPageState extends State<RecipesPage> {
                   ),
                 ),
                 
-                // CATEGORY FILTER
-                if (!_categoriesLoading)
+                // TOGGLE GROUPE / CATALOGUE
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 4),
+                  child: Row(
+                    children: [
+                      _buildToggleButton(Icons.group_rounded, 'Groupe', !_showCatalog,
+                          () => setState(() => _showCatalog = false)),
+                      const SizedBox(width: 8),
+                      _buildToggleButton(Icons.menu_book_rounded, 'Catalogue', _showCatalog,
+                          () => setState(() => _showCatalog = true)),
+                    ],
+                  ),
+                ),
+
+                // IMPORT FILTER (catalogue only)
+                if (_showCatalog)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
+                    child: Row(
+                      children: [
+                        _buildImportFilterChip('all', 'Toutes'),
+                        const SizedBox(width: 8),
+                        _buildImportFilterChip('notImported', 'Non importées'),
+                        const SizedBox(width: 8),
+                        _buildImportFilterChip('imported', 'Importées'),
+                      ],
+                    ),
+                  ),
+
+                // CATEGORY FILTER (groupe only)
+                if (!_showCatalog && !_categoriesLoading)
                   SizedBox(
                     height: 50,
                     child: ListView.separated(
@@ -339,7 +429,8 @@ class _RecipesPageState extends State<RecipesPage> {
                     ),
                   ),
 
-                // SORT & FILTRE STATS
+                // SORT & FILTRE STATS (groupe seulement)
+                if (!_showCatalog)
                 Padding(
                     padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
                     child: SingleChildScrollView(
@@ -359,7 +450,7 @@ class _RecipesPageState extends State<RecipesPage> {
                     ),
                   ),
 
-                // FILTRES TEXTE & INGRÉDIENTS
+                // FILTRE TITRE (toujours visible)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
                   child: TextField(
@@ -373,12 +464,12 @@ class _RecipesPageState extends State<RecipesPage> {
                     onChanged: (value) => setState(() => _titleFilter = value),
                   ),
                 ),
-                if (_ingredientsLoading)
+                if (!_showCatalog && _ingredientsLoading)
                   const Padding(
                     padding: EdgeInsets.all(16),
                     child: Center(child: CircularProgressIndicator()),
                   )
-                else ...[
+                else if (!_showCatalog) ...[
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
                     child: IngredientAutocomplete(
@@ -416,6 +507,19 @@ class _RecipesPageState extends State<RecipesPage> {
                 ],
 
                 // COMPTEUR DE RECETTES
+                if (_showCatalog)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                    child: Text(
+                      'Recettes (${_filteredCatalogRecipes().length})',
+                      style: GoogleFonts.poppins(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  )
+                else
                 FutureBuilder<List<Recipe>>(
                   future: _recipesFuture,
                   builder: (context, snapshot) {
@@ -451,6 +555,9 @@ class _RecipesPageState extends State<RecipesPage> {
                 ),
 
                 // LISTE
+                if (_showCatalog)
+                  _buildCatalogListView()
+                else
                 Expanded(
                   child: FutureBuilder<List<Recipe>>(
                     future: _recipesFuture,
@@ -654,7 +761,7 @@ class _RecipesPageState extends State<RecipesPage> {
       ),
 
       // FAB
-      floatingActionButton: Padding(
+      floatingActionButton: _showCatalog ? null : Padding(
         padding: const EdgeInsets.only(bottom: 16, right: 16),
         child: Material(
           elevation: 6,
@@ -693,6 +800,264 @@ class _RecipesPageState extends State<RecipesPage> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  List<Map<String, dynamic>> _filteredCatalogRecipes() {
+    return _catalogRecipes.where((recipe) {
+      final title = recipe['title'] as String? ?? '';
+      final matchesTitle = _titleFilter.isEmpty ||
+          title.toLowerCase().contains(_titleFilter.toLowerCase());
+      final isImported = _groupRecipeTitles.contains(title.toLowerCase().trim());
+      final matchesImportFilter = _catalogImportFilter == 'all' ||
+          (_catalogImportFilter == 'imported' && isImported) ||
+          (_catalogImportFilter == 'notImported' && !isImported);
+      return matchesTitle && matchesImportFilter;
+    }).toList();
+  }
+
+  Future<void> _openCatalogRecipeDetail(Map<String, dynamic> data) async {
+    final recipeId = data['_id'] as String? ?? '';
+    final groupName = data['_groupName'] as String? ?? '';
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RecipeDetailPage(
+          recipeId: recipeId,
+          isCatalogRecipe: true,
+          sourceGroupName: groupName,
+        ),
+      ),
+    );
+    _refreshRecipes();
+    _fetchCatalogRecipes();
+  }
+
+  Widget _buildCatalogListView() {
+    if (_catalogLoading) {
+      return const Expanded(child: Center(child: CircularProgressIndicator()));
+    }
+    final filtered = _filteredCatalogRecipes();
+    if (filtered.isEmpty) {
+      return Expanded(
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.menu_book_outlined, size: 48, color: Colors.black26),
+              const SizedBox(height: 12),
+              Text(
+                _catalogRecipes.isEmpty
+                    ? 'Aucun groupe partagé avec vous.'
+                    : 'Aucune recette disponible',
+                style: GoogleFonts.poppins(fontSize: 14, color: Colors.black45),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return Expanded(
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(20, 10, 20, 100),
+        separatorBuilder: (_, __) => const SizedBox(height: 20),
+        itemCount: filtered.length,
+        itemBuilder: (_, index) {
+          final recipe = filtered[index];
+          final prepTime = (recipe['preparationTime'] as num?)?.toInt() ?? 0;
+          final cookTime = (recipe['cookingTime'] as num?)?.toInt() ?? 0;
+          final servings = (recipe['servings'] as num?)?.toInt() ?? 1;
+          final title = recipe['title'] as String? ?? '';
+          final groupName = recipe['_groupName'] as String? ?? '';
+          final isImported = _groupRecipeTitles.contains(title.toLowerCase().trim());
+          return Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Material(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              child: InkWell(
+                onTap: () => _openCatalogRecipeDetail(recipe),
+                borderRadius: BorderRadius.circular(20),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Wrap(
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              spacing: 8,
+                              runSpacing: 4,
+                              children: [
+                                Text(
+                                  title,
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w700,
+                                    color: const Color(0xFF1A1A1A),
+                                  ),
+                                ),
+                                // Source group badge
+                                if (groupName.isNotEmpty)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF5C6BC0).withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.group_rounded, size: 12, color: Color(0xFF5C6BC0)),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          groupName,
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
+                                            color: const Color(0xFF5C6BC0),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                if (isImported)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: Colors.green.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.check_circle_rounded, size: 13, color: Colors.green),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          'Dans le groupe',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
+                                            color: Colors.green,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              recipe['description'] as String? ?? '',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.poppins(
+                                color: Colors.grey[600],
+                                fontSize: 14,
+                                height: 1.5,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                _buildStatItem(
+                                  Icons.access_time_rounded,
+                                  '${prepTime + cookTime} min',
+                                  const Color(0xFF5C6BC0),
+                                ),
+                                const SizedBox(width: 24),
+                                _buildStatItem(
+                                  Icons.pie_chart_rounded,
+                                  '$servings portions',
+                                  const Color(0xFFFF8A65),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      const Icon(
+                        Icons.arrow_forward_ios_rounded,
+                        size: 18,
+                        color: Colors.black26,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildImportFilterChip(String value, String label) {
+    final selected = _catalogImportFilter == value;
+    return GestureDetector(
+      onTap: () => setState(() => _catalogImportFilter = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected
+              ? const Color(0xFF6A5AE0)
+              : const Color(0xFF6A5AE0).withOpacity(0.1),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          label,
+          style: GoogleFonts.poppins(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: selected ? Colors.white : const Color(0xFF6A5AE0),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildToggleButton(
+      IconData icon, String label, bool selected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected
+              ? const Color(0xFF6A5AE0)
+              : const Color(0xFF6A5AE0).withOpacity(0.1),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon,
+                size: 16,
+                color: selected ? Colors.white : const Color(0xFF6A5AE0)),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: selected ? Colors.white : const Color(0xFF6A5AE0),
+              ),
+            ),
+          ],
         ),
       ),
     );

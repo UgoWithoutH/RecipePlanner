@@ -2,18 +2,34 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../data/repositories/firebase_stats_repository.dart';
+import '../../data/repositories/group_repository.dart';
 
 const _primary = Color(0xFF6A5AE0);
 const _primaryLight = Color(0xFFEEECFB);
 
 class AdminPage extends StatefulWidget {
-  const AdminPage({super.key});
+  final bool isAdmin;
+  const AdminPage({super.key, this.isAdmin = false});
 
   @override
   State<AdminPage> createState() => _AdminPageState();
 }
 
-class _AdminPageState extends State<AdminPage> {
+class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
   Future<List<Map<String, dynamic>>> _fetchAllUsers() async {
     final snap = await FirebaseFirestore.instance.collection('users').get();
     return snap.docs.map((doc) {
@@ -72,6 +88,22 @@ class _AdminPageState extends State<AdminPage> {
       selectedUserIds = {};
     }
 
+    // Catalogue: which groups' recipes are visible to this group
+    // Other groups (excluding the current one)
+    final otherGroups = allGroupsSnap.docs.where((g) => g.id != currentGroupId).toList();
+    Set<String> selectedVisibleGroupIds;
+    if (groupData != null) {
+      final rawVisible = groupData['visibleGroupIds'];
+      if (rawVisible is List) {
+        selectedVisibleGroupIds = Set<String>.from(rawVisible.whereType<String>());
+      } else {
+        selectedVisibleGroupIds = {};
+      }
+    } else {
+      // New group: default to seeing all other groups' recipes
+      selectedVisibleGroupIds = otherGroups.map((g) => g.id).toSet();
+    }
+
     final searchController = TextEditingController();
     List<Map<String, dynamic>> filteredUsers = allUsers;
     void updateSearch(String value) {
@@ -93,10 +125,11 @@ class _AdminPageState extends State<AdminPage> {
                 const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
             child: Padding(
               padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                   // Header
                   Row(
                     children: [
@@ -291,6 +324,61 @@ class _AdminPageState extends State<AdminPage> {
                     ),
                   ),
                   const SizedBox(height: 20),
+                  // Catalogue section
+                  if (otherGroups.isNotEmpty) ...[
+                    ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      childrenPadding: EdgeInsets.zero,
+                      shape: const Border(),
+                      collapsedShape: const Border(),
+                      leading: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: _primaryLight,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.menu_book_rounded, color: _primary, size: 16),
+                      ),
+                      title: Text(
+                        'Catalogue visible',
+                        style: GoogleFonts.poppins(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black54,
+                        ),
+                      ),
+                      subtitle: Text(
+                        '${selectedVisibleGroupIds.length} groupe(s) partag\u00e9(s)',
+                        style: GoogleFonts.poppins(fontSize: 11, color: Colors.black38),
+                      ),
+                      children: otherGroups.map((g) {
+                        final gData = g.data();
+                        final gName = (gData['name'] as String? ?? '').isNotEmpty
+                            ? gData['name'] as String
+                            : 'Groupe sans nom';
+                        final isChecked = selectedVisibleGroupIds.contains(g.id);
+                        return CheckboxListTile(
+                          dense: true,
+                          activeColor: _primary,
+                          checkColor: Colors.white,
+                          value: isChecked,
+                          title: Text(
+                            gName,
+                            style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                          onChanged: (val) {
+                            if (val == true) {
+                              selectedVisibleGroupIds.add(g.id);
+                            } else {
+                              selectedVisibleGroupIds.remove(g.id);
+                            }
+                            setStateDialog(() {});
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   // Actions
                   Row(
                     children: [
@@ -325,11 +413,20 @@ class _AdminPageState extends State<AdminPage> {
                             final data = {
                               'members': selectedUserIds.toList(),
                               'name': name,
+                              'visibleGroupIds': selectedVisibleGroupIds.toList(),
                             };
                             if (group == null) {
-                              await FirebaseFirestore.instance
+                              final newDoc = await FirebaseFirestore.instance
                                   .collection('groups')
                                   .add(data);
+                              // Add new group to visibleGroupIds of all existing groups
+                              final batch = FirebaseFirestore.instance.batch();
+                              for (final existingGroup in allGroupsSnap.docs) {
+                                batch.update(existingGroup.reference, {
+                                  'visibleGroupIds': FieldValue.arrayUnion([newDoc.id]),
+                                });
+                              }
+                              await batch.commit();
                             } else {
                               await group.reference.update(data);
                             }
@@ -356,7 +453,8 @@ class _AdminPageState extends State<AdminPage> {
                 ],
               ),
             ),
-          );
+          ),
+        );
         },
       ),
     );
@@ -562,7 +660,7 @@ class _AdminPageState extends State<AdminPage> {
         centerTitle: false,
         iconTheme: const IconThemeData(color: Colors.white),
         title: Text(
-          'Administration',
+          widget.isAdmin ? 'Administration' : 'Mon groupe',
           style: GoogleFonts.poppins(
             fontSize: 20,
             fontWeight: FontWeight.w600,
@@ -570,222 +668,595 @@ class _AdminPageState extends State<AdminPage> {
           ),
         ),
         actions: [
+          if (widget.isAdmin)
           IconButton(
             tooltip: 'Réinitialiser les statistiques',
             icon: const Icon(Icons.bar_chart_rounded, color: Colors.white),
             onPressed: _resetAllStats,
           ),
         ],
+        bottom: widget.isAdmin
+            ? TabBar(
+                controller: _tabController,
+                indicatorColor: Colors.white,
+                indicatorWeight: 3,
+                labelColor: Colors.white,
+                unselectedLabelColor: Colors.white60,
+                labelStyle: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w600),
+                unselectedLabelStyle: GoogleFonts.poppins(fontSize: 13),
+                tabs: const [
+                  Tab(icon: Icon(Icons.group_outlined, size: 18), text: 'Groupes'),
+                  Tab(icon: Icon(Icons.manage_accounts_outlined, size: 18), text: 'Utilisateurs'),
+                ],
+              )
+            : null,
       ),
-      body: FutureBuilder<QuerySnapshot>(
-        future: FirebaseFirestore.instance.collection('groups').get(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: CircularProgressIndicator(color: _primary),
+      body: widget.isAdmin
+          ? TabBarView(
+              controller: _tabController,
+              children: [
+                _buildAdminBody(),
+                _buildUsersBody(),
+              ],
+            )
+          : FutureBuilder<String?>(
+              future: GroupRepository.instance.getCurrentGroupId(),
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator(color: _primary));
+                }
+                final groupId = snap.data;
+                if (groupId == null) {
+                  return Center(
+                    child: Text(
+                      'Vous n\'êtes dans aucun groupe.',
+                      style: GoogleFonts.poppins(fontSize: 14, color: Colors.black45),
+                    ),
+                  );
+                }
+                return FutureBuilder<DocumentSnapshot>(
+                  future: FirebaseFirestore.instance.collection('groups').doc(groupId).get(),
+                  builder: (context, groupSnap) {
+                    if (groupSnap.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator(color: _primary));
+                    }
+                    final groupDoc = groupSnap.data;
+                    if (groupDoc == null || !groupDoc.exists) {
+                      return Center(
+                        child: Text(
+                          'Groupe introuvable.',
+                          style: GoogleFonts.poppins(fontSize: 14, color: Colors.black45),
+                        ),
+                      );
+                    }
+                    return _buildUserGroupView(groupDoc);
+                  },
+                );
+              },
+            ),
+      floatingActionButton: widget.isAdmin
+          ? FloatingActionButton.extended(
+              onPressed: () async {
+                await _showGroupDialog();
+              },
+              backgroundColor: _primary,
+              elevation: 3,
+              icon: const Icon(Icons.add, color: Colors.white),
+              label: Text(
+                'Nouveau groupe',
+                style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white),
+              ),
+            )
+          : null,
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Admin body: all groups list
+  // -------------------------------------------------------------------------
+  Widget _buildAdminBody() {
+    return FutureBuilder<QuerySnapshot>(
+      future: FirebaseFirestore.instance.collection('groups').get(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator(color: _primary));
+        }
+        final groups = snapshot.data?.docs ?? [];
+        if (groups.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: const BoxDecoration(color: _primaryLight, shape: BoxShape.circle),
+                  child: const Icon(Icons.group_outlined, color: _primary, size: 48),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Aucun groupe pour l\'instant',
+                  style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600, color: const Color(0xFF1A1A1A)),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Créez votre premier groupe\nen appuyant sur +',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.poppins(fontSize: 13, color: Colors.black45),
+                ),
+              ],
+            ),
+          );
+        }
+        return FutureBuilder<List<Map<String, dynamic>>>(
+          future: _fetchAllUsers(),
+          builder: (context, userSnapshot) {
+            if (userSnapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator(color: _primary));
+            }
+            final allUsers = userSnapshot.data ?? [];
+            return ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+              itemCount: groups.length,
+              itemBuilder: (context, index) {
+                return _buildGroupCard(groups[index], allUsers, canEdit: true, canDelete: true);
+              },
             );
-          }
-          final groups = snapshot.data?.docs ?? [];
-          if (groups.isEmpty) {
-            return Center(
+          },
+        );
+      },
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // User body: own group only, edit allowed, no delete/create
+  // -------------------------------------------------------------------------
+  Widget _buildUserGroupView(DocumentSnapshot groupDoc) {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _fetchAllUsers(),
+      builder: (context, userSnapshot) {
+        if (userSnapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator(color: _primary));
+        }
+        final allUsers = userSnapshot.data ?? [];
+        return ListView(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+          children: [
+            _buildGroupCard(groupDoc, allUsers, canEdit: false, canDelete: false, canEditCatalogueOnly: true),
+          ],
+        );
+      },
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Catalogue-only dialog (for non-admin users)
+  // -------------------------------------------------------------------------
+  Future<void> _showCatalogueOnlyDialog(DocumentSnapshot group) async {
+    final allGroupsSnap = await FirebaseFirestore.instance.collection('groups').get();
+    final currentGroupId = group.id;
+    final groupData = group.data() as Map<String, dynamic>;
+
+    final otherGroups = allGroupsSnap.docs.where((g) => g.id != currentGroupId).toList();
+    if (otherGroups.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Aucun autre groupe disponible.', style: GoogleFonts.poppins()),
+            backgroundColor: _primary,
+          ),
+        );
+      }
+      return;
+    }
+
+    final rawVisible = groupData['visibleGroupIds'];
+    Set<String> selectedVisibleGroupIds;
+    if (rawVisible is List) {
+      selectedVisibleGroupIds = Set<String>.from(rawVisible.whereType<String>());
+    } else {
+      selectedVisibleGroupIds = {};
+    }
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateDialog) => Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(color: _primaryLight, borderRadius: BorderRadius.circular(12)),
+                      child: const Icon(Icons.menu_book_rounded, color: _primary, size: 22),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Catalogues visibles',
+                        style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600, color: const Color(0xFF1A1A1A)),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Choisissez les groupes dont vous voulez voir les recettes dans le catalogue.',
+                  style: GoogleFonts.poppins(fontSize: 12, color: Colors.black45),
+                ),
+                const SizedBox(height: 20),
+                ...otherGroups.map((g) {
+                  final gData = g.data();
+                  final gName = (gData['name'] as String? ?? '').isNotEmpty
+                      ? gData['name'] as String
+                      : 'Groupe sans nom';
+                  final isChecked = selectedVisibleGroupIds.contains(g.id);
+                  return AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    margin: const EdgeInsets.only(bottom: 8),
+                    decoration: BoxDecoration(
+                      color: isChecked ? _primaryLight : Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isChecked ? _primary.withOpacity(0.3) : Colors.black12,
+                      ),
+                    ),
+                    child: CheckboxListTile(
+                      dense: true,
+                      activeColor: _primary,
+                      checkColor: Colors.white,
+                      value: isChecked,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      title: Text(gName,
+                          style: GoogleFonts.poppins(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: isChecked ? _primary : Colors.black87)),
+                      onChanged: (val) {
+                        if (val == true) {
+                          selectedVisibleGroupIds.add(g.id);
+                        } else {
+                          selectedVisibleGroupIds.remove(g.id);
+                        }
+                        setStateDialog(() {});
+                      },
+                    ),
+                  );
+                }),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Colors.black12),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                        child: Text('Annuler',
+                            style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.black54)),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () async {
+                          await group.reference.update({'visibleGroupIds': selectedVisibleGroupIds.toList()});
+                          Navigator.pop(ctx, true);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _primary,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                        child: Text('Enregistrer',
+                            style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white)),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (result == true && mounted) setState(() {});
+  }
+
+  // -------------------------------------------------------------------------
+  // Users body: role management
+  // -------------------------------------------------------------------------
+  Widget _buildUsersBody() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _fetchAllUsers(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator(color: _primary));
+        }
+        final users = snapshot.data ?? [];
+        users.sort((a, b) =>
+            a['name'].toString().toLowerCase().compareTo(b['name'].toString().toLowerCase()));
+        if (users.isEmpty) {
+          return Center(
+            child: Text('Aucun utilisateur', style: GoogleFonts.poppins(fontSize: 14, color: Colors.black45)),
+          );
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+          itemCount: users.length,
+          itemBuilder: (context, index) => _buildUserRoleCard(users[index]),
+        );
+      },
+    );
+  }
+
+  Widget _buildUserRoleCard(Map<String, dynamic> user) {
+    final isRoleAdmin = user['role'] == 'admin';
+    final name = user['name'].toString().isNotEmpty ? user['name'] as String : user['email'] as String;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(color: _primary.withOpacity(0.06), blurRadius: 12, offset: const Offset(0, 3)),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: isRoleAdmin ? _primaryLight : const Color(0xFFF3F3F3),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                isRoleAdmin ? Icons.shield_outlined : Icons.person_outline,
+                color: isRoleAdmin ? _primary : Colors.black45,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
               child: Column(
-                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(24),
-                    decoration: const BoxDecoration(
-                      color: _primaryLight,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.group_outlined,
-                        color: _primary, size: 48),
-                  ),
-                  const SizedBox(height: 20),
-                  Text(
-                    'Aucun groupe pour l\'instant',
-                    style: GoogleFonts.poppins(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: const Color(0xFF1A1A1A),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Créez votre premier groupe\nen appuyant sur +',
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.poppins(
-                        fontSize: 13, color: Colors.black45),
-                  ),
+                  Text(name,
+                      style: GoogleFonts.poppins(
+                          fontSize: 14, fontWeight: FontWeight.w600, color: const Color(0xFF1A1A1A))),
+                  Text(user['email'] as String,
+                      style: GoogleFonts.poppins(fontSize: 12, color: Colors.black38)),
                 ],
               ),
-            );
-          }
-          return FutureBuilder<List<Map<String, dynamic>>>(
-            future: _fetchAllUsers(),
-            builder: (context, userSnapshot) {
-              if (userSnapshot.connectionState == ConnectionState.waiting) {
-                return const Center(
-                    child: CircularProgressIndicator(color: _primary));
-              }
-              final allUsers = userSnapshot.data ?? [];
-              return ListView.builder(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-                itemCount: groups.length,
-                itemBuilder: (context, index) {
-                  final group = groups[index];
-                  final groupData = group.data() as Map<String, dynamic>;
-                  final rawMembers = groupData['members'];
-                  List<String> memberIds = [];
-                  if (rawMembers is List) {
-                    memberIds = rawMembers.whereType<String>().toList();
-                  } else if (rawMembers is String) {
-                    memberIds = [rawMembers];
-                  }
-                  final members = allUsers
-                      .where((u) => memberIds.contains(u['id']))
-                      .toList();
-                  final groupName = (groupData['name'] as String? ?? '').isNotEmpty
-                      ? groupData['name'] as String
-                      : 'Groupe sans nom';
+            ),
+            GestureDetector(
+              onTap: () => _showChangeRoleDialog(user),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: isRoleAdmin ? _primaryLight : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isRoleAdmin ? _primary.withOpacity(0.4) : Colors.black12,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      isRoleAdmin ? 'Admin' : 'Utilisateur',
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: isRoleAdmin ? _primary : Colors.black54,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(Icons.expand_more, size: 14, color: isRoleAdmin ? _primary : Colors.black45),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
+  Future<void> _showChangeRoleDialog(Map<String, dynamic> user) async {
+    final currentRole = user['role'] as String? ?? 'user';
+    final newRole = await showDialog<String>(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Changer le rôle',
+                style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                user['name'].toString().isNotEmpty ? user['name'] as String : user['email'] as String,
+                style: GoogleFonts.poppins(fontSize: 13, color: Colors.black45),
+              ),
+              const SizedBox(height: 20),
+              _RoleOption(
+                label: 'Administrateur',
+                description: 'Accès complet : groupes, stats, utilisateurs',
+                icon: Icons.shield_outlined,
+                color: _primary,
+                backgroundColor: _primaryLight,
+                isSelected: currentRole == 'admin',
+                onTap: () => Navigator.pop(ctx, 'admin'),
+              ),
+              const SizedBox(height: 10),
+              _RoleOption(
+                label: 'Utilisateur',
+                description: 'Accès à son groupe uniquement',
+                icon: Icons.person_outline,
+                color: Colors.black54,
+                backgroundColor: const Color(0xFFF3F3F3),
+                isSelected: currentRole == 'user',
+                onTap: () => Navigator.pop(ctx, 'user'),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Colors.black12),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: Text('Annuler', style: GoogleFonts.poppins(fontSize: 13, color: Colors.black54)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (newRole == null || newRole == currentRole) return;
+    await FirebaseFirestore.instance.collection('users').doc(user['id'] as String).update({'role': newRole});
+    if (mounted) setState(() {});
+  }
+
+  // -------------------------------------------------------------------------
+  // Shared group card
+  // -------------------------------------------------------------------------
+  Widget _buildGroupCard(DocumentSnapshot group, List<Map<String, dynamic>> allUsers,
+      {required bool canEdit, required bool canDelete, bool canEditCatalogueOnly = false}) {
+    final groupData = group.data() as Map<String, dynamic>;
+    final rawMembers = groupData['members'];
+    List<String> memberIds = [];
+    if (rawMembers is List) {
+      memberIds = rawMembers.whereType<String>().toList();
+    } else if (rawMembers is String) {
+      memberIds = [rawMembers];
+    }
+    final members = allUsers.where((u) => memberIds.contains(u['id'])).toList();
+    final groupName = (groupData['name'] as String? ?? '').isNotEmpty
+        ? groupData['name'] as String
+        : 'Groupe sans nom';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(color: _primary.withOpacity(0.07), blurRadius: 16, offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: _primaryLight, borderRadius: BorderRadius.circular(10)),
+                  child: const Icon(Icons.group, color: _primary, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    groupName,
+                    style: GoogleFonts.poppins(fontSize: 15, fontWeight: FontWeight.w600, color: const Color(0xFF1A1A1A)),
+                  ),
+                ),
+                if (canEdit)
+                  _IconActionButton(
+                    icon: Icons.edit_outlined,
+                    color: _primary,
+                    backgroundColor: _primaryLight,
+                    onTap: () => _showGroupDialog(group: group),
+                  ),
+                if (canEditCatalogueOnly) ...[  
+                  const SizedBox(width: 8),
+                  _IconActionButton(
+                    icon: Icons.menu_book_rounded,
+                    color: _primary,
+                    backgroundColor: _primaryLight,
+                    onTap: () => _showCatalogueOnlyDialog(group),
+                  ),
+                ],
+                if (canDelete) ...[
+                  const SizedBox(width: 8),
+                  _IconActionButton(
+                    icon: Icons.delete_outline,
+                    color: Colors.red.shade400,
+                    backgroundColor: Colors.red.shade50,
+                    onTap: () => _confirmDeleteGroup(group),
+                  ),
+                ],
+              ],
+            ),
+            if (members.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Divider(height: 1, color: Colors.grey.shade100),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: members.map((u) {
+                  final name = u['name'].toString().isNotEmpty ? u['name'] as String : u['email'] as String;
+                  final isRoleAdmin = u['role'] == 'admin';
                   return Container(
-                    margin: const EdgeInsets.only(bottom: 14),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                      boxShadow: [
-                        BoxShadow(
-                          color: _primary.withOpacity(0.07),
-                          blurRadius: 16,
-                          offset: const Offset(0, 4),
+                      color: isRoleAdmin ? _primaryLight : const Color(0xFFF3F3F3),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          isRoleAdmin ? Icons.shield_outlined : Icons.person_outline,
+                          size: 12,
+                          color: isRoleAdmin ? _primary : Colors.black45,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          name,
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: isRoleAdmin ? _primary : Colors.black54,
+                          ),
                         ),
                       ],
                     ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: _primaryLight,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: const Icon(Icons.group,
-                                    color: _primary, size: 20),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Text(
-                                  groupName,
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                    color: const Color(0xFF1A1A1A),
-                                  ),
-                                ),
-                              ),
-                              _IconActionButton(
-                                icon: Icons.edit_outlined,
-                                color: _primary,
-                                backgroundColor: _primaryLight,
-                                onTap: () => _showGroupDialog(group: group),
-                              ),
-                              const SizedBox(width: 8),
-                              _IconActionButton(
-                                icon: Icons.delete_outline,
-                                color: Colors.red.shade400,
-                                backgroundColor: Colors.red.shade50,
-                                onTap: () => _confirmDeleteGroup(group),
-                              ),
-                            ],
-                          ),
-                          if (members.isNotEmpty) ...[
-                            const SizedBox(height: 12),
-                            Divider(
-                                height: 1,
-                                color: Colors.grey.shade100),
-                            const SizedBox(height: 10),
-                            Wrap(
-                              spacing: 6,
-                              runSpacing: 6,
-                              children: members.map((u) {
-                                final name = u['name'].toString().isNotEmpty
-                                    ? u['name'] as String
-                                    : u['email'] as String;
-                                final isAdmin = u['role'] == 'admin';
-                                return Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: isAdmin
-                                        ? _primaryLight
-                                        : const Color(0xFFF3F3F3),
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        isAdmin
-                                            ? Icons.shield_outlined
-                                            : Icons.person_outline,
-                                        size: 12,
-                                        color: isAdmin
-                                            ? _primary
-                                            : Colors.black45,
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        name,
-                                        style: GoogleFonts.poppins(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500,
-                                          color: isAdmin
-                                              ? _primary
-                                              : Colors.black54,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              }).toList(),
-                            ),
-                          ] else ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              'Aucun membre',
-                              style: GoogleFonts.poppins(
-                                  fontSize: 12, color: Colors.black38),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
                   );
-                },
-              );
-            },
-          );
-        },
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          await _showGroupDialog();
-        },
-        backgroundColor: _primary,
-        elevation: 3,
-        icon: const Icon(Icons.add, color: Colors.white),
-        label: Text(
-          'Nouveau groupe',
-          style: GoogleFonts.poppins(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Colors.white),
+                }).toList(),
+              ),
+            ] else ...[
+              const SizedBox(height: 8),
+              Text('Aucun membre', style: GoogleFonts.poppins(fontSize: 12, color: Colors.black38)),
+            ],
+          ],
         ),
       ),
     );
@@ -816,6 +1287,75 @@ class _IconActionButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(icon, color: color, size: 18),
+      ),
+    );
+  }
+}
+
+class _RoleOption extends StatelessWidget {
+  const _RoleOption({
+    required this.label,
+    required this.description,
+    required this.icon,
+    required this.color,
+    required this.backgroundColor,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final String label;
+  final String description;
+  final IconData icon;
+  final Color color;
+  final Color backgroundColor;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? backgroundColor : Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? color.withOpacity(0.5) : Colors.black12,
+            width: isSelected ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: isSelected ? color.withOpacity(0.15) : Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(icon, color: isSelected ? color : Colors.black38, size: 18),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: GoogleFonts.poppins(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: isSelected ? color : Colors.black54,
+                      )),
+                  Text(description,
+                      style: GoogleFonts.poppins(fontSize: 11, color: Colors.black38)),
+                ],
+              ),
+            ),
+            if (isSelected)
+              Icon(Icons.check_circle, color: color, size: 18),
+          ],
+        ),
       ),
     );
   }

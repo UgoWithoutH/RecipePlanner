@@ -4339,34 +4339,35 @@ class _PlannerPageState extends State<PlannerPage> {
                         Consumer(
                           builder: (context, ref, _) {
                             final authState = ref.watch(authNotifierProvider);
-                            if (authState is AuthAuthenticated && authState.user.role == 'admin') {
-                              return Tooltip(
-                                message: 'Administration',
-                                child: Material(
-                                  color: Colors.orange.shade700,
+                            if (authState is! AuthAuthenticated) return const SizedBox.shrink();
+                            final isAdmin = authState.user.role == 'admin';
+                            return Tooltip(
+                              message: 'Mon groupe',
+                              child: Material(
+                                color: isAdmin ? Colors.orange.shade700 : const Color(0xFF6A5AE0),
+                                borderRadius: BorderRadius.circular(14),
+                                child: InkWell(
                                   borderRadius: BorderRadius.circular(14),
-                                  child: InkWell(
-                                    borderRadius: BorderRadius.circular(14),
-                                    onTap: () {
-                                      Navigator.of(context).push(
-                                        MaterialPageRoute(
-                                          builder: (_) => const AdminPage(),
-                                        ),
-                                      );
-                                    },
-                                    child: const Padding(
-                                      padding: EdgeInsets.all(10),
-                                      child: Icon(
-                                        Icons.admin_panel_settings_outlined,
-                                        color: Colors.white,
-                                        size: 24,
+                                  onTap: () {
+                                    Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (_) => AdminPage(isAdmin: isAdmin),
                                       ),
+                                    );
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(10),
+                                    child: Icon(
+                                      isAdmin
+                                          ? Icons.admin_panel_settings_outlined
+                                          : Icons.group_outlined,
+                                      color: Colors.white,
+                                      size: 24,
                                     ),
                                   ),
                                 ),
-                              );
-                            }
-                            return const SizedBox.shrink();
+                              ),
+                            );
                           },
                         ),
                         const SizedBox(width: 8),

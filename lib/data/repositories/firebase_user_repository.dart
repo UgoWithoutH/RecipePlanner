@@ -24,15 +24,16 @@ class FirebaseUserRepository {
         .toList();
   }
 
-  /// Add an email to the allowed_emails whitelist.
-  /// The `users/{uid}` document is created automatically at first login.
-  /// The current user's groupId is stored so the new user is automatically
-  /// added to the group on their first sign-in.
+  /// Autorise un utilisateur en créant un document dans `users` avec son email.
+  /// À sa première connexion, le service auth migre ce doc vers users/{uid}.
   Future<void> addUser(String email) async {
     final groupId = await GroupRepository.instance.getCurrentGroupId();
-    await FirebaseFirestore.instance
-        .collection('allowed_emails')
-        .add({'email': email, if (groupId != null) 'groupId': groupId});
+    await FirebaseFirestore.instance.collection('users').add({
+      'email': email,
+      'name': '',
+      'role': 'user',
+      if (groupId != null) 'groupId': groupId,
+    });
   }
 
   /// Update user name

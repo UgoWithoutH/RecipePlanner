@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -33,6 +34,15 @@ Future<void> main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Web : Safari bloque la persistance IndexedDB au démarrage.
+  // persistenceEnabled=false évite ce blocage sur Safari/iOS.
+  // Le transport WebChannel est géré automatiquement par le Firebase JS SDK 10.x.
+  if (kIsWeb) {
+    FirebaseFirestore.instance.settings = const Settings(
+      persistenceEnabled: false,
+    );
+  }
   await initializeDateFormatting();
   await NotificationService().initialize();
 

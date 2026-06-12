@@ -50,6 +50,7 @@ class MealPlanningService {
     List<String> leftoverUserOrder = const [],
     bool strictNoWaste = false,
     bool ignoreHistoryLeftovers = false,
+    int minDaysBetweenRepeat = 4,
     void Function(int filled, int total)? onProgress,
   }) async {
     if (recipes.isEmpty || users.isEmpty) {
@@ -383,6 +384,7 @@ class MealPlanningService {
           wastePenaltyWeight: wastePenaltyWeight,
           maxLeftoverSlots: maxLeftoverSlots,
           strictNoWaste: effectiveStrictNoWaste,
+          minDaysAgoThreshold: minDaysBetweenRepeat,
         );
         if (peekedDinner != null && !recentRecipeDaysAgo.containsKey(peekedDinner.id)) {
           recentRecipeDaysAgo[peekedDinner.id] = 0;
@@ -437,6 +439,7 @@ class MealPlanningService {
         wastePenaltyWeight: wastePenaltyWeight,
         maxLeftoverSlots: maxLeftoverSlots,
         strictNoWaste: effectiveStrictNoWaste,
+        minDaysAgoThreshold: minDaysBetweenRepeat,
       ); // wastePenaltyWeight non passé par défaut (les restes du plan complet sont utiles)
       // Retire l'entrée temporaire du lookahead pour ne pas biaiser le dîner
       if (peekedDinnerAdded) recentRecipeDaysAgo.remove(peekedDinner!.id);
@@ -778,12 +781,13 @@ class MealPlanningService {
     double recencyDecayFactor = 0.9,
     bool useAbsoluteCoverageBonus = false,
     Map<String, (double, Unit)> pantryRemaining = const <String, (double, Unit)>{},
-    double pantryBonusWeight = 70.0,
+    double pantryBonusWeight = 15.0,
     Set<String> urgentPantryNames = const {},
     int slotsRemaining = 1,
     double wastePenaltyWeight = 0.0,
     int maxLeftoverSlots = 999,
     bool strictNoWaste = false,
+    int minDaysAgoThreshold = 0,
   }) {
     if (availableRecipes.isEmpty) return null;
 
@@ -823,6 +827,20 @@ class MealPlanningService {
       }
     }
 
+    // Exclusion dure : recettes utilisées trop récemment (historique ou plan en cours).
+    // Évite que le bonus frigo/placard écrase la pénalité de récence pour des recettes
+    // mangées la veille ou avant-veille. Fallback : si toutes les recettes sont exclues
+    // (catalogue trop petit), on ignore le seuil pour ne pas laisser de slot vide.
+    if (minDaysAgoThreshold > 0 && recentRecipeDaysAgo != null) {
+      final filtered = availableRecipes
+          .where((r) => (recentRecipeDaysAgo[r.id] ?? 999) >= minDaysAgoThreshold)
+          .toList();
+      if (filtered.isNotEmpty) {
+        recipesToScore = filtered;
+      }
+      // sinon fallback : recipesToScore reste = availableRecipes
+    }
+
     // Filtrer selon le nombre de slots consécutifs libres disponibles pour les restes.
     // maxLeftoverSlots=0 → préférence pour les recettes sans restes.
     // maxLeftoverSlots=n → recettes dont les restes tiennent en n jours au plus.
@@ -831,7 +849,7 @@ class MealPlanningService {
     // de laisser le slot vide (les restes seront gaspillés mais c'est préférable à
     // un slot non rempli qui garde l'ancienne recette).
     if (maxLeftoverSlots < 999) {
-      final filtered = availableRecipes.where((r) {
+      final filtered = recipesToScore.where((r) {
         final consumed = candidateTotalConsumed[r.id] ?? 0;
         if (consumed <= 0) return false;
         final multiplier = (consumed / r.servings).ceil();

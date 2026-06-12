@@ -508,32 +508,210 @@ class _IngredientsPageState extends State<IngredientsPage> {
     );
   }
 
-  Widget _buildSortChip(IconData icon, String label, bool selected, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFF6A5AE0) : const Color(0xFF6A5AE0).withOpacity(0.1),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: selected ? Colors.white : const Color(0xFF6A5AE0)),
-            const SizedBox(width: 5),
-            Text(
-              label,
-              style: GoogleFonts.poppins(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: selected ? Colors.white : const Color(0xFF6A5AE0),
+  Future<void> _openFiltersSheet() async {
+    String tempSort = _sortMode;
+    final tempTypes = Set<String>.from(_selectedTypeIds);
+
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setStateSheet) {
+          return SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Filtres ingrédients',
+                      style: GoogleFonts.poppins(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        const Icon(Icons.sort_rounded, size: 16, color: Color(0xFF6A5AE0)),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Tri',
+                          style: GoogleFonts.poppins(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ChoiceChip(
+                          label: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.sort_by_alpha_rounded, size: 18),
+                              const SizedBox(width: 6),
+                              const Text('A-Z'),
+                            ],
+                          ),
+                          selected: tempSort == 'alpha',
+                          selectedColor: const Color(0xFF6A5AE0).withOpacity(0.35),
+                          onSelected: (_) => setStateSheet(() => tempSort = 'alpha'),
+                        ),
+                        ChoiceChip(
+                          label: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.bar_chart_rounded, size: 18),
+                              const SizedBox(width: 6),
+                              const Text('Plus utilisés'),
+                            ],
+                          ),
+                          selected: tempSort == 'usage',
+                          selectedColor: const Color(0xFF6A5AE0).withOpacity(0.35),
+                          onSelected: (_) => setStateSheet(() => tempSort = 'usage'),
+                        ),
+                        ChoiceChip(
+                          label: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.block_rounded, size: 18),
+                              const SizedBox(width: 6),
+                              const Text('Jamais utilisés'),
+                            ],
+                          ),
+                          selected: tempSort == 'unused',
+                          selectedColor: const Color(0xFF6A5AE0).withOpacity(0.35),
+                          onSelected: (_) => setStateSheet(() => tempSort = 'unused'),
+                        ),
+                      ],
+                    ),
+                    if (_types.isNotEmpty) ...[const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          const Icon(Icons.label_rounded, size: 16, color: Color(0xFF6A5AE0)),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Types',
+                            style: GoogleFonts.poppins(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey[700],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          FilterChip(
+                            label: const Text('Tous', style: TextStyle(fontWeight: FontWeight.w600)),
+                            selected: tempTypes.isEmpty,
+                            backgroundColor: const Color(0xFF6A5AE0).withOpacity(0.15),
+                            selectedColor: const Color(0xFF6A5AE0).withOpacity(0.35),
+                            onSelected: (_) => setStateSheet(() => tempTypes.clear()),
+                          ),
+                          for (final type in _types)
+                            FilterChip(
+                              label: Text(
+                                type.name,
+                                style: const TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              selected: tempTypes.contains(type.id),
+                              backgroundColor: Color(type.color).withOpacity(0.15),
+                              selectedColor: Color(type.color).withOpacity(0.35),
+                              onSelected: (_) {
+                                setStateSheet(() {
+                                  if (tempTypes.contains(type.id)) {
+                                    tempTypes.remove(type.id);
+                                  } else {
+                                    tempTypes.add(type.id);
+                                  }
+                                });
+                              },
+                            ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () {
+                              setStateSheet(() {
+                                tempSort = 'alpha';
+                                tempTypes.clear();
+                              });
+                            },
+                            child: Text(
+                              'Réinitialiser',
+                              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              setState(() {
+                                _sortMode = tempSort;
+                                _selectedTypeIds = tempTypes.toList();
+                              });
+                              Navigator.pop(ctx);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF6A5AE0),
+                              foregroundColor: Colors.white,
+                            ),
+                            child: Text(
+                              'Appliquer',
+                              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
+  }
+
+  int _activeFiltersCount() {
+    int count = 0;
+    if (_sortMode != 'alpha') count++;
+    if (_selectedTypeIds.isNotEmpty) count++;
+    return count;
   }
 
   @override
@@ -602,120 +780,66 @@ class _IngredientsPageState extends State<IngredientsPage> {
                   ),
                 ),
 
-                // Search field
+                // BARRE COMPACTE (recherche + filtres)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-                  child: TextField(
-                    decoration: InputDecoration(
-                      hintText: 'Filtrer par nom...',
-                      prefixIcon: const Icon(Icons.search),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                    ),
-                    onChanged: (v) => setState(() => _filter = v),
+                  padding: const EdgeInsets.fromLTRB(24, 4, 24, 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          decoration: InputDecoration(
+                            hintText: 'Filtrer par nom...',
+                            prefixIcon: const Icon(Icons.search, size: 20),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                          ),
+                          onChanged: (v) => setState(() => _filter = v),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: _openFiltersSheet,
+                        icon: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            const Icon(Icons.tune_rounded, size: 18),
+                            if (_activeFiltersCount() > 0)
+                              Positioned(
+                                right: -7,
+                                top: -7,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF6A5AE0),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    '${_activeFiltersCount()}',
+                                    style: GoogleFonts.poppins(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        label: Text(
+                          'Filtres',
+                          style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Color(0xFF6A5AE0)),
+                          foregroundColor: const Color(0xFF6A5AE0),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-
-                // Type Filter
-                if (!_isLoading && _types.isNotEmpty)
-                  Container(
-                    height: 40,
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _types.length + 1,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
-                      itemBuilder: (context, index) {
-                        if (index == 0) {
-                          // "Tout" filter
-                          final isSelected = _selectedTypeIds.isEmpty;
-                          final baseColor = const Color(0xFF6A5AE0);
-                          final hsl = HSLColor.fromColor(baseColor);
-                          final textColor = hsl.withLightness((hsl.lightness > 0.4 ? 0.4 : hsl.lightness)).toColor();
-
-                          return FilterChip(
-                            label: Text(
-                              'Tous',
-                              style: GoogleFonts.poppins(
-                                fontSize: 13, 
-                                fontWeight: FontWeight.w600,
-                                color: textColor,
-                              ),
-                            ),
-                            selected: isSelected,
-                            onSelected: (bool selected) {
-                              setState(() {
-                                _selectedTypeIds.clear();
-                              });
-                            },
-                            backgroundColor: baseColor.withOpacity(0.15),
-                            selectedColor: baseColor.withOpacity(0.35),
-                            checkmarkColor: textColor,
-                            side: BorderSide.none,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                          );
-                        }
-                        
-                        final type = _types[index - 1];
-                        final isSelected = _selectedTypeIds.contains(type.id);
-                        
-                        final colorVal = type.color;
-                        final baseColor = Color(colorVal);
-                        final hsl = HSLColor.fromColor(baseColor);
-                        final startLightness = hsl.lightness;
-                        final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
-                        final textColor = hsl.withLightness(textLightness).toColor();
-                        return FilterChip(
-                          label: Text(
-                            type.name,
-                            style: GoogleFonts.poppins(
-                              fontSize: 13, 
-                              fontWeight: FontWeight.w600,
-                              color: textColor
-                            ),
-                          ),
-                          selected: isSelected,
-                          onSelected: (bool selected) {
-                            setState(() {
-                              if (selected) {
-                                _selectedTypeIds.add(type.id);
-                              } else {
-                                _selectedTypeIds.remove(type.id);
-                              }
-                            });
-                          },
-                          backgroundColor: baseColor.withOpacity(0.15),
-                          selectedColor: baseColor.withOpacity(0.35),
-                          checkmarkColor: textColor,
-                          side: BorderSide.none,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                        );
-                      },
-                    ),
-                  ),
-
-                // SORT & FILTRE STATS
-                if (!_isLoading)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          _buildSortChip(Icons.sort_by_alpha_rounded, 'A-Z', _sortMode == 'alpha',
-                              () => setState(() => _sortMode = 'alpha')),
-                          const SizedBox(width: 8),
-                          _buildSortChip(Icons.bar_chart_rounded, 'Plus utilisés', _sortMode == 'usage',
-                              () => setState(() => _sortMode = 'usage')),
-                          const SizedBox(width: 8),
-                          _buildSortChip(Icons.bar_chart_rounded, 'Jamais utilisés', _sortMode == 'unused',
-                              () => setState(() => _sortMode = _sortMode == 'unused' ? 'alpha' : 'unused')),
-                        ],
-                      ),
-                    ),
-                  ),
 
                 // List
                 Expanded(

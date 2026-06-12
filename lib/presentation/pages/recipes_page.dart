@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:recipe_planner/presentation/widgets/ingredient_autocomplete.dart' show IngredientAutocomplete;
 
 import '../../domain/entities/recipe.dart';
 import '../../core/utils/ingredient_name_cache.dart';
@@ -35,8 +34,11 @@ class _RecipesPageState extends State<RecipesPage> {
   bool _showCatalog = false;
   List<Map<String, dynamic>> _catalogRecipes = [];
   bool _catalogLoading = false;
+  List<Map<String, String>> _catalogGroups = [];
+  Set<String> _selectedCatalogGroupIds = {};
   Set<String> _groupRecipeTitles = {};
   String _catalogImportFilter = 'notImported'; // 'all', 'imported', 'notImported'
+  String _catalogSortMode = 'alpha'; // 'alpha' | 'rating'
 
   Map<String, int> _recipeCounts = {};
   String _sortMode = 'alpha'; // 'alpha' | 'usage' | 'unused' | 'rating'
@@ -161,23 +163,550 @@ class _RecipesPageState extends State<RecipesPage> {
     });
   }
 
+  int _catalogActiveFiltersCount() {
+    int count = 0;
+    if (_catalogImportFilter != 'all') count++;
+    if (_catalogSortMode != 'alpha') count++;
+    if (_selectedCatalogGroupIds.isNotEmpty) count++;
+    return count;
+  }
+
+  int _groupActiveFiltersCount() {
+    int count = 0;
+    if (_sortMode != 'alpha') count++;
+    if (_selectedCategoryIds.isNotEmpty) count++;
+    if (_selectedIngredientIds.isNotEmpty) count++;
+    return count;
+  }
+
+  Future<void> _openGroupFiltersSheet() async {
+    String tempSort = _sortMode;
+    final tempCategories = Set<String>.from(_selectedCategoryIds);
+    final tempIngredients = Set<String>.from(_selectedIngredientIds);
+
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setStateSheet) {
+          return SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Filtres recettes',
+                      style: GoogleFonts.poppins(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        const Icon(Icons.sort_rounded, size: 16, color: Color(0xFF6A5AE0)),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Tri',
+                          style: GoogleFonts.poppins(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ChoiceChip(
+                          label: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.sort_by_alpha_rounded, size: 18),
+                              const SizedBox(width: 6),
+                              const Text('A-Z'),
+                            ],
+                          ),
+                          selected: tempSort == 'alpha',
+                          selectedColor: const Color(0xFF6A5AE0).withOpacity(0.35),
+                          onSelected: (_) => setStateSheet(() => tempSort = 'alpha'),
+                        ),
+                        ChoiceChip(
+                          label: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.star_rounded, size: 18),
+                              const SizedBox(width: 6),
+                              const Text('Mieux notées'),
+                            ],
+                          ),
+                          selected: tempSort == 'rating',
+                          selectedColor: const Color(0xFF6A5AE0).withOpacity(0.35),
+                          onSelected: (_) => setStateSheet(() => tempSort = 'rating'),
+                        ),
+                        ChoiceChip(
+                          label: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.local_dining_rounded, size: 18),
+                              const SizedBox(width: 6),
+                              const Text('Plus cuisinées'),
+                            ],
+                          ),
+                          selected: tempSort == 'usage',
+                          selectedColor: const Color(0xFF6A5AE0).withOpacity(0.35),
+                          onSelected: (_) => setStateSheet(() => tempSort = 'usage'),
+                        ),
+                        ChoiceChip(
+                          label: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.block_rounded, size: 18),
+                              const SizedBox(width: 6),
+                              const Text('Jamais cuisinées'),
+                            ],
+                          ),
+                          selected: tempSort == 'unused',
+                          selectedColor: const Color(0xFF6A5AE0).withOpacity(0.35),
+                          onSelected: (_) => setStateSheet(() => tempSort = 'unused'),
+                        ),
+                      ],
+                    ),
+                    if (_allCategories.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          const Icon(Icons.label_rounded, size: 16, color: Color(0xFF6A5AE0)),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Catégories',
+                            style: GoogleFonts.poppins(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey[700],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          FilterChip(
+                            label: const Text('Toutes', style: TextStyle(fontWeight: FontWeight.w600)),
+                            selected: tempCategories.isEmpty,
+                            backgroundColor: const Color(0xFF6A5AE0).withOpacity(0.15),
+                            selectedColor: const Color(0xFF6A5AE0).withOpacity(0.35),
+                            onSelected: (_) => setStateSheet(() => tempCategories.clear()),
+                          ),
+                          for (final category in _allCategories)
+                            FilterChip(
+                              label: Text(
+                                category['name'] as String? ?? '',
+                                style: const TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              selected: tempCategories.contains(category['id']),
+                              backgroundColor: Color(category['color'] as int? ?? 0xFF6A5AE0).withOpacity(0.15),
+                              selectedColor: Color(category['color'] as int? ?? 0xFF6A5AE0).withOpacity(0.35),
+                              onSelected: (_) {
+                                final id = category['id'] as String?;
+                                if (id == null || id.isEmpty) return;
+                                setStateSheet(() {
+                                  if (tempCategories.contains(id)) {
+                                    tempCategories.remove(id);
+                                  } else {
+                                    tempCategories.add(id);
+                                  }
+                                });
+                              },
+                            ),
+                        ],
+                      ),
+                    ],
+                    if (_allIngredients.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          const Icon(Icons.restaurant_rounded, size: 16, color: Color(0xFF6A5AE0)),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Ingrédients',
+                            style: GoogleFonts.poppins(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey[700],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          FilterChip(
+                            label: const Text('Tous'),
+                            selected: tempIngredients.isEmpty,
+                            onSelected: (_) => setStateSheet(() => tempIngredients.clear()),
+                          ),
+                          for (final ingredient in _allIngredients)
+                            FilterChip(
+                              label: Text(ingredient['name'] ?? ''),
+                              selected: tempIngredients.contains(ingredient['id']),
+                              onSelected: (_) {
+                                final id = ingredient['id'];
+                                if (id == null || id.isEmpty) return;
+                                setStateSheet(() {
+                                  if (tempIngredients.contains(id)) {
+                                    tempIngredients.remove(id);
+                                  } else {
+                                    tempIngredients.add(id);
+                                  }
+                                });
+                              },
+                            ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () {
+                              setStateSheet(() {
+                                tempSort = 'alpha';
+                                tempCategories.clear();
+                                tempIngredients.clear();
+                              });
+                            },
+                            child: Text(
+                              'Réinitialiser',
+                              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              setState(() {
+                                _sortMode = tempSort;
+                                _selectedCategoryIds = tempCategories;
+                                _selectedIngredientIds = tempIngredients;
+                              });
+                              Navigator.pop(ctx);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF6A5AE0),
+                              foregroundColor: Colors.white,
+                            ),
+                            child: Text(
+                              'Appliquer',
+                              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _openCatalogFiltersSheet() async {
+    String tempImport = _catalogImportFilter;
+    String tempSort = _catalogSortMode;
+    final tempGroups = Set<String>.from(_selectedCatalogGroupIds);
+
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setStateSheet) {
+          return SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Filtres catalogue',
+                      style: GoogleFonts.poppins(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        const Icon(Icons.download_rounded, size: 16, color: Color(0xFF6A5AE0)),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Import',
+                          style: GoogleFonts.poppins(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final entry in const [
+                          {'value': 'all', 'label': 'Toutes', 'icon': Icons.all_inclusive_rounded},
+                          {'value': 'notImported', 'label': 'Non importées', 'icon': Icons.download_rounded},
+                          {'value': 'imported', 'label': 'Importées', 'icon': Icons.check_circle_rounded},
+                        ])
+                          ChoiceChip(
+                            label: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(entry['icon'] as IconData, size: 18),
+                                const SizedBox(width: 6),
+                                Text(entry['label'] as String),
+                              ],
+                            ),
+                            selected: tempImport == entry['value'] as String,
+                            selectedColor: const Color(0xFF6A5AE0).withOpacity(0.35),
+                            onSelected: (_) => setStateSheet(
+                              () => tempImport = entry['value'] as String,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        const Icon(Icons.sort_rounded, size: 16, color: Color(0xFF6A5AE0)),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Tri',
+                          style: GoogleFonts.poppins(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ChoiceChip(
+                          label: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.sort_by_alpha_rounded, size: 18),
+                              const SizedBox(width: 6),
+                              const Text('A-Z'),
+                            ],
+                          ),
+                          selected: tempSort == 'alpha',
+                          selectedColor: const Color(0xFF6A5AE0).withOpacity(0.35),
+                          onSelected: (_) => setStateSheet(() => tempSort = 'alpha'),
+                        ),
+                        ChoiceChip(
+                          label: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.star_rounded, size: 18),
+                              const SizedBox(width: 6),
+                              const Text('Mieux notées'),
+                            ],
+                          ),
+                          selected: tempSort == 'rating',
+                          selectedColor: const Color(0xFF6A5AE0).withOpacity(0.35),
+                          onSelected: (_) => setStateSheet(() => tempSort = 'rating'),
+                        ),
+                      ],
+                    ),
+                    if (_catalogGroups.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          const Icon(Icons.group_rounded, size: 16, color: Color(0xFF6A5AE0)),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Groupes visibles',
+                            style: GoogleFonts.poppins(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey[700],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          FilterChip(
+                            label: const Text('Tous les groupes'),
+                            selected: tempGroups.isEmpty,
+                            onSelected: (_) => setStateSheet(() => tempGroups.clear()),
+                          ),
+                          for (final group in _catalogGroups)
+                            FilterChip(
+                              label: Text(group['name'] ?? ''),
+                              selected: tempGroups.contains(group['id']),
+                              onSelected: (_) {
+                                final id = group['id'];
+                                if (id == null) return;
+                                setStateSheet(() {
+                                  if (tempGroups.contains(id)) {
+                                    tempGroups.remove(id);
+                                  } else {
+                                    tempGroups.add(id);
+                                  }
+                                });
+                              },
+                            ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () {
+                              setStateSheet(() {
+                                tempImport = 'all';
+                                tempSort = 'alpha';
+                                tempGroups.clear();
+                              });
+                            },
+                            child: Text(
+                              'Réinitialiser',
+                              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              setState(() {
+                                _catalogImportFilter = tempImport;
+                                _catalogSortMode = tempSort;
+                                _selectedCatalogGroupIds = tempGroups;
+                              });
+                              Navigator.pop(ctx);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF6A5AE0),
+                              foregroundColor: Colors.white,
+                            ),
+                            child: Text(
+                              'Appliquer',
+                              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _fetchCatalogRecipes() async {
     setState(() => _catalogLoading = true);
     final groupId = await GroupRepository.instance.getCurrentGroupId();
     if (groupId == null) {
-      if (mounted) setState(() { _catalogRecipes = []; _catalogLoading = false; });
+      if (mounted) {
+        setState(() {
+          _catalogRecipes = [];
+          _catalogGroups = [];
+          _selectedCatalogGroupIds.clear();
+          _catalogLoading = false;
+        });
+      }
       return;
     }
     final groupDoc = await FirebaseFirestore.instance.collection('groups').doc(groupId).get();
     if (!groupDoc.exists) {
-      if (mounted) setState(() { _catalogRecipes = []; _catalogLoading = false; });
+      if (mounted) {
+        setState(() {
+          _catalogRecipes = [];
+          _catalogGroups = [];
+          _selectedCatalogGroupIds.clear();
+          _catalogLoading = false;
+        });
+      }
       return;
     }
     final visibleGroupIds = List<String>.from(
       (groupDoc.data() as Map<String, dynamic>)['visibleGroupIds'] ?? [],
     );
     if (visibleGroupIds.isEmpty) {
-      if (mounted) setState(() { _catalogRecipes = []; _catalogLoading = false; });
+      if (mounted) {
+        setState(() {
+          _catalogRecipes = [];
+          _catalogGroups = [];
+          _selectedCatalogGroupIds.clear();
+          _catalogLoading = false;
+        });
+      }
       return;
     }
     // Fetch group names and recipes in parallel
@@ -197,6 +726,10 @@ class _RecipesPageState extends State<RecipesPage> {
         groupNames[snap.id] = (snap.data() as Map<String, dynamic>)['name'] as String? ?? snap.id;
       }
     }
+    final availableGroups = groupNames.entries
+        .map((e) => <String, String>{'id': e.key, 'name': e.value})
+        .toList()
+      ..sort((a, b) => (a['name'] ?? '').compareTo(b['name'] ?? ''));
     final recipesSnap = results[1] as QuerySnapshot;
     final recipes = recipesSnap.docs.map((doc) {
       final data = Map<String, dynamic>.from(doc.data() as Map<String, dynamic>);
@@ -207,6 +740,10 @@ class _RecipesPageState extends State<RecipesPage> {
       ..sort((a, b) => (a['title'] as String? ?? '').compareTo(b['title'] as String? ?? ''));
     setState(() {
       _catalogRecipes = recipes;
+      _catalogGroups = availableGroups;
+      _selectedCatalogGroupIds.removeWhere(
+        (id) => !availableGroups.any((g) => g['id'] == id),
+      );
       _catalogLoading = false;
     });
   }
@@ -327,187 +864,129 @@ class _RecipesPageState extends State<RecipesPage> {
                   ),
                 ),
 
-                // IMPORT FILTER (catalogue only)
+                // BARRE COMPACTE CATALOGUE (recherche + filtres)
                 if (_showCatalog)
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
+                    padding: const EdgeInsets.fromLTRB(24, 4, 24, 4),
                     child: Row(
                       children: [
-                        _buildImportFilterChip('all', 'Toutes'),
+                        Expanded(
+                          child: TextField(
+                            decoration: InputDecoration(
+                              hintText: 'Rechercher dans le catalogue...',
+                              prefixIcon: const Icon(Icons.search, size: 20),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                            ),
+                            onChanged: (value) => setState(() => _titleFilter = value),
+                          ),
+                        ),
                         const SizedBox(width: 8),
-                        _buildImportFilterChip('notImported', 'Non importées'),
-                        const SizedBox(width: 8),
-                        _buildImportFilterChip('imported', 'Importées'),
+                        OutlinedButton.icon(
+                          onPressed: _openCatalogFiltersSheet,
+                          icon: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              const Icon(Icons.tune_rounded, size: 18),
+                              if (_catalogActiveFiltersCount() > 0)
+                                Positioned(
+                                  right: -7,
+                                  top: -7,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF6A5AE0),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      '${_catalogActiveFiltersCount()}',
+                                      style: GoogleFonts.poppins(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          label: Text(
+                            'Filtres',
+                            style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Color(0xFF6A5AE0)),
+                            foregroundColor: const Color(0xFF6A5AE0),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
                       ],
                     ),
                   ),
 
-                // CATEGORY FILTER (groupe only)
-                if (!_showCatalog && !_categoriesLoading)
-                  SizedBox(
-                    height: 50,
-                    child: ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _allCategories.length + 1,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
-                      itemBuilder: (context, index) {
-                        if (index == 0) {
-                          // "Tout" filter
-                          final isSelected = _selectedCategoryIds.isEmpty;
-                          final baseColor = const Color(0xFF6A5AE0);
-                          
-                          // Consistent text color
-                          final hsl = HSLColor.fromColor(baseColor);
-                          final startLightness = hsl.lightness;
-                          final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
-                          final textColor = hsl.withLightness(textLightness).toColor();
-
-                          return FilterChip(
-                            label: Text(
-                              'Toutes',
-                              style: TextStyle(
-                                fontSize: 13, 
-                                fontWeight: FontWeight.w600,
-                                color: textColor
-                              ),
-                            ),
-                            selected: isSelected,
-                            onSelected: (bool selected) {
-                              setState(() {
-                                _selectedCategoryIds.clear();
-                              });
-                            },
-                            backgroundColor: baseColor.withOpacity(0.15),
-                            selectedColor: baseColor.withOpacity(0.35),
-                            checkmarkColor: textColor,
-                            side: BorderSide.none,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                          );
-                        }
-                        
-                        final category = _allCategories[index - 1];
-                        final catId = category['id']!;
-                        final isSelected = _selectedCategoryIds.contains(catId);
-                        
-                        final colorVal = category['color'] as int? ?? 0xFF6A5AE0;
-                        final categoryColor = Color(colorVal);
-
-                        // Contrast logic matching the display badges
-                        final hsl = HSLColor.fromColor(categoryColor);
-                        final startLightness = hsl.lightness;
-                        final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
-                        final textColor = hsl.withLightness(textLightness).toColor();
-
-                        return FilterChip(
-                          label: Text(
-                            category['name'] ?? '',
-                            style: GoogleFonts.poppins(
-                              fontSize: 13, 
-                              fontWeight: FontWeight.w600,
-                              color: textColor
-                            )
-                          ),
-                          selected: isSelected,
-                          onSelected: (bool selected) {
-                            setState(() {
-                              if (selected) {
-                                _selectedCategoryIds.add(catId);
-                              } else {
-                                _selectedCategoryIds.remove(catId);
-                              }
-                            });
-                          },
-                          // Unselected: 0.15 opacity. Selected: 0.35 opacity (darker but still light enough for text)
-                          backgroundColor: categoryColor.withOpacity(0.15),
-                          selectedColor: categoryColor.withOpacity(0.35),
-                          checkmarkColor: textColor,
-                          side: BorderSide.none, 
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                        );
-                      },
-                    ),
-                  ),
-
-                // SORT & FILTRE STATS (groupe seulement)
+                // BARRE COMPACTE GROUPE (recherche + filtres)
                 if (!_showCatalog)
-                Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          _buildSortChip(Icons.sort_by_alpha_rounded, 'A-Z', _sortMode == 'alpha',
-                              () => setState(() => _sortMode = 'alpha')),
-                          const SizedBox(width: 8),
-                          _buildSortChip(Icons.star_rounded, 'Mieux notées', _sortMode == 'rating',
-                              () => setState(() => _sortMode = 'rating')),
-                          const SizedBox(width: 8),
-                          _buildSortChip(Icons.bar_chart_rounded, 'Plus cuisinées', _sortMode == 'usage',
-                              () => setState(() => _sortMode = 'usage')),
-                          const SizedBox(width: 8),
-                          _buildSortChip(Icons.bar_chart_rounded, 'Jamais cuisinées', _sortMode == 'unused',
-                              () => setState(() => _sortMode = _sortMode == 'unused' ? 'alpha' : 'unused')),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                // FILTRE TITRE (toujours visible)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
-                  child: TextField(
-                    decoration: InputDecoration(
-                      hintText: 'Filtrer par titre...',
-                      prefixIcon: const Icon(Icons.search),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                    ),
-                    onChanged: (value) => setState(() => _titleFilter = value),
-                  ),
-                ),
-                if (!_showCatalog && _ingredientsLoading)
-                  const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Center(child: CircularProgressIndicator()),
-                  )
-                else if (!_showCatalog) ...[
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
-                    child: IngredientAutocomplete(
-                      selectedIngredientIds: _selectedIngredientIds,
-                      onIngredientSelected: (ingredient) {
-                        setState(() {
-                          _selectedIngredientIds.add(ingredient['id']!);
-                        });
-                      },
-                      controller: TextEditingController(),
+                    padding: const EdgeInsets.fromLTRB(24, 4, 24, 4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            decoration: InputDecoration(
+                              hintText: 'Filtrer par titre...',
+                              prefixIcon: const Icon(Icons.search, size: 20),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                            ),
+                            onChanged: (value) => setState(() => _titleFilter = value),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          onPressed: _openGroupFiltersSheet,
+                          icon: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              const Icon(Icons.tune_rounded, size: 18),
+                              if (_groupActiveFiltersCount() > 0)
+                                Positioned(
+                                  right: -7,
+                                  top: -7,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF6A5AE0),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      '${_groupActiveFiltersCount()}',
+                                      style: GoogleFonts.poppins(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          label: Text(
+                            'Filtres',
+                            style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Color(0xFF6A5AE0)),
+                            foregroundColor: const Color(0xFF6A5AE0),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  if (_selectedIngredientIds.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 4,
-                          children: _allIngredients
-                              .where((ing) => _selectedIngredientIds.contains(ing['id']))
-                              .map((ingredient) => Chip(
-                                    label: Text(ingredient['name'] ?? ''),
-                                    onDeleted: () {
-                                      setState(() {
-                                        _selectedIngredientIds.remove(ingredient['id']!);
-                                      });
-                                    },
-                                  ))
-                              .toList(),
-                        ),
-                      ),
-                    ),
-                ],
 
                 // COMPTEUR DE RECETTES
                 if (_showCatalog)
@@ -844,16 +1323,33 @@ class _RecipesPageState extends State<RecipesPage> {
   }
 
   List<Map<String, dynamic>> _filteredCatalogRecipes() {
-    return _catalogRecipes.where((recipe) {
+    final filtered = _catalogRecipes.where((recipe) {
       final title = recipe['title'] as String? ?? '';
+      final recipeGroupId = recipe['groupId'] as String? ?? '';
       final matchesTitle = _titleFilter.isEmpty ||
           title.toLowerCase().contains(_titleFilter.toLowerCase());
+      final matchesGroup = _selectedCatalogGroupIds.isEmpty ||
+          _selectedCatalogGroupIds.contains(recipeGroupId);
       final isImported = _groupRecipeTitles.contains(title.toLowerCase().trim());
       final matchesImportFilter = _catalogImportFilter == 'all' ||
           (_catalogImportFilter == 'imported' && isImported) ||
           (_catalogImportFilter == 'notImported' && !isImported);
-      return matchesTitle && matchesImportFilter;
+      return matchesTitle && matchesGroup && matchesImportFilter;
     }).toList();
+
+    if (_catalogSortMode == 'rating') {
+      filtered.sort((a, b) {
+        final aRating = (a['rating'] as num?)?.toDouble() ?? 0.0;
+        final bRating = (b['rating'] as num?)?.toDouble() ?? 0.0;
+        final diff = bRating.compareTo(aRating);
+        if (diff != 0) return diff;
+        final aTitle = a['title'] as String? ?? '';
+        final bTitle = b['title'] as String? ?? '';
+        return aTitle.compareTo(bTitle);
+      });
+    }
+
+    return filtered;
   }
 
   Future<void> _openCatalogRecipeDetail(Map<String, dynamic> data) async {
@@ -909,6 +1405,7 @@ class _RecipesPageState extends State<RecipesPage> {
           final servings = (recipe['servings'] as num?)?.toInt() ?? 1;
           final title = recipe['title'] as String? ?? '';
           final groupName = recipe['_groupName'] as String? ?? '';
+          final rating = (recipe['rating'] as num?)?.toDouble() ?? 0.0;
           final isImported = _groupRecipeTitles.contains(title.toLowerCase().trim());
           return Container(
             decoration: BoxDecoration(
@@ -1022,6 +1519,31 @@ class _RecipesPageState extends State<RecipesPage> {
                                   '$servings portions',
                                   const Color(0xFFFF8A65),
                                 ),
+                                if (rating > 0) ...[
+                                  const SizedBox(width: 12),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFFA726).withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.star_rounded, size: 13, color: Color(0xFFFFA726)),
+                                        const SizedBox(width: 3),
+                                        Text(
+                                          '${rating.toStringAsFixed(rating % 1 == 0 ? 0 : 1)}/5',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
+                                            color: const Color(0xFFFFA726),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ],
                             ),
                           ],

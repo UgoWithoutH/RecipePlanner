@@ -12,16 +12,15 @@ class FirebaseCategoryRepository {
 
   static void invalidateCache() => _cache.clear();
 
-  Future<String> _getGroupId() async {
-    final groupId = await GroupRepository.instance.getCurrentGroupId();
-    if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
-    return groupId;
+  Future<String?> _getGroupId() async {
+    return GroupRepository.instance.getCurrentGroupId();
   }
 
   // ignore: unintended_html_in_doc_comment
   /// Fetch all categories from Firestore and convert to List<Map<String, String\u003c\u003e>>
   Future<List<Category>> getCategories() async {
     final groupId = await _getGroupId();
+    if (groupId == null) return [];
     if (_cache.containsKey(groupId)) return _cache[groupId]!;
 
     final snap = await _categories
@@ -41,6 +40,7 @@ class FirebaseCategoryRepository {
   /// Add a new category
   Future<void> addCategory(String name, int color) async {
     final groupId = await _getGroupId();
+    if (groupId == null) return;
     await _categories.add({'name': name, 'color': color, 'groupId': groupId});
     invalidateCache();
   }

@@ -15,15 +15,14 @@ class FirebaseMealPlanRepository {
 
   static void invalidateCache() => _cache.clear();
 
-  Future<String> _getGroupId() async {
-    final groupId = await GroupRepository.instance.getCurrentGroupId();
-    if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
-    return groupId;
+  Future<String?> _getGroupId() async {
+    return GroupRepository.instance.getCurrentGroupId();
   }
 
   /// Save a new meal plan to Firestore (replaces any existing plan)
   Future<String> saveMealPlan(MealPlan mealPlan) async {
     final groupId = await _getGroupId();
+    if (groupId == null) throw Exception('Pas de groupe assigné. Contactez l\'administrateur.');
     final data = mealPlan.toFirestore();
     data['groupId'] = groupId;
 
@@ -58,6 +57,7 @@ class FirebaseMealPlanRepository {
   /// Fetch all meal plans
   Future<List<MealPlan>> getAllMealPlans() async {
     final groupId = await _getGroupId();
+    if (groupId == null) return [];
     if (_cache.containsKey(groupId)) return _cache[groupId]!;
     final snapshot = await _mealPlans
         .where('groupId', isEqualTo: groupId)

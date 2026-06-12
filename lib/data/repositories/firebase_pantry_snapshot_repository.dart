@@ -60,16 +60,15 @@ class FirebasePantrySnapshotRepository {
   final CollectionReference _col =
       FirebaseFirestore.instance.collection('pantry_snapshots');
 
-  Future<String> _groupId() async {
-    final id = await GroupRepository.instance.getCurrentGroupId();
-    if (id == null) throw Exception('Aucun groupe trouvé.');
-    return id;
+  Future<String?> _groupId() async {
+    return GroupRepository.instance.getCurrentGroupId();
   }
 
   /// Remplace l'éventuel snapshot existant par un nouveau basé sur [items].
   /// Appelé juste après la génération d'un plan.
   Future<void> save(List<PantryItem> items) async {
     final gid = await _groupId();
+    if (gid == null) return;
     await _col.doc(gid).set({
       'groupId': gid,
       'createdAt': DateTime.now().toUtc().toIso8601String(),
@@ -80,6 +79,7 @@ class FirebasePantrySnapshotRepository {
   /// Retourne les items du snapshot courant, ou une liste vide si inexistant.
   Future<List<PantrySnapshotItem>> get() async {
     final gid = await _groupId();
+    if (gid == null) return [];
     final doc = await _col.doc(gid).get();
     if (!doc.exists) return [];
     final data = doc.data() as Map<String, dynamic>;
@@ -92,6 +92,7 @@ class FirebasePantrySnapshotRepository {
   /// Supprime le snapshot (ex : lors de la suppression d'un plan).
   Future<void> delete() async {
     final gid = await _groupId();
+    if (gid == null) return;
     await _col.doc(gid).delete();
   }
 }

@@ -202,12 +202,14 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
         }
       }
 
-      // 3. Last resort: query by TITLE (exact or capitalized)
+      // 3. Last resort: query by TITLE (exact or capitalized) — scoped to current group
       if (data == null && widget.initialRecipe != null) {
+        final groupId = await GroupRepository.instance.getCurrentGroupId();
         // Try exact title first
         var titleQuery = await firestore
           .collection('recipes')
           .where('title', isEqualTo: widget.initialRecipe!.title)
+          .where('groupId', isEqualTo: groupId)
           .limit(1)
           .get();
         
@@ -219,6 +221,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             titleQuery = await firestore
              .collection('recipes')
              .where('title', isEqualTo: capitalized)
+             .where('groupId', isEqualTo: groupId)
              .limit(1)
              .get();
           }

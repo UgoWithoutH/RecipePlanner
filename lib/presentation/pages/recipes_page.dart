@@ -39,7 +39,7 @@ class _RecipesPageState extends State<RecipesPage> {
   String _catalogImportFilter = 'notImported'; // 'all', 'imported', 'notImported'
 
   Map<String, int> _recipeCounts = {};
-  String _sortMode = 'alpha'; // 'alpha' | 'usage' | 'unused'
+  String _sortMode = 'alpha'; // 'alpha' | 'usage' | 'unused' | 'rating'
 
   late Future<List<Recipe>> _recipesFuture;
 
@@ -440,6 +440,9 @@ class _RecipesPageState extends State<RecipesPage> {
                           _buildSortChip(Icons.sort_by_alpha_rounded, 'A-Z', _sortMode == 'alpha',
                               () => setState(() => _sortMode = 'alpha')),
                           const SizedBox(width: 8),
+                          _buildSortChip(Icons.star_rounded, 'Mieux notées', _sortMode == 'rating',
+                              () => setState(() => _sortMode = 'rating')),
+                          const SizedBox(width: 8),
                           _buildSortChip(Icons.bar_chart_rounded, 'Plus cuisinées', _sortMode == 'usage',
                               () => setState(() => _sortMode = 'usage')),
                           const SizedBox(width: 8),
@@ -539,6 +542,11 @@ class _RecipesPageState extends State<RecipesPage> {
                         final diff = (_recipeCounts[b.id] ?? 0).compareTo(_recipeCounts[a.id] ?? 0);
                         return diff != 0 ? diff : a.title.compareTo(b.title);
                       });
+                    } else if (_sortMode == 'rating') {
+                      filteredRecipes.sort((a, b) {
+                        final diff = b.rating.compareTo(a.rating);
+                        return diff != 0 ? diff : a.title.compareTo(b.title);
+                      });
                     }
                     return Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
@@ -579,6 +587,11 @@ class _RecipesPageState extends State<RecipesPage> {
                       if (_sortMode == 'usage') {
                         filteredRecipes.sort((a, b) {
                           final diff = (_recipeCounts[b.id] ?? 0).compareTo(_recipeCounts[a.id] ?? 0);
+                          return diff != 0 ? diff : a.title.compareTo(b.title);
+                        });
+                      } else if (_sortMode == 'rating') {
+                        filteredRecipes.sort((a, b) {
+                          final diff = b.rating.compareTo(a.rating);
                           return diff != 0 ? diff : a.title.compareTo(b.title);
                         });
                       }
@@ -726,6 +739,31 @@ class _RecipesPageState extends State<RecipesPage> {
                                                             fontSize: 11,
                                                             fontWeight: FontWeight.w700,
                                                             color: const Color(0xFFF57C00),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ],
+                                                if (recipe.rating > 0) ...[
+                                                  const SizedBox(width: 12),
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(0xFFFFA726).withOpacity(0.12),
+                                                      borderRadius: BorderRadius.circular(20),
+                                                    ),
+                                                    child: Row(
+                                                      mainAxisSize: MainAxisSize.min,
+                                                      children: [
+                                                        const Icon(Icons.star_rounded, size: 13, color: Color(0xFFFFA726)),
+                                                        const SizedBox(width: 3),
+                                                        Text(
+                                                          '${recipe.rating.toInt()}/5',
+                                                          style: GoogleFonts.poppins(
+                                                            fontSize: 11,
+                                                            fontWeight: FontWeight.w700,
+                                                            color: const Color(0xFFFFA726),
                                                           ),
                                                         ),
                                                       ],

@@ -64,6 +64,7 @@ class _PlannerPageState extends State<PlannerPage> {
   DateTime? _selectedStartDate = DateTime.now();
   int? _selectedDuration = 7;
   Set<String> _selectedCategories = {}; // category IDs
+  double _selectedMinRating = 0.0; // 0 => all rated recipes allowed
   List<RecipeIngredient> _pantryIngredients = [];
   List<PantryItem> _rawPantryItems = [];
   Set<String> _urgentPantryNames = {};
@@ -115,6 +116,7 @@ class _PlannerPageState extends State<PlannerPage> {
   static const _kPrefKeyCategories = 'selected_category_ids';
   static const _kPrefKeyDuration = 'planner_duration_days';
   static const _kPrefKeyLockedSlots = 'multi_shuffle_locked_slots';
+  static const _kPrefKeyMinRating = 'planner_min_rating';
 
   @override
   void initState() {
@@ -185,6 +187,12 @@ class _PlannerPageState extends State<PlannerPage> {
       setState(() => _selectedDuration = savedDuration);
     }
 
+    // Load minimum rating
+    final savedMinRating = prefs.getDouble(_kPrefKeyMinRating);
+    if (savedMinRating != null && mounted) {
+      setState(() => _selectedMinRating = savedMinRating.clamp(0.0, 5.0));
+    }
+
     // Load persisted locked slots (multi-shuffle)
     final savedLocked = prefs.getStringList(_kPrefKeyLockedSlots);
     if (savedLocked != null) {
@@ -202,9 +210,46 @@ class _PlannerPageState extends State<PlannerPage> {
     await prefs.setInt(_kPrefKeyDuration, duration);
   }
 
+  Future<void> _saveMinRating(double rating) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kPrefKeyMinRating, rating);
+  }
+
   Future<void> _saveLockedSlots(Set<String> slotKeys) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(_kPrefKeyLockedSlots, slotKeys.toList());
+  }
+
+  bool _passesMinRatingFilter(Recipe recipe) {
+    final rating = recipe.rating;
+    // Recettes non notées (0) toujours autorisées, quel que soit le minimum choisi.
+    if (rating <= 0) return true;
+    return rating >= _selectedMinRating;
+  }
+
+  List<Recipe> _applyPlannerRecipeFilters(List<Recipe> recipes) {
+    final validSelectedCategories =
+        _selectedCategories.where((id) => _categoryDataById.containsKey(id)).toSet();
+
+    final categoryFiltered = validSelectedCategories.isEmpty
+        ? recipes
+        : recipes
+            .where(
+              (r) => r.categoryIds.any((c) => validSelectedCategories.contains(c)),
+            )
+            .toList();
+
+    return categoryFiltered.where(_passesMinRatingFilter).toList();
+  }
+
+  String _minRatingValueLabel() {
+    if (_selectedMinRating <= 0) return 'Toutes (inclut non notées)';
+    return '≥ ${_selectedMinRating.toInt()}/5 (+ non notées)';
+  }
+
+  Future<void> _saveMinRatingAndApply(double rating) async {
+    if (mounted) setState(() => _selectedMinRating = rating);
+    await _saveMinRating(rating);
   }
 
   /// Charge les noms des utilisateurs du groupe dans [_userNames].
@@ -737,222 +782,189 @@ class _PlannerPageState extends State<PlannerPage> {
     final dataById = _categoryDataById;
 
     final validCategoryIds = allCategories.map((e) => e['id'] as String).toSet();
-    final tempSelected = Set<String>.from(_selectedCategories.where((id) => validCategoryIds.contains(id)));
+    // Si aucune catégorie n'est sélectionnée (= "Toutes"), ouvrir avec tout coché.
+    final tempSelected = _selectedCategories.isEmpty
+        ? Set<String>.from(validCategoryIds)
+        : Set<String>.from(_selectedCategories.where((id) => validCategoryIds.contains(id)));
 
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (_) => StatefulBuilder(
         builder: (context, setStateDialog) {
           final isAllSelected = tempSelected.length == validCategoryIds.length;
           final isNoneSelected = tempSelected.isEmpty;
 
-          return Dialog(
-            backgroundColor: Colors.transparent,
-            insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-            child: Container(
-              constraints: const BoxConstraints(maxWidth: 500, maxHeight: 700),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.15),
-                    blurRadius: 20,
-                    offset: const Offset(0, 10),
+          return Container(
+            height: MediaQuery.of(context).size.height * 0.9,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Column(
+              children: [
+                // Handle bar
+                Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(top: 12, bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
                   ),
-                ],
-              ),
-              child: Column(
-                children: [
-                  // --- Header ---
-                  Container(
-                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF6A5AE0).withOpacity(0.05),
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: const BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.local_offer_rounded, color: Color(0xFF6A5AE0), size: 24),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Filtrer par catégorie',
-                                style: GoogleFonts.poppins(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                  color: const Color(0xFF1A1A1A),
-                                ),
-                              ),
-                              Text(
-                                'Sélectionnez vos préférences',
-                                style: GoogleFonts.poppins(
-                                  fontSize: 12,
-                                  color: Colors.grey[600],
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          icon: Icon(Icons.close_rounded, color: Colors.grey[400]),
-                        ),
-                      ],
+                ),
+                // --- Header ---
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    'Filtrer par catégorie',
+                    style: GoogleFonts.poppins(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF1A1A1A),
                     ),
                   ),
-
-                  // --- Quick Actions ---
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: isNoneSelected ? null : () => setStateDialog(() => tempSelected.clear()),
-                            icon: const Icon(Icons.clear_all_rounded, size: 18),
-                            label: const Text('Tout décocher'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.grey[700],
-                              side: BorderSide(color: Colors.grey.shade300),
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            ),
+                ),
+                const SizedBox(height: 12),
+                // --- Quick Actions ---
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isNoneSelected ? null : () => setStateDialog(() => tempSelected.clear()),
+                          icon: const Icon(Icons.clear_all_rounded, size: 18),
+                          label: const Text('Tout décocher'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.grey[700],
+                            side: BorderSide(color: Colors.grey.shade300),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: isAllSelected ? null : () => setStateDialog(() => tempSelected.addAll(validCategoryIds)),
-                            icon: const Icon(Icons.select_all_rounded, size: 18),
-                            label: const Text('Tout cocher'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: const Color(0xFF6A5AE0),
-                              side: const BorderSide(color: Color(0xFF6A5AE0)),
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const Divider(height: 1),
-
-                  // --- Scrollable Content ---
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(24),
-                      child: Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: allCategories.map((entry) {
-                          final id = entry['id'] as String;
-                          final name = entry['name'] as String;
-                          final colorVal = entry['color'] as int;
-                          final baseColor = Color(colorVal);
-
-                          final isSelected = tempSelected.contains(id);
-                          
-                          // Improve contrast for text
-                          final hsl = HSLColor.fromColor(baseColor);
-                          final startLightness = hsl.lightness;
-                          final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
-                          final textColor = hsl.withLightness(textLightness).toColor();
-
-                          return InkWell(
-                            onTap: () {
-                              setStateDialog(() {
-                                if (isSelected) {
-                                  tempSelected.remove(id);
-                                } else {
-                                  tempSelected.add(id);
-                                }
-                              });
-                            },
-                            borderRadius: BorderRadius.circular(20),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                              decoration: BoxDecoration(
-                                color: isSelected 
-                                    ? baseColor.withOpacity(0.35) 
-                                    : baseColor.withOpacity(0.15),
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: isSelected 
-                                      ? baseColor.withOpacity(0.5) 
-                                      : Colors.transparent,
-                                  width: 1.5,
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    name,
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                      color: textColor,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }).toList(),
                       ),
-                    ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isAllSelected ? null : () => setStateDialog(() => tempSelected.addAll(validCategoryIds)),
+                          icon: const Icon(Icons.select_all_rounded, size: 18),
+                          label: const Text('Tout cocher'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF6A5AE0),
+                            side: const BorderSide(color: Color(0xFF6A5AE0)),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
+                ),
 
-                  // --- Bottom Validation Bar ---
-                  Container(
+                const Divider(height: 1),
+
+                // --- Scrollable Content ---
+                Expanded(
+                  child: SingleChildScrollView(
                     padding: const EdgeInsets.all(24),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      border: Border(top: BorderSide(color: Colors.grey.shade100)),
-                      borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
-                    ),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF6A5AE0),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        ),
-                        child: Text(
-                          tempSelected.isEmpty 
-                              ? 'Aucun filtre (Tout voir)' 
-                              : isAllSelected
-                                  ? 'Toutes'
-                                  : 'Valider (${tempSelected.length})',
-                          style: GoogleFonts.poppins(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
+                    child: Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: allCategories.map((entry) {
+                        final id = entry['id'] as String;
+                        final name = entry['name'] as String;
+                        final colorVal = entry['color'] as int;
+                        final baseColor = Color(colorVal);
+
+                        final isSelected = tempSelected.contains(id);
+
+                        // Improve contrast for text
+                        final hsl = HSLColor.fromColor(baseColor);
+                        final startLightness = hsl.lightness;
+                        final textLightness = startLightness > 0.4 ? 0.4 : startLightness;
+                        final textColor = hsl.withLightness(textLightness).toColor();
+
+                        return InkWell(
+                          onTap: () {
+                            setStateDialog(() {
+                              if (isSelected) {
+                                tempSelected.remove(id);
+                              } else {
+                                tempSelected.add(id);
+                              }
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(20),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? baseColor.withOpacity(0.35)
+                                  : baseColor.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: isSelected
+                                    ? baseColor.withOpacity(0.5)
+                                    : Colors.transparent,
+                                width: 1.5,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  name,
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: textColor,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+
+                // --- Bottom Validation Bar ---
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border(top: BorderSide(color: Colors.grey.shade100)),
+                  ),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6A5AE0),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      child: Text(
+                        tempSelected.isEmpty
+                            ? 'Aucun filtre (Tout voir)'
+                            : isAllSelected
+                                ? 'Toutes'
+                                : 'Valider (${tempSelected.length})',
+                        style: GoogleFonts.poppins(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
                         ),
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           );
         }
@@ -1005,96 +1017,89 @@ class _PlannerPageState extends State<PlannerPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => DraggableScrollableSheet(
-        initialChildSize: 0.55,
-        minChildSize: 0.35,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (_, controller) => Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            children: [
-              const SizedBox(height: 12),
-              Container(
-                width: 40, height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
+      builder: (ctx) => Container(
+        height: MediaQuery.of(ctx).size.height * 0.9,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(top: 12, bottom: 16),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
               ),
-              const SizedBox(height: 16),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  children: [
-                    const Icon(Icons.kitchen_rounded, color: Color(0xFF6A5AE0), size: 22),
-                    const SizedBox(width: 10),
-                    Text(
-                      'Frigo / Placard de ce plan',
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Row(
+                children: [
+                  const Icon(Icons.kitchen_rounded, color: Color(0xFF6A5AE0), size: 22),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Frigo / Placard de ce plan',
+                    style: GoogleFonts.poppins(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF1A1A1A),
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${_pantrySnapshot.length} article${_pantrySnapshot.length > 1 ? 's' : ''}',
                       style: GoogleFonts.poppins(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        color: const Color(0xFF1A1A1A),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF6A5AE0),
                       ),
                     ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF6A5AE0).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        '${_pantrySnapshot.length} article${_pantrySnapshot.length > 1 ? 's' : ''}',
-                        style: GoogleFonts.poppins(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: const Color(0xFF6A5AE0),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 4),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  'Snapshot figé au moment de la génération du plan',
-                  style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[400]),
-                ),
+            ),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                'Snapshot figé au moment de la génération du plan',
+                style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[400]),
               ),
-              const SizedBox(height: 12),
-              const Divider(height: 1),
-              Expanded(
-                child: ListView(
-                  controller: controller,
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                  children: [
-                      if (urgent.isNotEmpty) ...[
-                      _buildSnapshotSuperLabel('🔥 Urgents', Colors.orange.shade700),
-                      for (final key in _sortedKeys(urgentGroups)) ...[
-                        _buildSnapshotCategoryLabel(key),
-                        ...urgentGroups[key]!.map(_buildSnapshotItemRow),
-                      ],
-                      const SizedBox(height: 8),
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                children: [
+                  if (urgent.isNotEmpty) ...[
+                    _buildSnapshotSuperLabel('🔥 Urgents', Colors.orange.shade700),
+                    for (final key in _sortedKeys(urgentGroups)) ...[
+                      _buildSnapshotCategoryLabel(key),
+                      ...urgentGroups[key]!.map(_buildSnapshotItemRow),
                     ],
-                    if (normal.isNotEmpty) ...[
-                      if (urgent.isNotEmpty)
-                        _buildSnapshotSuperLabel('Normaux', const Color(0xFF6A5AE0)),
-                      for (final key in _sortedKeys(normalGroups)) ...[
-                        _buildSnapshotCategoryLabel(key),
-                        ...normalGroups[key]!.map(_buildSnapshotItemRow),
-                      ],
+                    const SizedBox(height: 8),
+                  ],
+                  if (normal.isNotEmpty) ...[
+                    if (urgent.isNotEmpty)
+                      _buildSnapshotSuperLabel('Normaux', const Color(0xFF6A5AE0)),
+                    for (final key in _sortedKeys(normalGroups)) ...[
+                      _buildSnapshotCategoryLabel(key),
+                      ...normalGroups[key]!.map(_buildSnapshotItemRow),
                     ],
                   ],
-                ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -1165,96 +1170,89 @@ class _PlannerPageState extends State<PlannerPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => DraggableScrollableSheet(
-        initialChildSize: 0.55,
-        minChildSize: 0.35,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (_, controller) => Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            children: [
-              const SizedBox(height: 12),
-              Container(
-                width: 40, height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
+      builder: (ctx) => Container(
+        height: MediaQuery.of(ctx).size.height * 0.9,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(top: 12, bottom: 16),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
               ),
-              const SizedBox(height: 16),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  children: [
-                    const Icon(Icons.kitchen_rounded, color: Color(0xFF6A5AE0), size: 22),
-                    const SizedBox(width: 10),
-                    Text(
-                      'Frigo / Placard',
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Row(
+                children: [
+                  const Icon(Icons.kitchen_rounded, color: Color(0xFF6A5AE0), size: 22),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Frigo / Placard',
+                    style: GoogleFonts.poppins(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF1A1A1A),
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${items.length} article${items.length > 1 ? 's' : ''}',
                       style: GoogleFonts.poppins(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        color: const Color(0xFF1A1A1A),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF6A5AE0),
                       ),
                     ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF6A5AE0).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        '${items.length} article${items.length > 1 ? 's' : ''}',
-                        style: GoogleFonts.poppins(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: const Color(0xFF6A5AE0),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 4),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  'État actuel du frigo/placard',
-                  style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[400]),
-                ),
+            ),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                'État actuel du frigo/placard',
+                style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[400]),
               ),
-              const SizedBox(height: 12),
-              const Divider(height: 1),
-              Expanded(
-                child: ListView(
-                  controller: controller,
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                  children: [
-                    if (urgent.isNotEmpty) ...[
-                      _buildSnapshotSuperLabel('🔥 Urgents', Colors.orange.shade700),
-                      for (final key in _sortedKeysPantry(urgentGroups)) ...[
-                        _buildSnapshotCategoryLabel(key),
-                        ...urgentGroups[key]!.map(buildRow),
-                      ],
-                      const SizedBox(height: 8),
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                children: [
+                  if (urgent.isNotEmpty) ...[
+                    _buildSnapshotSuperLabel('🔥 Urgents', Colors.orange.shade700),
+                    for (final key in _sortedKeysPantry(urgentGroups)) ...[
+                      _buildSnapshotCategoryLabel(key),
+                      ...urgentGroups[key]!.map(buildRow),
                     ],
-                    if (normal.isNotEmpty) ...[
-                      if (urgent.isNotEmpty)
-                        _buildSnapshotSuperLabel('Normaux', const Color(0xFF6A5AE0)),
-                      for (final key in _sortedKeysPantry(normalGroups)) ...[
-                        _buildSnapshotCategoryLabel(key),
-                        ...normalGroups[key]!.map(buildRow),
-                      ],
+                    const SizedBox(height: 8),
+                  ],
+                  if (normal.isNotEmpty) ...[
+                    if (urgent.isNotEmpty)
+                      _buildSnapshotSuperLabel('Normaux', const Color(0xFF6A5AE0)),
+                    for (final key in _sortedKeysPantry(normalGroups)) ...[
+                      _buildSnapshotCategoryLabel(key),
+                      ...normalGroups[key]!.map(buildRow),
                     ],
                   ],
-                ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -1575,13 +1573,7 @@ class _PlannerPageState extends State<PlannerPage> {
 
       if (mounted) setState(() { _generationProgress = 0.02; _generationStep = 'Filtrage des recettes…'; });
 
-      // Apply category filter for planning only (not for history duration)
-      // Only consider categories that exist in our loaded map (ignores deleted categories)
-      final validSelectedCategories = _selectedCategories.where((id) => _categoryDataById.containsKey(id)).toSet();
-
-      final recipes = validSelectedCategories.isEmpty
-          ? allRecipes
-          : allRecipes.where((r) => r.categoryIds.any((c) => validSelectedCategories.contains(c))).toList();
+      final recipes = _applyPlannerRecipeFilters(allRecipes);
 
       if (recipes.isEmpty) {
         if (mounted) {
@@ -1593,7 +1585,7 @@ class _PlannerPageState extends State<PlannerPage> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Aucune recette trouvée pour les catégories sélectionnées.',
+                      'Aucune recette trouvée pour les filtres sélectionnés.',
                       style: GoogleFonts.poppins(color: Colors.white),
                     ),
                   ),
@@ -1718,10 +1710,13 @@ class _PlannerPageState extends State<PlannerPage> {
             for (final m in hMeals) {
               final type = m.type == MealType.lunch ? 'MIDI ' : 'SOIR ';
               final leftover = m.isLeftoverMeal ? ' [RESTE]' : '';
+              final rating = m.recipe.rating > 0
+                  ? ' | note ${m.recipe.rating.toStringAsFixed(m.recipe.rating % 1 == 0 ? 0 : 1)}/5'
+                  : ' | note -';
               final portions = m.userServings.isEmpty
                   ? '${m.totalServings} portion(s)'
                   : m.userServings.entries.map((e) => '${e.key.substring(0,6)}:${e.value}p').join(', ');
-              debugPrint('[PLAN]   $day $type| ${m.recipe.title}$leftover  ($portions)');
+              debugPrint('[PLAN]   $day $type| ${m.recipe.title}$leftover$rating  ($portions)');
             }
           }
         }
@@ -1741,10 +1736,13 @@ class _PlannerPageState extends State<PlannerPage> {
             final type = m.type == MealType.lunch ? 'MIDI ' : 'SOIR ';
             final leftover = m.isLeftoverMeal ? ' [RESTE]' : '';
             final mult = m.recipeMultiplier > 1 ? ' x${m.recipeMultiplier}' : '';
+            final rating = m.recipe.rating > 0
+                ? ' | note ${m.recipe.rating.toStringAsFixed(m.recipe.rating % 1 == 0 ? 0 : 1)}/5'
+                : ' | note -';
             final portions = m.userServings.isEmpty
                 ? '${m.totalServings} portion(s)'
                 : m.userServings.entries.map((e) => '${e.key.substring(0,6)}:${e.value}p').join(', ');
-            debugPrint('[PLAN]   $day $type| ${m.recipe.title}$mult$leftover  ($portions)');
+            debugPrint('[PLAN]   $day $type| ${m.recipe.title}$mult$leftover$rating  ($portions)');
           }
         }
         debugPrint('[PLAN] ========================');
@@ -1803,6 +1801,15 @@ class _PlannerPageState extends State<PlannerPage> {
     if (!forceRefresh && _cachedRecipes != null) return _cachedRecipes!;
     _cachedRecipes = await FirebaseRecipeRepository().fetchAllRecipes();
     return _cachedRecipes!;
+  }
+
+  double _currentRecipeRating(Recipe recipe) {
+    final cachedRecipes = _cachedRecipes;
+    if (cachedRecipes == null) return recipe.rating;
+    for (final cached in cachedRecipes) {
+      if (cached.id == recipe.id) return cached.rating;
+    }
+    return recipe.rating;
   }
 
   /// Invalide le cache recettes (à appeler après ajout/modification/suppression).
@@ -1985,14 +1992,7 @@ class _PlannerPageState extends State<PlannerPage> {
         return recipe.copyWith(ingredients: resolved);
       }).toList();
 
-      // Filtre catégorie.
-      final validSelectedCategories =
-          _selectedCategories.where((id) => _categoryDataById.containsKey(id)).toSet();
-      final allCategoryRecipes = validSelectedCategories.isEmpty
-          ? recipesWithNames
-          : recipesWithNames
-              .where((r) => r.categoryIds.any((c) => validSelectedCategories.contains(c)))
-              .toList();
+        final allCategoryRecipes = _applyPlannerRecipeFilters(recipesWithNames);
 
       if (kDebugMode) debugPrint('[SHUFFLE] allCategoryRecipes count: ${allCategoryRecipes.length}');
 
@@ -2726,13 +2726,7 @@ class _PlannerPageState extends State<PlannerPage> {
       return recipe.copyWith(ingredients: resolved);
     }).toList();
 
-    final validSelectedCategories =
-        _selectedCategories.where((id) => _categoryDataById.containsKey(id)).toSet();
-    final filteredRecipes = validSelectedCategories.isEmpty
-        ? allRecipes
-        : allRecipes
-            .where((r) => r.categoryIds.any((c) => validSelectedCategories.contains(c)))
-            .toList();
+    final filteredRecipes = _applyPlannerRecipeFilters(allRecipes);
     if (filteredRecipes.isEmpty) return;
 
     final users = allServings
@@ -3126,14 +3120,7 @@ class _PlannerPageState extends State<PlannerPage> {
       }).toList();
 
       // Apply category filter (same as _launchPlanning)
-      final validSelectedCategories = _selectedCategories
-          .where((id) => _categoryDataById.containsKey(id))
-          .toSet();
-      final filteredRecipes = validSelectedCategories.isEmpty
-          ? allRecipes
-          : allRecipes
-              .where((r) => r.categoryIds.any((c) => validSelectedCategories.contains(c)))
-              .toList();
+        final filteredRecipes = _applyPlannerRecipeFilters(allRecipes);
 
       if (filteredRecipes.isEmpty) return;
 
@@ -4311,12 +4298,12 @@ class _PlannerPageState extends State<PlannerPage> {
                                   selectedStartDate: _selectedStartDate,
                                   selectedDuration: _selectedDuration,
                                   selectedCategories: _selectedCategories,
+                                  selectedMinRating: _selectedMinRating,
                                   categoryDataById: _categoryDataById,
                                   pantryCount: _pantryIngredients.length,
                                   urgentCount: _urgentPantryNames.length,
                                   pantrySnapshot: _pantrySnapshot,
                                   onViewPantrySnapshot: () {
-                                    Navigator.pop(context);
                                     _showCurrentPantryDialog();
                                   },
                                   onPickDateRange: () {
@@ -4324,6 +4311,9 @@ class _PlannerPageState extends State<PlannerPage> {
                                   },
                                   onPickCategories: () {
                                     _pickCategories(onUpdated: () => setModalState(() {}));
+                                  },
+                                  onMinRatingChanged: (v) {
+                                    _saveMinRatingAndApply(v).then((_) => setModalState(() {}));
                                   },
                                   onLaunchPlanning: () {
                                     Navigator.pop(context);
@@ -4574,6 +4564,7 @@ class _PlannerPageState extends State<PlannerPage> {
                             selectedStartDate: _selectedStartDate,
                             selectedDuration: _selectedDuration,
                             selectedCategories: _selectedCategories,
+                            selectedMinRating: _selectedMinRating,
                             categoryDataById: _categoryDataById,
                             pantryCount: _pantryIngredients.length,
                             urgentCount: _urgentPantryNames.length,
@@ -4588,6 +4579,9 @@ class _PlannerPageState extends State<PlannerPage> {
                             },
                             onPickCategories: () {
                               _pickCategories(onUpdated: () => setState(() {}));
+                            },
+                            onMinRatingChanged: (v) {
+                              _saveMinRatingAndApply(v);
                             },
                             onLaunchPlanning: _launchPlanning,
                             isLoading: _isLoading,
@@ -5206,6 +5200,7 @@ class _PlannerPageState extends State<PlannerPage> {
     Widget buildMealCard(Meal meal) {
       final isKept = _multiShuffleKeptSlots.contains(_slotKey(meal.date, meal.type));
       final isSelectableMeal = _isMultiShuffleMode && !meal.isLeftoverMeal && !isPastDay;
+      final liveRating = _currentRecipeRating(meal.recipe);
 
       return Card(
         color: Colors.white,
@@ -5291,6 +5286,27 @@ class _PlannerPageState extends State<PlannerPage> {
                                   // ...badge "X pers" supprimé...
                                 ],
                               ),
+                                if (liveRating > 0) ...[
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.star_rounded,
+                                        size: 14,
+                                        color: Color(0xFFFFA726),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        '${liveRating.toStringAsFixed(liveRating % 1 == 0 ? 0 : 1)}/5',
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          color: const Color(0xFFFFA726),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               const SizedBox(height: 4),
                               // Badges
                               if (meal.isLeftoverMeal) ...[
@@ -5490,6 +5506,7 @@ class _PlannerPageState extends State<PlannerPage> {
       Widget compactRow(Meal meal) {
         final isKeptCompact = _multiShuffleKeptSlots.contains(_slotKey(meal.date, meal.type));
         final isSelectableCompact = _isMultiShuffleMode && !meal.isLeftoverMeal && !isPastDay;
+        final liveRating = _currentRecipeRating(meal.recipe);
 
         return GestureDetector(
           onTap: isSelectableCompact
@@ -5538,6 +5555,28 @@ class _PlannerPageState extends State<PlannerPage> {
                             overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14),
                           ),
+                          if (liveRating > 0) ...[
+                            const SizedBox(height: 2),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.star_rounded,
+                                  size: 12,
+                                  color: Color(0xFFFFA726),
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  '${liveRating.toStringAsFixed(liveRating % 1 == 0 ? 0 : 1)}/5',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                    color: const Color(0xFFFFA726),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                           if (meal.isLeftoverMeal)
                             Text(
                               'Restes du repas précédent',
@@ -5975,6 +6014,7 @@ class _ModernPlannerHeader extends StatelessWidget {
   final DateTime? selectedStartDate;
   final int? selectedDuration;
   final Set<String> selectedCategories;
+  final double selectedMinRating;
   
   // ID -> {id, name, color}
   final Map<String, Map<String, dynamic>> categoryDataById;
@@ -5986,6 +6026,7 @@ class _ModernPlannerHeader extends StatelessWidget {
 
   final VoidCallback onPickDateRange;
   final VoidCallback onPickCategories;
+  final ValueChanged<double> onMinRatingChanged;
   final VoidCallback onLaunchPlanning;
   final bool isLoading;
 
@@ -5993,6 +6034,7 @@ class _ModernPlannerHeader extends StatelessWidget {
     required this.selectedStartDate,
     required this.selectedDuration,
     required this.selectedCategories,
+    required this.selectedMinRating,
     required this.categoryDataById,
     required this.pantryCount,
     required this.urgentCount,
@@ -6000,6 +6042,7 @@ class _ModernPlannerHeader extends StatelessWidget {
     this.onViewPantrySnapshot,
     required this.onPickDateRange,
     required this.onPickCategories,
+    required this.onMinRatingChanged,
     required this.onLaunchPlanning,
     required this.isLoading,
   });
@@ -6196,6 +6239,118 @@ class _ModernPlannerHeader extends StatelessWidget {
                   Icon(Icons.chevron_right_rounded, color: Colors.grey[400]),
                 ],
               ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F7FA),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: selectedMinRating > 0
+                    ? const Color(0xFFFFA726).withOpacity(0.5)
+                    : Colors.grey.withOpacity(0.15),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.star_rounded, color: Color(0xFFFFA726), size: 18),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Note minimale',
+                      style: GoogleFonts.poppins(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF2D2D2D),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '(non notées toujours incluses)',
+                      style: GoogleFonts.poppins(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w400,
+                        color: Color(0xFF9E9E9E),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final v in [0, 1, 2, 3, 4, 5]) ...[  
+                        GestureDetector(
+                          onTap: () => onMinRatingChanged(v.toDouble()),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: selectedMinRating == v.toDouble()
+                                  ? const Color(0xFFFFA726)
+                                  : Colors.white,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: selectedMinRating == v.toDouble()
+                                    ? const Color(0xFFFFA726)
+                                    : Colors.grey.shade300,
+                              ),
+                            ),
+                            child: v == 0
+                                ? Text(
+                                    'Toutes',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: selectedMinRating == 0
+                                          ? Colors.white
+                                          : Colors.grey[600],
+                                    ),
+                                  )
+                                : Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.star_rounded,
+                                        size: 14,
+                                        color: selectedMinRating == v.toDouble()
+                                            ? Colors.white
+                                            : const Color(0xFFFFA726),
+                                      ),
+                                      const SizedBox(width: 3),
+                                      Text(
+                                        '≥$v',
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: selectedMinRating == v.toDouble()
+                                              ? Colors.white
+                                              : Colors.grey[700],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                          ),
+                        ),
+                        if (v < 5) const SizedBox(width: 6),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 12),

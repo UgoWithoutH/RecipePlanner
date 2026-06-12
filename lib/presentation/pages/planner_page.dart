@@ -4096,7 +4096,13 @@ class _PlannerPageState extends State<PlannerPage> {
     bool requireConfirmation = true,
   }) async {
     // Pre-load recipe count to compute a snug initial sheet height
-    final snap = await FirebaseFirestore.instance.collection('recipes').get();
+    final groupId = await GroupRepository.instance.getCurrentGroupId();
+    final snap = groupId != null
+        ? await FirebaseFirestore.instance
+            .collection('recipes')
+            .where('groupId', isEqualTo: groupId)
+            .get()
+        : await FirebaseFirestore.instance.collection('recipes').limit(0).get();
     if (!mounted) return;
     final recipeCount = snap.docs.length;
 

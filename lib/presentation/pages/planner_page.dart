@@ -6268,87 +6268,88 @@ class _ModernPlannerHeader extends StatelessWidget {
                       child: const Icon(Icons.star_rounded, color: Color(0xFFFFA726), size: 18),
                     ),
                     const SizedBox(width: 10),
-                    Text(
-                      'Note minimale',
-                      style: GoogleFonts.poppins(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: const Color(0xFF2D2D2D),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      '(non notées toujours incluses)',
-                      style: GoogleFonts.poppins(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w400,
-                        color: Color(0xFF9E9E9E),
-                      ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Note minimale',
+                          style: GoogleFonts.poppins(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF2D2D2D),
+                          ),
+                        ),
+                        Text(
+                          'non notées toujours incluses',
+                          style: GoogleFonts.poppins(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w400,
+                            color: const Color(0xFF9E9E9E),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
                 const SizedBox(height: 10),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      for (final v in [0, 1, 2, 3, 4, 5]) ...[  
-                        GestureDetector(
-                          onTap: () => onMinRatingChanged(v.toDouble()),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 150),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final v in [0, 1, 2, 3, 4, 5])
+                      GestureDetector(
+                        onTap: () => onMinRatingChanged(v.toDouble()),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: selectedMinRating == v.toDouble()
+                                ? const Color(0xFFFFA726)
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
                               color: selectedMinRating == v.toDouble()
                                   ? const Color(0xFFFFA726)
-                                  : Colors.white,
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: selectedMinRating == v.toDouble()
-                                    ? const Color(0xFFFFA726)
-                                    : Colors.grey.shade300,
-                              ),
+                                  : Colors.grey.shade300,
                             ),
-                            child: v == 0
-                                ? Text(
-                                    'Toutes',
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                      color: selectedMinRating == 0
+                          ),
+                          child: v == 0
+                              ? Text(
+                                  'Toutes',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: selectedMinRating == 0
+                                        ? Colors.white
+                                        : Colors.grey[600],
+                                  ),
+                                )
+                              : Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.star_rounded,
+                                      size: 14,
+                                      color: selectedMinRating == v.toDouble()
                                           ? Colors.white
-                                          : Colors.grey[600],
+                                          : const Color(0xFFFFA726),
                                     ),
-                                  )
-                                : Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.star_rounded,
-                                        size: 14,
+                                    const SizedBox(width: 3),
+                                    Text(
+                                      '≥$v',
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
                                         color: selectedMinRating == v.toDouble()
                                             ? Colors.white
-                                            : const Color(0xFFFFA726),
+                                            : Colors.grey[700],
                                       ),
-                                      const SizedBox(width: 3),
-                                      Text(
-                                        '≥$v',
-                                        style: GoogleFonts.poppins(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: selectedMinRating == v.toDouble()
-                                              ? Colors.white
-                                              : Colors.grey[700],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                          ),
+                                    ),
+                                  ],
+                                ),
                         ),
-                        if (v < 5) const SizedBox(width: 6),
-                      ],
-                    ],
-                  ),
+                      ),
+                  ],
                 ),
               ],
             ),

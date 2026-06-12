@@ -202,11 +202,11 @@ class GoogleAuthService {
   // Private helpers
   // ---------------------------------------------------------------------------
 
-  /// 1. Checks that the user's email is in the `allowed_emails` whitelist.
+  /// 1. Checks that the user's email exists in the `users` collection.
   /// 2. Creates (or updates) the `users/{uid}` document.
   /// 3. Returns an [AppUser] for the session.
   ///
-  /// On absence from the whitelist, signs out and throws [AccessDeniedException].
+  /// On absence from `users`, signs out and throws [AccessDeniedException].
   Future<AppUser> _verifyUserAccess(User firebaseUser) async {
     final email = firebaseUser.email;
     debugPrint('[Auth] _verifyUserAccess: uid=${firebaseUser.uid}, email=$email');
@@ -217,30 +217,12 @@ class GoogleAuthService {
       throw const AccessDeniedException();
     }
 
-    // Step 1 – whitelist check
-    debugPrint('[Auth] _verifyUserAccess: vérification dans allowed_emails pour email=$email');
-    final allowedQuery = await _firestore
-        .collection('allowed_emails')
-        .where('email', isEqualTo: email)
-        .limit(1)
-        .get();
-
-    if (allowedQuery.docs.isEmpty) {
-      debugPrint('[Auth] _verifyUserAccess: email=$email ABSENT de allowed_emails → ACCESS REFUSÉ.');
-      await signOut();
-      throw const AccessDeniedException();
-    }
-    debugPrint('[Auth] _verifyUserAccess: email=$email trouvé dans allowed_emails (doc id=${allowedQuery.docs.first.id}).');
-
-    // Step 2 – find or create the user document.
-    // Priority: users/{uid} first (fastest, avoids duplication).
-    // Fallback: search by email (handles seeded users with a different doc ID).
+    // Step 1 – Check users/{uid} directly (fast path for returning users).
     debugPrint('[Auth] _verifyUserAccess: vérification directe users/${firebaseUser.uid}');
     final uidDoc = await _firestore.collection('users').doc(firebaseUser.uid).get();
 
     late DocumentReference userRef;
     if (uidDoc.exists) {
-      // Users/{uid} already exists — just update name/email, no migration needed.
       debugPrint('[Auth] _verifyUserAccess: users/${firebaseUser.uid} trouvé → mise à jour.');
       userRef = uidDoc.reference;
       await userRef.set({
@@ -248,7 +230,7 @@ class GoogleAuthService {
         'name': firebaseUser.displayName ?? '',
       }, SetOptions(merge: true));
     } else {
-      // No doc at users/{uid}: check by email (seeded / migrated users).
+      // No doc at users/{uid}: check by email (pending invitations or seeded users).
       debugPrint('[Auth] _verifyUserAccess: recherche document users existant par email=$email');
       final existingQuery = await _firestore
           .collection('users')
@@ -256,33 +238,52 @@ class GoogleAuthService {
           .limit(1)
           .get();
 
-      if (existingQuery.docs.isNotEmpty) {
-        final seededDoc = existingQuery.docs.first;
-        debugPrint('[Auth] _verifyUserAccess: document users existant trouvé par email (id=${seededDoc.id}).');
+      if (existingQuery.docs.isEmpty) {
+        debugPrint('[Auth] _verifyUserAccess: email=$email ABSENT de users → ACCESS REFUSÉ.');
+        await signOut();
+        throw const AccessDeniedException();
+      }
 
-        if (seededDoc.id == firebaseUser.uid) {
-          // Same ID (shouldn't reach here since uidDoc.exists was false, but safety).
-          userRef = seededDoc.reference;
-          await userRef.set({
-            'email': email,
-            'name': firebaseUser.displayName ?? '',
-          }, SetOptions(merge: true));
+      final existingDoc = existingQuery.docs.first;
+      debugPrint('[Auth] _verifyUserAccess: document users trouvé par email (id=${existingDoc.id}).');
+
+      if (existingDoc.id == firebaseUser.uid) {
+        // Same ID — just update.
+        userRef = existingDoc.reference;
+        await userRef.set({
+          'email': email,
+          'name': firebaseUser.displayName ?? '',
+        }, SetOptions(merge: true));
+      } else {
+        // Pending invitation or seeded doc with different ID:
+        // create/migrate to users/{uid}.
+        debugPrint('[Auth] _verifyUserAccess: doc ID (${existingDoc.id}) ≠ Firebase UID (${firebaseUser.uid}) → migration.');
+        userRef = _firestore.collection('users').doc(firebaseUser.uid);
+        final existingData = existingDoc.data() as Map<String, dynamic>;
+        final groupId = existingData['groupId'] as String?;
+        await userRef.set({
+          'email': email,
+          'name': firebaseUser.displayName ?? existingData['name'] ?? '',
+          'role': existingData['role'] ?? 'user',
+          if (groupId != null) 'groupId': groupId,
+        }, SetOptions(merge: true));
+        debugPrint('[Auth] _verifyUserAccess: users/${firebaseUser.uid} créé.');
+
+        // Delete the old pending/seeded doc.
+        await existingDoc.reference.delete();
+        debugPrint('[Auth] _verifyUserAccess: ancien doc ${existingDoc.id} supprimé.');
+
+        // Add Firebase UID to the group.
+        if (groupId != null) {
+          await _firestore.collection('groups').doc(groupId).update({
+            'members': FieldValue.arrayUnion([firebaseUser.uid]),
+          });
+          debugPrint('[Auth] _verifyUserAccess: Firebase UID ajouté au groupe $groupId.');
         } else {
-          // Seeded doc has a different ID: create mirror at users/{uid}.
-          debugPrint('[Auth] _verifyUserAccess: doc ID (${seededDoc.id}) ≠ Firebase UID (${firebaseUser.uid}) → migration en cours...');
-          userRef = _firestore.collection('users').doc(firebaseUser.uid);
-          final seededData = seededDoc.data() as Map<String, dynamic>;
-          await userRef.set({
-            'email': email,
-            'name': firebaseUser.displayName ?? seededData['name'] ?? '',
-            'role': seededData['role'] ?? 'user',
-          }, SetOptions(merge: true));
-          debugPrint('[Auth] _verifyUserAccess: users/${firebaseUser.uid} créé.');
-
-          // Add Firebase UID to the group containing the seeded doc ID.
+          // Also check if old doc was in a group by members array.
           final groupSnap = await _firestore
               .collection('groups')
-              .where('members', arrayContains: seededDoc.id)
+              .where('members', arrayContains: existingDoc.id)
               .limit(1)
               .get();
           if (groupSnap.docs.isNotEmpty) {
@@ -291,36 +292,13 @@ class GoogleAuthService {
             });
             debugPrint('[Auth] _verifyUserAccess: Firebase UID ajouté au groupe ${groupSnap.docs.first.id}.');
           } else {
-            debugPrint('[Auth] _verifyUserAccess: aucun groupe trouvé contenant ${seededDoc.id}.');
+            debugPrint('[Auth] _verifyUserAccess: aucun groupe trouvé → utilisateur non assigné.');
           }
-        }
-      } else {
-        // Truly new user — create at users/{uid} with default role.
-        debugPrint('[Auth] _verifyUserAccess: aucun document users existant pour email=$email → création à users/${firebaseUser.uid}');
-        userRef = _firestore.collection('users').doc(firebaseUser.uid);
-        final allowedDoc = allowedQuery.docs.first;
-        final allowedData = allowedDoc.data() as Map<String, dynamic>;
-        final role = (allowedData['role'] as String?) ?? 'user';
-        await userRef.set({
-          'email': email,
-          'name': firebaseUser.displayName ?? '',
-          'role': role,
-        }, SetOptions(merge: true));
-
-        // Add the new UID to the group specified in the allowed_emails doc.
-        final groupId = allowedData['groupId'] as String?;
-        if (groupId != null) {
-          await _firestore.collection('groups').doc(groupId).update({
-            'members': FieldValue.arrayUnion([firebaseUser.uid]),
-          });
-          debugPrint('[Auth] _verifyUserAccess: Firebase UID ajouté au groupe $groupId.');
-        } else {
-          debugPrint('[Auth] _verifyUserAccess: aucun groupId dans allowed_emails → utilisateur non assigné à un groupe.');
         }
       }
     }
 
-    // Step 3 – return AppUser
+    // Step 2 – return AppUser
     final doc = await userRef.get();
     final appUser = AppUser.fromFirestore(doc.id, doc.data()! as Map<String, dynamic>);
     debugPrint('[Auth] _verifyUserAccess: AppUser créé → uid=${appUser.uid}, email=${appUser.email}, role=${appUser.role}');

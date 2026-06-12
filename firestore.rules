@@ -29,35 +29,31 @@ service cloud.firestore {
           && exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
-    // -------------------------------------------------------------------------
-    // allowed_emails collection  (admin-managed whitelist)
-    // -------------------------------------------------------------------------
-    // • Authenticated users can read (needed to check their own email).
-    // • No client-side writes.
-    // -------------------------------------------------------------------------
-    match /allowed_emails/{docId} {
-      allow read:  if request.auth != null;
-      allow write: if false;
+    function isAdmin() {
+      return request.auth != null
+          && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
     // -------------------------------------------------------------------------
-    // users collection  (one document per authenticated user, keyed by UID)
+    // users collection
     // -------------------------------------------------------------------------
-    // • get  (single doc): own document only.
-    // • list (collection query): any authenticated user — needed for the
-    //   email-based lookup in _verifyUserAccess (runs before the users/{uid}
-    //   doc exists) and for the seed reading all users.
-    // • create/update: own document only.
-    // • delete: forbidden from client.
-    // • recipeServings subcollection: any authorised user may read/write so
-    //   the seed can create servings for every user in one pass.
+    // • get/list : tout utilisateur authentifié — nécessaire pour la lookup
+    //   par email avant que users/{uid} existe (premier login).
+    // • create   : son propre doc (auth service au 1er login)
+    //              OU admin (crée des docs d'invitation avec ID aléatoire).
+    // • update   : son propre doc uniquement.
+    // • delete   : admin (suppression d'un utilisateur)
+    //              OU tout utilisateur authentifié supprimant un doc sans nom
+    //              (doc d'invitation consommé lors de la migration).
     // -------------------------------------------------------------------------
     match /users/{uid} {
-      allow get:    if request.auth != null && request.auth.uid == uid;
+      allow get:    if request.auth != null;
       allow list:   if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == uid;
+      allow create: if request.auth != null && request.auth.uid == uid || isAdmin();
       allow update: if request.auth != null && request.auth.uid == uid;
-      allow delete: if false;
+      allow delete: if isAdmin()
+                    || (request.auth != null && resource.data.get('name', '') == '');
 
       match /recipeServings/{docId} {
         allow read, write, delete: if isAuthorised();

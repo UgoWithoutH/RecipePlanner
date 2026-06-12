@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../domain/entities/recipe.dart';
 import '../../core/utils/ingredient_name_cache.dart';
+import '../widgets/ingredient_autocomplete.dart' show IngredientAutocomplete;
 
 import 'recipe_detail_page.dart';
 import 'categories_page.dart';
@@ -175,7 +176,6 @@ class _RecipesPageState extends State<RecipesPage> {
     int count = 0;
     if (_sortMode != 'alpha') count++;
     if (_selectedCategoryIds.isNotEmpty) count++;
-    if (_selectedIngredientIds.isNotEmpty) count++;
     return count;
   }
 
@@ -346,51 +346,6 @@ class _RecipesPageState extends State<RecipesPage> {
                         ],
                       ),
                     ],
-                    if (_allIngredients.isNotEmpty) ...[
-                      const SizedBox(height: 14),
-                      Row(
-                        children: [
-                          const Icon(Icons.restaurant_rounded, size: 16, color: Color(0xFF6A5AE0)),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Ingrédients',
-                            style: GoogleFonts.poppins(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.grey[700],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          FilterChip(
-                            label: const Text('Tous'),
-                            selected: tempIngredients.isEmpty,
-                            onSelected: (_) => setStateSheet(() => tempIngredients.clear()),
-                          ),
-                          for (final ingredient in _allIngredients)
-                            FilterChip(
-                              label: Text(ingredient['name'] ?? ''),
-                              selected: tempIngredients.contains(ingredient['id']),
-                              onSelected: (_) {
-                                final id = ingredient['id'];
-                                if (id == null || id.isEmpty) return;
-                                setStateSheet(() {
-                                  if (tempIngredients.contains(id)) {
-                                    tempIngredients.remove(id);
-                                  } else {
-                                    tempIngredients.add(id);
-                                  }
-                                });
-                              },
-                            ),
-                        ],
-                      ),
-                    ],
                     const SizedBox(height: 18),
                     Row(
                       children: [
@@ -400,7 +355,6 @@ class _RecipesPageState extends State<RecipesPage> {
                               setStateSheet(() {
                                 tempSort = 'alpha';
                                 tempCategories.clear();
-                                tempIngredients.clear();
                               });
                             },
                             child: Text(
@@ -416,7 +370,6 @@ class _RecipesPageState extends State<RecipesPage> {
                               setState(() {
                                 _sortMode = tempSort;
                                 _selectedCategoryIds = tempCategories;
-                                _selectedIngredientIds = tempIngredients;
                               });
                               Navigator.pop(ctx);
                             },
@@ -988,7 +941,48 @@ class _RecipesPageState extends State<RecipesPage> {
                     ),
                   ),
 
-                // COMPTEUR DE RECETTES
+                // AUTOCOMPLETE INGRÉDIENTS (groupe seulement)
+                if (!_showCatalog && _ingredientsLoading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+                    child: LinearProgressIndicator(),
+                  )
+                else if (!_showCatalog) ...[  
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+                    child: IngredientAutocomplete(
+                      selectedIngredientIds: _selectedIngredientIds,
+                      onIngredientSelected: (ingredient) {
+                        setState(() {
+                          _selectedIngredientIds.add(ingredient['id']!);
+                        });
+                      },
+                      controller: TextEditingController(),
+                    ),
+                  ),
+                  if (_selectedIngredientIds.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: _allIngredients
+                              .where((ing) => _selectedIngredientIds.contains(ing['id']))
+                              .map((ingredient) => Chip(
+                                    label: Text(ingredient['name'] ?? ''),
+                                    onDeleted: () {
+                                      setState(() {
+                                        _selectedIngredientIds.remove(ingredient['id']!);
+                                      });
+                                    },
+                                  ))
+                              .toList(),
+                        ),
+                      ),
+                    ),
+                ],
                 if (_showCatalog)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),

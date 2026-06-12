@@ -1,5 +1,6 @@
 // ignore_for_file: use_build_context_synchronously
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -59,6 +60,12 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   Unit? _selectedIngredientUnit;
   final List<Unit> _units = Unit.values;
 
+  // Portions scaling
+  late FocusNode _servingsFocusNode;
+  int _previousServings = 0;
+  Timer? _servingsDebounceTimer;
+  Timer? _stepperRepeatTimer;
+
   final List<RecipeIngredient> _ingredients = [];
   // Liste temporaire pour les nouveaux ingrédients à créer à la sauvegarde
   final List<PendingIngredient> _pendingIngredients = [];
@@ -108,6 +115,12 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     _ingredientNotesController = TextEditingController();
     _instructionController = TextEditingController();
 
+    _servingsFocusNode = FocusNode();
+    _servingsFocusNode.addListener(() {
+      if (!_servingsFocusNode.hasFocus) _onServingsEditingDone();
+    });
+    _previousServings = widget.recipe?.servings ?? 0;
+
     // Si presetData présent : attendre types ET catégories ensemble avant de pré-remplir
     if (widget.presetData != null && widget.recipe == null) {
       Future.wait([_loadIngredientTypes(), _loadCategories()]).then((_) {
@@ -155,7 +168,88 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     _ingredientQuantityController.dispose();
     _ingredientNotesController.dispose();
     _instructionController.dispose();
+    _servingsFocusNode.dispose();
+    _servingsDebounceTimer?.cancel();
+    _stepperRepeatTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _onServingsEditingDone() async {
+    final newServings = int.tryParse(_servingsController.text);
+    if (newServings == null || newServings <= 0) return;
+    if (_previousServings <= 0 || newServings == _previousServings) {
+      _previousServings = newServings;
+      return;
+    }
+    if (_ingredients.isEmpty) {
+      _previousServings = newServings;
+      return;
+    }
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+        contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.scale_rounded, color: Color(0xFF6A5AE0), size: 22),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Adapter les quantités ?',
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Vous passez de $_previousServings à $newServings portions. Voulez-vous mettre à jour les quantités des ingrédients en conséquence ?',
+          style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            style: TextButton.styleFrom(foregroundColor: Colors.black54),
+            child: Text('Non', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF6A5AE0),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              elevation: 0,
+            ),
+            child: Text('Oui, adapter', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      final ratio = newServings / _previousServings;
+      setState(() {
+        for (int i = 0; i < _ingredients.length; i++) {
+          final ri = _ingredients[i];
+          _ingredients[i] = RecipeIngredient(
+            ingredient: ri.ingredient,
+            quantity: double.parse((ri.quantity * ratio).toStringAsFixed(2)),
+            unit: ri.unit,
+            notes: ri.notes,
+          );
+        }
+      });
+    }
+    _previousServings = newServings;
   }
 
   Future<void> _loadCategories() async {
@@ -1227,6 +1321,118 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     );
   }
 
+  Widget _buildNumberStepper({
+    required TextEditingController controller,
+    required String label,
+    int min = 0,
+    int max = 999,
+    int step = 1,
+    FocusNode? focusNode,
+  }) {
+    void increment() {
+      final current = int.tryParse(controller.text) ?? min;
+      final next = (current + step).clamp(min, max);
+      controller.text = next.toString();
+      if (focusNode != null) {
+        _servingsDebounceTimer?.cancel();
+        _servingsDebounceTimer = Timer(const Duration(seconds: 2), _onServingsEditingDone);
+      }
+    }
+    void decrement() {
+      final current = int.tryParse(controller.text) ?? min;
+      final next = (current - step).clamp(min, max);
+      controller.text = next.toString();
+      if (focusNode != null) {
+        _servingsDebounceTimer?.cancel();
+        _servingsDebounceTimer = Timer(const Duration(seconds: 2), _onServingsEditingDone);
+      }
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: GoogleFonts.poppins(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.grey[50],
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.grey[200]!),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.02),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                _stepperButton(icon: Icons.remove_rounded, onAction: decrement),
+                Expanded(
+                  child: TextFormField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    textAlign: TextAlign.center,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600),
+                    decoration: const InputDecoration(
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.symmetric(vertical: 14),
+                      isDense: true,
+                    ),
+                    validator: (v) => (v == null || v.isEmpty) ? 'Requis' : null,
+                    onFieldSubmitted: (_) {
+                      if (focusNode != null) _onServingsEditingDone();
+                    },
+                  ),
+                ),
+                _stepperButton(icon: Icons.add_rounded, onAction: increment),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stepperButton({required IconData icon, required VoidCallback onAction}) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onAction,
+        onLongPress: () {
+          _stepperRepeatTimer?.cancel();
+          _stepperRepeatTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+            onAction();
+          });
+        },
+        onLongPressUp: () {
+          _stepperRepeatTimer?.cancel();
+          _stepperRepeatTimer = null;
+        },
+        onTapCancel: () {
+          _stepperRepeatTimer?.cancel();
+          _stepperRepeatTimer = null;
+        },
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Icon(icon, size: 20, color: const Color(0xFF6A5AE0)),
+        ),
+      ),
+    );
+  }
+
   // ------------------------
   // UI Builders
   // ------------------------
@@ -1237,6 +1443,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
     int maxLines = 1,
     TextInputType? keyboardType,
     bool isRequired = true,
+    FocusNode? focusNode,
   }) {
     // Defines input formatters if keyboardType is number
     List<TextInputFormatter>? inputFormatters;
@@ -1278,6 +1485,7 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
             ),
             child: TextFormField(
               controller: controller,
+              focusNode: focusNode,
               maxLines: maxLines,
               keyboardType: keyboardType,
               inputFormatters: inputFormatters,
@@ -2253,26 +2461,32 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                                 isRequired: false,
                                 keyboardType: TextInputType.url,
                               ),
-                              _buildTextField(
-                                _servingsController,
-                                'Portions globales (ex: 4) *',
-                                keyboardType: TextInputType.number,
+                              _buildNumberStepper(
+                                controller: _servingsController,
+                                label: 'Portions *',
+                                min: 1,
+                                max: 99,
+                                focusNode: _servingsFocusNode,
                               ),
                               Row(
                                 children: [
                                   Expanded(
-                                    child: _buildTextField(
-                                      _preparationTimeController,
-                                      'Préparation (min) *',
-                                      keyboardType: TextInputType.number,
+                                    child: _buildNumberStepper(
+                                      controller: _preparationTimeController,
+                                      label: 'Préparation (min) *',
+                                      min: 0,
+                                      max: 999,
+                                      step: 5,
                                     ),
                                   ),
                                   const SizedBox(width: 16),
                                   Expanded(
-                                    child: _buildTextField(
-                                      _cookingTimeController,
-                                      'Cuisson (min) *',
-                                      keyboardType: TextInputType.number,
+                                    child: _buildNumberStepper(
+                                      controller: _cookingTimeController,
+                                      label: 'Cuisson (min) *',
+                                      min: 0,
+                                      max: 999,
+                                      step: 5,
                                     ),
                                   ),
                                 ],

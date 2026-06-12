@@ -1691,6 +1691,42 @@ class _PlannerPageState extends State<PlannerPage> {
 
       // ── LOG plan généré ──
       if (kDebugMode) {
+        // ── Frigo / placard transmis à l'algorithme ──
+        debugPrint('[PLAN] ===== Frigo / Placard =====');
+        if (_pantryIngredients.isEmpty) {
+          debugPrint('[PLAN]   (vide)');
+        } else {
+          for (final ri in _pantryIngredients) {
+            final urgent = _urgentPantryNames.contains(ri.ingredient.name) ? ' [URGENT]' : '';
+            debugPrint('[PLAN]   ${ri.ingredient.name}$urgent  ${ri.quantity} ${ri.unit.label}');
+          }
+        }
+        debugPrint('[PLAN] ================================');
+
+        // ── Historique transmis à l'algorithme ──
+        debugPrint('[PLAN] ===== Historique utilisé =====');
+        if (filteredHistoryMeals.isEmpty) {
+          debugPrint('[PLAN]   (aucun historique)');
+        } else {
+          final histByDay = <String, List<Meal>>{};
+          for (final m in filteredHistoryMeals) {
+            final key = '${m.date.year}-${m.date.month.toString().padLeft(2,'0')}-${m.date.day.toString().padLeft(2,'0')}';
+            histByDay.putIfAbsent(key, () => []).add(m);
+          }
+          for (final day in (histByDay.keys.toList()..sort())) {
+            final hMeals = histByDay[day]!..sort((a, b) => a.type.index.compareTo(b.type.index));
+            for (final m in hMeals) {
+              final type = m.type == MealType.lunch ? 'MIDI ' : 'SOIR ';
+              final leftover = m.isLeftoverMeal ? ' [RESTE]' : '';
+              final portions = m.userServings.isEmpty
+                  ? '${m.totalServings} portion(s)'
+                  : m.userServings.entries.map((e) => '${e.key.substring(0,6)}:${e.value}p').join(', ');
+              debugPrint('[PLAN]   $day $type| ${m.recipe.title}$leftover  ($portions)');
+            }
+          }
+        }
+        debugPrint('[PLAN] ============================');
+
         debugPrint('[PLAN] ===== Plan généré =====');
         debugPrint('[PLAN] Début: ${plan.startDate.day}/${plan.startDate.month}/${plan.startDate.year}  |  Durée: ${plan.durationDays} jours');
         debugPrint('[PLAN] Nombre de repas total: ${plan.meals.length}');

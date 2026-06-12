@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -121,6 +123,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   bool _wasModified = false;
   bool _isAlreadyImported = false;
   int _usageCount = 0;
+  Timer? _ratingFeedbackTimer;
+  bool _showRatingFeedback = false;
+  String _ratingFeedbackText = '';
 
   @override
   void initState() {
@@ -145,12 +150,134 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     }
   }
 
+  @override
+  void dispose() {
+    _ratingFeedbackTimer?.cancel();
+    super.dispose();
+  }
+
   Future<void> _loadUsageCount() async {
     try {
       final counts = await FirebaseStatsRepository.instance.getRecipeUsageCounts();
       final id = widget.recipeId;
       if (mounted) setState(() => _usageCount = counts[id] ?? 0);
     } catch (_) {}
+  }
+
+  Future<void> _saveRating(double newRating) async {
+    if (_recipe == null || _recipe!.id.isEmpty) return;
+    final previousRating = _recipe!.rating;
+    final updated = _recipe!.copyWith(rating: newRating);
+    setState(() => _recipe = updated);
+    if (newRating > 0) {
+      _showTransientRatingLabel(newRating);
+    } else {
+      _ratingFeedbackTimer?.cancel();
+      if (mounted) {
+        setState(() => _showRatingFeedback = false);
+      }
+    }
+    try {
+      await FirebaseFirestore.instance
+          .collection('recipes')
+          .doc(_recipe!.id)
+          .update({'rating': newRating});
+      FirebaseRecipeRepository.invalidateCache();
+      _wasModified = true;
+    } catch (_) {
+      // Revert on failure
+      if (mounted) {
+        setState(() => _recipe = _recipe!.copyWith(rating: previousRating));
+      }
+    }
+  }
+
+  void _showTransientRatingLabel(double rating) {
+    final label = _ratingLabel(rating);
+    if (label.isEmpty) return;
+    _ratingFeedbackTimer?.cancel();
+    if (mounted) {
+      setState(() {
+        _ratingFeedbackText = label;
+        _showRatingFeedback = true;
+      });
+    }
+    _ratingFeedbackTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      setState(() => _showRatingFeedback = false);
+    });
+  }
+
+  Widget _buildStarRating() {
+    final rating = _recipe?.rating ?? 0.0;
+    const starCount = 5;
+    const starColor = Color(0xFFFFA726);
+    return SizedBox(
+      height: 48,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(starCount, (i) {
+                final filled = i < rating;
+                return GestureDetector(
+                  onTap: () {
+                    final tapped = i + 1.0;
+                    _saveRating(rating == tapped ? 0.0 : tapped);
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 200),
+                      transitionBuilder: (child, anim) => ScaleTransition(scale: anim, child: child),
+                      child: Icon(
+                        filled ? Icons.star_rounded : Icons.star_outline_rounded,
+                        key: ValueKey('$i-$filled'),
+                        size: 28,
+                        color: filled ? starColor : Colors.grey[300],
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ),
+          ),
+          Positioned(
+            bottom: 0,
+            child: IgnorePointer(
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 180),
+                opacity: _showRatingFeedback ? 1 : 0,
+                child: Text(
+                  _ratingFeedbackText,
+                  style: GoogleFonts.poppins(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: starColor,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _ratingLabel(double r) {
+    switch (r.toInt()) {
+      case 1: return 'Décevant';
+      case 2: return 'Passable';
+      case 3: return 'Bien';
+      case 4: return 'Très bien';
+      case 5: return 'Excellent !';
+      default: return '';
+    }
   }
 
   Future<void> _checkIfAlreadyImported() async {
@@ -675,7 +802,14 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                           ),
                         ),
 
-                        const SizedBox(height: 32),
+                        // Star rating — visible uniquement pour les recettes du groupe
+                        if (!widget.isCatalogRecipe) ...[
+                          const SizedBox(height: 10),
+                          _buildStarRating(),
+                          const SizedBox(height: 12),
+                        ] else ...[
+                          const SizedBox(height: 24),
+                        ],
 
                         // Stats Row
                         Container(

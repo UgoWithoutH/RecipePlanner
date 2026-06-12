@@ -722,13 +722,15 @@ class _IngredientsPageState extends State<IngredientsPage> {
                   child: _isLoading
                       ? const Center(child: CircularProgressIndicator())
                       : Builder(builder: (_) {
-                          var filtered = _filter.isEmpty
-                              ? _ingredients
-                              : _ingredients
-                                  .where((ing) => (ing['name'] as String)
-                                      .toLowerCase()
-                                      .contains(_filter.toLowerCase()))
-                                  .toList();
+                          var filtered = List<Map<String, dynamic>>.from(
+                            _filter.isEmpty
+                                ? _ingredients
+                                : _ingredients
+                                    .where((ing) => (ing['name'] as String)
+                                        .toLowerCase()
+                                        .contains(_filter.toLowerCase()))
+                                    .toList(),
+                          );
                           if (_selectedTypeIds.isNotEmpty) {
                             filtered = filtered.where((ing) => ing['typeId'] != null && _selectedTypeIds.contains(ing['typeId'])).toList();
                           }
@@ -740,6 +742,8 @@ class _IngredientsPageState extends State<IngredientsPage> {
                               final diff = ((b['usageCount'] as int?) ?? 0).compareTo((a['usageCount'] as int?) ?? 0);
                               return diff != 0 ? diff : (a['name'] as String).compareTo(b['name'] as String);
                             });
+                          } else {
+                            filtered.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
                           }
                           if (filtered.isEmpty) {
                             return Center(

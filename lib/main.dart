@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'core/utils/web_firestore_config.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -35,13 +36,15 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // Web : Safari bloque la persistance IndexedDB au démarrage.
-  // persistenceEnabled=false évite ce blocage sur Safari/iOS.
-  // Le transport WebChannel est géré automatiquement par le Firebase JS SDK 10.x.
+  // Web : initialise Firestore avec experimentalForceLongPolling=true.
+  // Safari/iOS bloque le transport WebChannel (gRPC) de Firestore ce qui
+  // provoque des requêtes suspendues indéfiniment au premier chargement.
+  // Le long-polling (XHR) fonctionne sur tous les navigateurs sans pénaliser
+  // Chrome/Firefox qui basculent automatiquement quand c'est plus rapide.
+  // La persistance IndexedDB est désactivée (memoryLocalCache) pour éviter
+  // les blocages liés aux quotas de stockage de Safari.
   if (kIsWeb) {
-    FirebaseFirestore.instance.settings = const Settings(
-      persistenceEnabled: false,
-    );
+    await configureFirestoreForWeb();
   }
   await initializeDateFormatting();
   await NotificationService().initialize();

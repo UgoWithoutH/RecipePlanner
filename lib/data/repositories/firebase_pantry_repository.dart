@@ -16,17 +16,14 @@ class FirebasePantryRepository {
 
   static void invalidateCache() => _cache.clear();
 
-  Future<String> _getGroupId() async {
-    final groupId = await GroupRepository.instance.getCurrentGroupId();
-    if (groupId == null) {
-      throw Exception('Aucun groupe trouvé pour cet utilisateur.');
-    }
-    return groupId;
+  Future<String?> _getGroupId() async {
+    return GroupRepository.instance.getCurrentGroupId();
   }
 
   /// Returns all pantry items for the current group, sorted by urgent first then by name.
   Future<List<PantryItem>> getAll() async {
     final groupId = await _getGroupId();
+    if (groupId == null) return [];
     if (_cache.containsKey(groupId)) return _cache[groupId]!;
     final snapshot =
         await _pantry.where('groupId', isEqualTo: groupId).get();
@@ -46,6 +43,7 @@ class FirebasePantryRepository {
   /// Saves (creates or updates) a pantry item. Returns the saved item with its Firestore ID.
   Future<PantryItem> save(PantryItem item) async {
     final groupId = await _getGroupId();
+    if (groupId == null) throw Exception('Pas de groupe assigné.');
     if (item.id.isNotEmpty) {
       await _pantry.doc(item.id).set(item.toFirestore(groupId));
       invalidateCache();
@@ -76,6 +74,7 @@ class FirebasePantryRepository {
   /// Deletes all pantry items for the current group.
   Future<void> deleteAll() async {
     final groupId = await _getGroupId();
+    if (groupId == null) return;
     final snapshot =
         await _pantry.where('groupId', isEqualTo: groupId).get();
     for (final doc in snapshot.docs) {

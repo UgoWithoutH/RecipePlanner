@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb, kReleaseMode;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -37,6 +37,18 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = const AuthLoading();
     debugPrint('[Auth] _restoreSession: tentative de restauration de session...');
     try {
+      // On web release only: check if we're returning from a Google redirect.
+      // In debug mode we use signInWithPopup so there's no redirect to handle.
+      if (kIsWeb && kReleaseMode) {
+        final redirectUser = await _service.checkRedirectResult();
+        if (redirectUser != null) {
+          debugPrint('[Auth] _restoreSession: résultat redirect → uid=${redirectUser.uid}');
+          state = AuthAuthenticated(redirectUser);
+          CacheWarmer.warmAll();
+          return;
+        }
+      }
+
       final appUser = await _service.verifyCurrentUser();
       if (appUser != null) {
         debugPrint('[Auth] _restoreSession: session restaurée → uid=${appUser.uid}, email=${appUser.email}, role=${appUser.role}');
@@ -61,14 +73,21 @@ class AuthNotifier extends StateNotifier<AuthState> {
   // -------------------------------------------------------------------------
 
   /// Launches the Google Sign-In flow and performs the Firestore access check.
+  /// On web: triggers a page redirect — result handled in _restoreSession on reload.
+  /// On mobile: completes inline.
   Future<void> signInWithGoogle() async {
     state = const AuthLoading();
     debugPrint('[Auth] signInWithGoogle: début du flux Google Sign-In...');
     try {
+      if (kIsWeb && kReleaseMode) {
+        // Triggers full-page redirect — page reloads, _restoreSession picks up the result.
+        await _service.signInWithGoogle();
+        return;
+      }
       final appUser = await _service.signInWithGoogle();
       debugPrint('[Auth] signInWithGoogle: connexion réussie → uid=${appUser.uid}, email=${appUser.email}, role=${appUser.role}');
       state = AuthAuthenticated(appUser);
-      CacheWarmer.warmAll(); // fire-and-forget warm-up
+      CacheWarmer.warmAll();
     } on SignInCancelledException {
       // User dismissed the picker – go back to sign-in screen silently.
       debugPrint('[Auth] signInWithGoogle: connexion annulée par l\'utilisateur.');

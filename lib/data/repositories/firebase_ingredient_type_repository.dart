@@ -12,14 +12,13 @@ class FirebaseIngredientTypeRepository {
   /// Clears the cache (call after add/update/delete).
   static void invalidateCache() => _cache.clear();
 
-  Future<String> _getGroupId() async {
-    final groupId = await GroupRepository.instance.getCurrentGroupId();
-    if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
-    return groupId;
+  Future<String?> _getGroupId() async {
+    return GroupRepository.instance.getCurrentGroupId();
   }
 
   Future<List<IngredientType>> getTypes() async {
     final groupId = await _getGroupId();
+    if (groupId == null) return [];
     if (_cache.containsKey(groupId)) return _cache[groupId]!;
 
     final snapshot = await _types
@@ -36,6 +35,7 @@ class FirebaseIngredientTypeRepository {
 
   Future<void> addType(String name, int color) async {
     final groupId = await _getGroupId();
+    if (groupId == null) return;
     await _types.add({
       'name': name,
       'color': color,

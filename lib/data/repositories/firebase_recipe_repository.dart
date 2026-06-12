@@ -16,10 +16,8 @@ class FirebaseRecipeRepository implements RecipeRepository {
 
   static void invalidateCache() => _cache.clear();
 
-  Future<String> _getGroupId() async {
-    final groupId = await GroupRepository.instance.getCurrentGroupId();
-    if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
-    return groupId;
+  Future<String?> _getGroupId() async {
+    return GroupRepository.instance.getCurrentGroupId();
   }
 
   /// Fetch a single recipe by its ID
@@ -132,6 +130,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
   @override
   Future<List<Recipe>> fetchRecipesByTitle(String title) async {
     final groupId = await _getGroupId();
+    if (groupId == null) return [];
     final query = await _recipes
         .where('groupId', isEqualTo: groupId)
         .where('title', isEqualTo: title)
@@ -184,6 +183,7 @@ class FirebaseRecipeRepository implements RecipeRepository {
   @override
   Future<List<Recipe>> fetchAllRecipes() async {
     final groupId = await _getGroupId();
+    if (groupId == null) return [];
     if (_cache.containsKey(groupId)) return _cache[groupId]!;
 
     final snapshot = await _recipes

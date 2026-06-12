@@ -14,14 +14,13 @@ class FirebaseShoppingListRepository {
     _cacheGroupId = null;
   }
 
-  Future<String> _getGroupId() async {
-    final groupId = await GroupRepository.instance.getCurrentGroupId();
-    if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
-    return groupId;
+  Future<String?> _getGroupId() async {
+    return GroupRepository.instance.getCurrentGroupId();
   }
 
   Future<void> saveShoppingList(ShoppingList shoppingList) async {
     final groupId = await _getGroupId();
+    if (groupId == null) return;
     final data = shoppingList.toMap();
     data['groupId'] = groupId;
     await _collection.doc(shoppingList.id).set(data);
@@ -31,6 +30,7 @@ class FirebaseShoppingListRepository {
   /// Retourne le document de liste de courses du groupe (un seul par groupe).
   Future<ShoppingList?> getGroupShoppingList() async {
     final groupId = await _getGroupId();
+    if (groupId == null) return null;
     if (_cacheGroupId == groupId && _cache != null) return _cache;
     final querySnapshot = await _collection
         .where('groupId', isEqualTo: groupId)

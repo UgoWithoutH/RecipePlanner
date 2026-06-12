@@ -12,10 +12,8 @@ class FirebaseMealHistoryRepository {
   final CollectionReference _history =
       FirebaseFirestore.instance.collection('mealPlanHistory');
 
-  Future<String> _getGroupId() async {
-    final groupId = await GroupRepository.instance.getCurrentGroupId();
-    if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
-    return groupId;
+  Future<String?> _getGroupId() async {
+    return GroupRepository.instance.getCurrentGroupId();
   }
 
   String _docKey(String groupId, String dateKey) => '${groupId}_$dateKey';
@@ -28,6 +26,7 @@ class FirebaseMealHistoryRepository {
     if (mealsForDay.isEmpty) return;
 
     final groupId = await _getGroupId();
+    if (groupId == null) return;
 
     // Normalize the date locally (remove the time)
     final normalizedDate = DateTime(date.year, date.month, date.day);
@@ -132,6 +131,7 @@ class FirebaseMealHistoryRepository {
   /// Get all history days, ordered by date descending (most recent first)
   Future<Map<DateTime, List<Meal>>> getHistory() async {
     final groupId = await _getGroupId();
+    if (groupId == null) return {};
     final snapshot = await _history
         .where('groupId', isEqualTo: groupId)
         .get();
@@ -229,6 +229,7 @@ class FirebaseMealHistoryRepository {
   /// Remove history days older than the specified number of days
   Future<void> cleanOldHistory(int maxDays) async {
     final groupId = await _getGroupId();
+    if (groupId == null) return;
     final snapshot = await _history
         .where('groupId', isEqualTo: groupId)
         .get();
@@ -241,6 +242,7 @@ class FirebaseMealHistoryRepository {
   /// the caller — the snapshot is read only once internally).
   Future<Map<DateTime, List<Meal>>> updateHistoryFromPlan(MealPlan? plan, int maxDays) async {
     final groupId = await _getGroupId();
+    if (groupId == null) return {};
 
     // Single read of the entire history collection for this group.
     final snapshot = await _history
@@ -338,6 +340,7 @@ class FirebaseMealHistoryRepository {
   /// Supprime tout l'historique du groupe
   Future<void> clearAllHistory() async {
     final groupId = await _getGroupId();
+    if (groupId == null) return;
     final snapshot = await _history
         .where('groupId', isEqualTo: groupId)
         .get();
@@ -422,6 +425,7 @@ class FirebaseMealHistoryRepository {
   /// Check if a specific date is already in history
   Future<bool> isDateInHistory(DateTime date) async {
     final groupId = await _getGroupId();
+    if (groupId == null) return false;
     final dateKey = _formatDateKey(date);
     final doc = await _history.doc(_docKey(groupId, dateKey)).get();
     return doc.exists;
@@ -430,6 +434,7 @@ class FirebaseMealHistoryRepository {
   /// Get the number of days currently in history
   Future<int> getHistoryDaysCount() async {
     final groupId = await _getGroupId();
+    if (groupId == null) return 0;
     final snapshot = await _history
         .where('groupId', isEqualTo: groupId)
         .get();

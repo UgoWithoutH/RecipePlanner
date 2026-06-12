@@ -9,15 +9,14 @@ class FirebaseIngredientRepository {
 
   static void invalidateCache() => _cache.clear();
 
-  Future<String> _getGroupId() async {
-    final groupId = await GroupRepository.instance.getCurrentGroupId();
-    if (groupId == null) throw Exception('Aucun groupe trouvé pour cet utilisateur.');
-    return groupId;
+  Future<String?> _getGroupId() async {
+    return GroupRepository.instance.getCurrentGroupId();
   }
 
   /// Retourne tous les ingrédients du groupe (avec cache).
   Future<List<Map<String, dynamic>>> getAllIngredients() async {
     final groupId = await _getGroupId();
+    if (groupId == null) return [];
     if (_cache.containsKey(groupId)) return _cache[groupId]!;
     final snap = await _ingredients.where('groupId', isEqualTo: groupId).get();
     final result = snap.docs.map((doc) {
@@ -36,6 +35,7 @@ class FirebaseIngredientRepository {
   /// Retourne l'ingrédient (id, name, typeId) correspondant à un nom (non sensible à la casse), ou null si absent
   Future<Map<String, String>?> getIngredientByNameCaseInsensitive(String name) async {
     final groupId = await _getGroupId();
+    if (groupId == null) return null;
     final snap = await _ingredients
         .where('groupId', isEqualTo: groupId)
         .get();
@@ -57,6 +57,7 @@ class FirebaseIngredientRepository {
   /// Fetch all ingredients or those starting with a specific query
   Future<List<Map<String, String>>> searchIngredients(String query) async {
     final groupId = await _getGroupId();
+    if (groupId == null) return [];
     final snap = await _ingredients
         .where('groupId', isEqualTo: groupId)
         .where('name', isGreaterThanOrEqualTo: query)
@@ -78,6 +79,7 @@ class FirebaseIngredientRepository {
   /// Get the ID of an existing ingredient, or create it if it doesn't exist
   Future<String> getOrCreateIngredientId(String name) async {
     final groupId = await _getGroupId();
+    if (groupId == null) throw Exception('Pas de groupe assigné.');
     final query = await _ingredients
         .where('groupId', isEqualTo: groupId)
         .where('name', isEqualTo: name)
@@ -93,6 +95,7 @@ class FirebaseIngredientRepository {
   /// Returns the ID of an existing ingredient (case-insensitive), or creates it with the given typeId.
   Future<String> createIngredientWithType(String name, String? typeId) async {
     final groupId = await _getGroupId();
+    if (groupId == null) throw Exception('Pas de groupe assigné.');
     // Check if an ingredient with the same name (case-insensitive) already exists
     final snap = await _ingredients
         .where('groupId', isEqualTo: groupId)

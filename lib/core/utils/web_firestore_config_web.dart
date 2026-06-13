@@ -29,21 +29,6 @@ extension type _FirestoreSettings._(JSObject _) implements JSObject {
   });
 }
 
-/// Exposes navigator.userAgent as a Dart string via JS interop.
-@JS('navigator.userAgent')
-external JSString get _navigatorUserAgent;
-
-/// Returns true when running on an iOS device (iPhone / iPad).
-/// Both Safari and Chrome on iOS use WebKit, which silently drops the
-/// pending auth state after a signInWithRedirect — use signInWithPopup instead.
-bool isIOSBrowser() {
-  final ua = _navigatorUserAgent.toDart.toLowerCase();
-  return ua.contains('iphone') ||
-      ua.contains('ipad') ||
-      ua.contains('crios') || // Chrome on iOS
-      ua.contains('fxios'); // Firefox on iOS
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Must be called once, after [Firebase.initializeApp()] but before any

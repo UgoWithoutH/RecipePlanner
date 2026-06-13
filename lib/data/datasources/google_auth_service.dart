@@ -2,7 +2,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb, kReleaseMode;
 
-import '../../core/utils/web_firestore_config.dart';
 import '../../domain/entities/app_user.dart';
 
 /// Handles Google Sign-In, Firebase Authentication, and Firestore access
@@ -43,15 +42,11 @@ class GoogleAuthService {
     final provider = GoogleAuthProvider()
       ..setCustomParameters({'prompt': 'select_account'});
 
-    // In production web, use redirect to avoid COOP issues on GitHub Pages.
-    // Exception: iOS devices (Safari & Chrome on iOS use WebKit) silently lose
-    // the pending auth state after the redirect due to ITP — use popup instead.
-    // In debug web, use popup (the Flutter debug server breaks the redirect flow).
-    if (kIsWeb && kReleaseMode && !isIOSBrowser()) {
-      await _firebaseAuth.signInWithRedirect(provider);
-      throw const SignInCancelledException(); // unreachable, page redirects
-    }
-
+    // On web (all browsers, all modes): use signInWithPopup.
+    // signInWithRedirect is unreliable on GitHub Pages (sub-path deployments
+    // cause getRedirectResult() to always return null). Safari/iOS ITP also
+    // drops the redirect state. Session persistence is handled via Firebase
+    // Auth's localStorage — verifyCurrentUser() restores it on page reload.
     UserCredential userCredential;
     try {
       userCredential = kIsWeb

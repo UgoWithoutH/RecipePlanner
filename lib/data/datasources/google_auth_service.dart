@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb, kReleaseMode;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
 
 import '../../domain/entities/app_user.dart';
 
@@ -9,6 +9,12 @@ import '../../domain/entities/app_user.dart';
 class GoogleAuthService {
   final FirebaseAuth _firebaseAuth;
   final FirebaseFirestore _firestore;
+
+  void _authLog(String message) {
+    if (kDebugMode) {
+      debugPrint(message);
+    }
+  }
 
   GoogleAuthService({
     FirebaseAuth? firebaseAuth,
@@ -29,13 +35,10 @@ class GoogleAuthService {
   /// Starts the Google Sign-In OAuth flow via Firebase Auth, then verifies
   /// that the user's UID exists in the `users` Firestore collection.
   ///
-  /// On Web release: triggers a full-page redirect (avoids COOP issues on GitHub Pages).
-  ///   The result is handled by [checkRedirectResult] on the next page load.
-  /// On Web debug: uses signInWithPopup (redirect doesn't work with Flutter debug server).
+  /// On web: uses signInWithPopup.
   /// On mobile: uses [signInWithProvider].
   ///
-  /// Returns an [AppUser] on success (mobile and web debug).
-  /// On web release: never returns — the page redirects before the future resolves.
+  /// Returns an [AppUser] on success.
   /// Throws [SignInCancelledException] if the user dismisses the picker.
   /// Throws [AccessDeniedException] if the UID is not in Firestore.
   Future<AppUser> signInWithGoogle() async {
@@ -76,7 +79,7 @@ class GoogleAuthService {
   ///
   /// Returns [AppUser] if a redirect result is available, null otherwise.
   Future<AppUser?> checkRedirectResult() async {
-    debugPrint('[Auth] checkRedirectResult: attente initialisation Firebase Auth...');
+    _authLog('[Auth] checkRedirectResult: attente initialisation Firebase Auth...');
     // Wait for Firebase to finish reading its persisted state before calling
     // getRedirectResult — otherwise it always returns user=null.
     await _firebaseAuth
@@ -84,17 +87,17 @@ class GoogleAuthService {
         .first
         .timeout(const Duration(seconds: 6), onTimeout: () => null);
 
-    debugPrint('[Auth] checkRedirectResult: appel getRedirectResult...');
+    _authLog('[Auth] checkRedirectResult: appel getRedirectResult...');
     try {
       final result = await _firebaseAuth.getRedirectResult();
-      debugPrint('[Auth] checkRedirectResult: user=${result.user?.uid ?? "null"}, credential=${result.credential != null}');
+      _authLog('[Auth] checkRedirectResult: user=${result.user?.uid ?? "null"}, credential=${result.credential != null}');
       if (result.user == null) return null;
       return _verifyUserAccess(result.user!);
     } on FirebaseAuthException catch (e) {
-      debugPrint('[Auth] checkRedirectResult: FirebaseAuthException → code=${e.code}, msg=${e.message}');
+      _authLog('[Auth] checkRedirectResult: FirebaseAuthException → code=${e.code}, msg=${e.message}');
       return null;
     } catch (e) {
-      debugPrint('[Auth] checkRedirectResult: exception → $e');
+      _authLog('[Auth] checkRedirectResult: exception → $e');
       return null;
     }
   }
@@ -121,20 +124,20 @@ class GoogleAuthService {
             .timeout(const Duration(seconds: 6), onTimeout: () => null);
 
     if (user == null) {
-      debugPrint('[Auth] verifyCurrentUser: aucun utilisateur Firebase en session.');
+      _authLog('[Auth] verifyCurrentUser: aucun utilisateur Firebase en session.');
       return null;
     }
 
-    debugPrint('[Auth] verifyCurrentUser: utilisateur Firebase trouvé — uid=${user.uid}, email=${user.email}');
+    _authLog('[Auth] verifyCurrentUser: utilisateur Firebase trouvé — uid=${user.uid}, email=${user.email}');
 
     // Try by UID first
     final doc = await _firestore.collection('users').doc(user.uid).get();
     if (doc.exists) {
-      debugPrint('[Auth] verifyCurrentUser: document users/${user.uid} trouvé → accès accordé.');
+      _authLog('[Auth] verifyCurrentUser: document users/${user.uid} trouvé → accès accordé.');
       return AppUser.fromFirestore(doc.id, doc.data()!);
     }
 
-    debugPrint('[Auth] verifyCurrentUser: document users/${user.uid} INTROUVABLE, tentative de recherche par email...');
+    _authLog('[Auth] verifyCurrentUser: document users/${user.uid} INTROUVABLE, tentative de recherche par email...');
 
     // Fallback: look up by email (e.g. user document was seeded with a different ID)
     final email = user.email;
@@ -146,7 +149,7 @@ class GoogleAuthService {
           .get();
       if (emailQuery.docs.isNotEmpty) {
         final seededDoc = emailQuery.docs.first;
-        debugPrint('[Auth] verifyCurrentUser: document trouvé par email ($email) → id=${seededDoc.id} → accès accordé.');
+        _authLog('[Auth] verifyCurrentUser: document trouvé par email ($email) → id=${seededDoc.id} → accès accordé.');
 
         // Si le doc seedé a un ID différent du Firebase UID :
         // 1. Les règles Firestore (isAuthorised vérifie users/{auth.uid}) bloqueront
@@ -154,14 +157,14 @@ class GoogleAuthService {
         // 2. Le groupe a members:[seededId] mais getCurrentGroupId cherche par UID
         //    → on ajoute le Firebase UID au groupe pour que la recherche fonctionne.
         if (seededDoc.id != user.uid) {
-          debugPrint('[Auth] verifyCurrentUser: doc ID (${seededDoc.id}) ≠ Firebase UID (${user.uid}) → migration en cours...');
+          _authLog('[Auth] verifyCurrentUser: doc ID (${seededDoc.id}) ≠ Firebase UID (${user.uid}) → migration en cours...');
 
           // 1. Doc miroir pour isAuthorised()
           await _firestore
               .collection('users')
               .doc(user.uid)
               .set(seededDoc.data()!, SetOptions(merge: true));
-          debugPrint('[Auth] verifyCurrentUser: users/${user.uid} créé.');
+            _authLog('[Auth] verifyCurrentUser: users/${user.uid} créé.');
 
           // 2. Ajout du Firebase UID dans le groupe qui contient le seeded doc ID
           final groupSnap = await _firestore
@@ -174,17 +177,17 @@ class GoogleAuthService {
             await groupRef.update({
               'members': FieldValue.arrayUnion([user.uid]),
             });
-            debugPrint('[Auth] verifyCurrentUser: Firebase UID ajouté au groupe ${groupSnap.docs.first.id}.');
+            _authLog('[Auth] verifyCurrentUser: Firebase UID ajouté au groupe ${groupSnap.docs.first.id}.');
           } else {
-            debugPrint('[Auth] verifyCurrentUser: aucun groupe trouvé contenant ${seededDoc.id}.');
+            _authLog('[Auth] verifyCurrentUser: aucun groupe trouvé contenant ${seededDoc.id}.');
           }
         }
 
         return AppUser.fromFirestore(seededDoc.id, seededDoc.data()!);
       }
-      debugPrint('[Auth] verifyCurrentUser: aucun document users avec email=$email → ACCESS REFUSÉ.');
+      _authLog('[Auth] verifyCurrentUser: aucun document users avec email=$email → ACCESS REFUSÉ.');
     } else {
-      debugPrint('[Auth] verifyCurrentUser: email Firebase null → ACCESS REFUSÉ.');
+      _authLog('[Auth] verifyCurrentUser: email Firebase null → ACCESS REFUSÉ.');
     }
 
     await signOut();
@@ -207,21 +210,21 @@ class GoogleAuthService {
   /// On absence from `users`, signs out and throws [AccessDeniedException].
   Future<AppUser> _verifyUserAccess(User firebaseUser) async {
     final email = firebaseUser.email;
-    debugPrint('[Auth] _verifyUserAccess: uid=${firebaseUser.uid}, email=$email');
+    _authLog('[Auth] _verifyUserAccess: uid=${firebaseUser.uid}, email=$email');
 
     if (email == null) {
-      debugPrint('[Auth] _verifyUserAccess: email Firebase null → ACCESS REFUSÉ.');
+      _authLog('[Auth] _verifyUserAccess: email Firebase null → ACCESS REFUSÉ.');
       await signOut();
       throw const AccessDeniedException();
     }
 
     // Step 1 – Check users/{uid} directly (fast path for returning users).
-    debugPrint('[Auth] _verifyUserAccess: vérification directe users/${firebaseUser.uid}');
+    _authLog('[Auth] _verifyUserAccess: vérification directe users/${firebaseUser.uid}');
     final uidDoc = await _firestore.collection('users').doc(firebaseUser.uid).get();
 
     late DocumentReference userRef;
     if (uidDoc.exists) {
-      debugPrint('[Auth] _verifyUserAccess: users/${firebaseUser.uid} trouvé → mise à jour.');
+      _authLog('[Auth] _verifyUserAccess: users/${firebaseUser.uid} trouvé → mise à jour.');
       userRef = uidDoc.reference;
       await userRef.set({
         'email': email,
@@ -229,7 +232,7 @@ class GoogleAuthService {
       }, SetOptions(merge: true));
     } else {
       // No doc at users/{uid}: check by email (pending invitations or seeded users).
-      debugPrint('[Auth] _verifyUserAccess: recherche document users existant par email=$email');
+      _authLog('[Auth] _verifyUserAccess: recherche document users existant par email=$email');
       final existingQuery = await _firestore
           .collection('users')
           .where('email', isEqualTo: email)
@@ -237,13 +240,13 @@ class GoogleAuthService {
           .get();
 
       if (existingQuery.docs.isEmpty) {
-        debugPrint('[Auth] _verifyUserAccess: email=$email ABSENT de users → ACCESS REFUSÉ.');
+        _authLog('[Auth] _verifyUserAccess: email=$email ABSENT de users → ACCESS REFUSÉ.');
         await signOut();
         throw const AccessDeniedException();
       }
 
       final existingDoc = existingQuery.docs.first;
-      debugPrint('[Auth] _verifyUserAccess: document users trouvé par email (id=${existingDoc.id}).');
+      _authLog('[Auth] _verifyUserAccess: document users trouvé par email (id=${existingDoc.id}).');
 
       if (existingDoc.id == firebaseUser.uid) {
         // Same ID — just update.
@@ -255,7 +258,7 @@ class GoogleAuthService {
       } else {
         // Pending invitation or seeded doc with different ID:
         // create/migrate to users/{uid}.
-        debugPrint('[Auth] _verifyUserAccess: doc ID (${existingDoc.id}) ≠ Firebase UID (${firebaseUser.uid}) → migration.');
+        _authLog('[Auth] _verifyUserAccess: doc ID (${existingDoc.id}) ≠ Firebase UID (${firebaseUser.uid}) → migration.');
         userRef = _firestore.collection('users').doc(firebaseUser.uid);
         final existingData = existingDoc.data() as Map<String, dynamic>;
         final groupId = existingData['groupId'] as String?;
@@ -265,18 +268,18 @@ class GoogleAuthService {
           'role': existingData['role'] ?? 'user',
           if (groupId != null) 'groupId': groupId,
         }, SetOptions(merge: true));
-        debugPrint('[Auth] _verifyUserAccess: users/${firebaseUser.uid} créé.');
+        _authLog('[Auth] _verifyUserAccess: users/${firebaseUser.uid} créé.');
 
         // Delete the old pending/seeded doc.
         await existingDoc.reference.delete();
-        debugPrint('[Auth] _verifyUserAccess: ancien doc ${existingDoc.id} supprimé.');
+        _authLog('[Auth] _verifyUserAccess: ancien doc ${existingDoc.id} supprimé.');
 
         // Add Firebase UID to the group.
         if (groupId != null) {
           await _firestore.collection('groups').doc(groupId).update({
             'members': FieldValue.arrayUnion([firebaseUser.uid]),
           });
-          debugPrint('[Auth] _verifyUserAccess: Firebase UID ajouté au groupe $groupId.');
+          _authLog('[Auth] _verifyUserAccess: Firebase UID ajouté au groupe $groupId.');
         } else {
           // Also check if old doc was in a group by members array.
           final groupSnap = await _firestore
@@ -288,9 +291,9 @@ class GoogleAuthService {
             await groupSnap.docs.first.reference.update({
               'members': FieldValue.arrayUnion([firebaseUser.uid]),
             });
-            debugPrint('[Auth] _verifyUserAccess: Firebase UID ajouté au groupe ${groupSnap.docs.first.id}.');
+            _authLog('[Auth] _verifyUserAccess: Firebase UID ajouté au groupe ${groupSnap.docs.first.id}.');
           } else {
-            debugPrint('[Auth] _verifyUserAccess: aucun groupe trouvé → utilisateur non assigné.');
+            _authLog('[Auth] _verifyUserAccess: aucun groupe trouvé → utilisateur non assigné.');
           }
         }
       }
@@ -299,7 +302,7 @@ class GoogleAuthService {
     // Step 2 – return AppUser
     final doc = await userRef.get();
     final appUser = AppUser.fromFirestore(doc.id, doc.data()! as Map<String, dynamic>);
-    debugPrint('[Auth] _verifyUserAccess: AppUser créé → uid=${appUser.uid}, email=${appUser.email}, role=${appUser.role}');
+    _authLog('[Auth] _verifyUserAccess: AppUser créé → uid=${appUser.uid}, email=${appUser.email}, role=${appUser.role}');
     return appUser;
   }
 }

@@ -464,7 +464,12 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
     if (result == true) setState(() {});
   }
 
-  Future<void> _resetAllStats() async {
+  Future<void> _resetGroupStats(DocumentSnapshot group) async {
+    final groupData = group.data() as Map<String, dynamic>;
+    final groupName = (groupData['name'] as String? ?? '').isNotEmpty
+        ? groupData['name'] as String
+        : 'ce groupe';
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => Dialog(
@@ -492,7 +497,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
               ),
               const SizedBox(height: 8),
               Text(
-                'Tous les compteurs d\'utilisation des recettes et des ingrédients seront remis à zéro. Cette action est irréversible.',
+                'Les compteurs d\'utilisation des recettes et des ingrédients de "$groupName" seront remis à zéro. Cette action est irréversible.',
                 style: GoogleFonts.poppins(
                     fontSize: 13, color: Colors.black45),
                 textAlign: TextAlign.center,
@@ -541,11 +546,17 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
     );
     if (confirm != true) return;
 
-    // Fetch recipes and ingredients in parallel — independent queries
+    // Fetch recipes and ingredients in parallel for this group.
     final batch = FirebaseFirestore.instance.batch();
     final snapshots = await Future.wait([
-      FirebaseFirestore.instance.collection('recipes').get(),
-      FirebaseFirestore.instance.collection('ingredients').get(),
+      FirebaseFirestore.instance
+          .collection('recipes')
+          .where('groupId', isEqualTo: group.id)
+          .get(),
+      FirebaseFirestore.instance
+          .collection('ingredients')
+          .where('groupId', isEqualTo: group.id)
+          .get(),
     ]);
     final recipesSnap = snapshots[0];
     final ingredientsSnap = snapshots[1];
@@ -563,7 +574,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Statistiques réinitialisées.',
+          content: Text('Statistiques réinitialisées pour "$groupName".',
               style: GoogleFonts.poppins()),
           backgroundColor: Colors.orange.shade700,
         ),
@@ -668,14 +679,6 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
             color: Colors.white,
           ),
         ),
-        actions: [
-          if (widget.isAdmin)
-          IconButton(
-            tooltip: 'Réinitialiser les statistiques',
-            icon: const Icon(Icons.bar_chart_rounded, color: Colors.white),
-            onPressed: _resetAllStats,
-          ),
-        ],
         bottom: widget.isAdmin
             ? TabBar(
                 controller: _tabController,
@@ -816,7 +819,13 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
               itemCount: groups.length,
               itemBuilder: (context, index) {
-                return _buildGroupCard(groups[index], allUsers, canEdit: true, canDelete: true);
+                return _buildGroupCard(
+                  groups[index],
+                  allUsers,
+                  canEdit: true,
+                  canDelete: true,
+                  canResetStats: true,
+                );
               },
             );
           },
@@ -839,7 +848,14 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
         return ListView(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
           children: [
-            _buildGroupCard(groupDoc, allUsers, canEdit: false, canDelete: false, canEditCatalogueOnly: true),
+            _buildGroupCard(
+              groupDoc,
+              allUsers,
+              canEdit: false,
+              canDelete: false,
+              canEditCatalogueOnly: true,
+              canResetStats: true,
+            ),
           ],
         );
       },
@@ -1694,7 +1710,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
   // Shared group card
   // -------------------------------------------------------------------------
   Widget _buildGroupCard(DocumentSnapshot group, List<Map<String, dynamic>> allUsers,
-      {required bool canEdit, required bool canDelete, bool canEditCatalogueOnly = false}) {
+      {required bool canEdit, required bool canDelete, bool canEditCatalogueOnly = false, bool canResetStats = false}) {
     final groupData = group.data() as Map<String, dynamic>;
     final rawMembers = groupData['members'];
     List<String> memberIds = [];
@@ -1743,6 +1759,15 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
                     backgroundColor: _primaryLight,
                     onTap: () => _showGroupDialog(group: group),
                   ),
+                if (canResetStats) ...[
+                  const SizedBox(width: 8),
+                  _IconActionButton(
+                    icon: Icons.bar_chart_rounded,
+                    color: Colors.orange.shade700,
+                    backgroundColor: Colors.orange.shade50,
+                    onTap: () => _resetGroupStats(group),
+                  ),
+                ],
                 if (canEditCatalogueOnly) ...[  
                   const SizedBox(width: 8),
                   _IconActionButton(

@@ -1,9 +1,8 @@
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb, kReleaseMode;
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/utils/cache_warmer.dart';
-import '../../core/utils/web_firestore_config.dart';
 import '../../data/datasources/google_auth_service.dart';
 import 'auth_state.dart';
 
@@ -38,19 +37,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = const AuthLoading();
     debugPrint('[Auth] _restoreSession: tentative de restauration de session...');
     try {
-      // On web release only: check if we're returning from a Google redirect.
-      // Skipped on iOS (Safari/Chrome on iOS use popup, not redirect).
-      // In debug mode we use signInWithPopup so there's no redirect to handle.
-      if (kIsWeb && kReleaseMode && !isIOSBrowser()) {
-        final redirectUser = await _service.checkRedirectResult();
-        if (redirectUser != null) {
-          debugPrint('[Auth] _restoreSession: résultat redirect → uid=${redirectUser.uid}');
-          state = AuthAuthenticated(redirectUser);
-          CacheWarmer.warmAll();
-          return;
-        }
-      }
-
+      // No redirect flow — signInWithPopup is used for all web platforms.
+      // Session is persisted in Firebase Auth's localStorage; verifyCurrentUser()
+      // restores it on page reload without any redirect result to check.
       final appUser = await _service.verifyCurrentUser();
       if (appUser != null) {
         debugPrint('[Auth] _restoreSession: session restaurée → uid=${appUser.uid}, email=${appUser.email}, role=${appUser.role}');
@@ -75,17 +64,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
   // -------------------------------------------------------------------------
 
   /// Launches the Google Sign-In flow and performs the Firestore access check.
-  /// On web: triggers a page redirect — result handled in _restoreSession on reload.
-  /// On mobile: completes inline.
+  /// Uses signInWithPopup on all platforms (redirect flow removed).
   Future<void> signInWithGoogle() async {
     state = const AuthLoading();
     debugPrint('[Auth] signInWithGoogle: début du flux Google Sign-In...');
     try {
-      if (kIsWeb && kReleaseMode) {
-        // Triggers full-page redirect — page reloads, _restoreSession picks up the result.
-        await _service.signInWithGoogle();
-        return;
-      }
       final appUser = await _service.signInWithGoogle();
       debugPrint('[Auth] signInWithGoogle: connexion réussie → uid=${appUser.uid}, email=${appUser.email}, role=${appUser.role}');
       state = AuthAuthenticated(appUser);

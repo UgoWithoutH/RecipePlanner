@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/utils/cache_warmer.dart';
+import '../../core/utils/web_firestore_config.dart';
 import '../../data/datasources/google_auth_service.dart';
 import 'auth_state.dart';
 
@@ -38,8 +39,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
     debugPrint('[Auth] _restoreSession: tentative de restauration de session...');
     try {
       // On web release only: check if we're returning from a Google redirect.
+      // Skipped on iOS (Safari/Chrome on iOS use popup, not redirect).
       // In debug mode we use signInWithPopup so there's no redirect to handle.
-      if (kIsWeb && kReleaseMode) {
+      if (kIsWeb && kReleaseMode && !isIOSBrowser()) {
         final redirectUser = await _service.checkRedirectResult();
         if (redirectUser != null) {
           debugPrint('[Auth] _restoreSession: résultat redirect → uid=${redirectUser.uid}');

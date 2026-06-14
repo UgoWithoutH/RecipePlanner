@@ -582,6 +582,163 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
     }
   }
 
+  Future<void> _deleteGroupHistory(DocumentSnapshot group) async {
+    final groupData = group.data() as Map<String, dynamic>;
+    final groupName = (groupData['name'] as String? ?? '').isNotEmpty
+        ? groupData['name'] as String
+        : 'ce groupe';
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.history_toggle_off_rounded,
+                    color: Colors.red.shade400, size: 28),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Supprimer l\'historique ?',
+                style: GoogleFonts.poppins(
+                    fontSize: 16, fontWeight: FontWeight.w600),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Tout l\'historique des repas passés de "$groupName" sera supprimé définitivement. Cette action est irréversible.',
+                style: GoogleFonts.poppins(
+                    fontSize: 13, color: Colors.black45),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.black12),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: Text('Annuler',
+                          style: GoogleFonts.poppins(
+                              fontSize: 13, color: Colors.black54)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red.shade400,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: Text('Supprimer',
+                          style: GoogleFonts.poppins(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final historySnap = await FirebaseFirestore.instance
+        .collection('mealPlanHistory')
+        .where('groupId', isEqualTo: group.id)
+        .get();
+
+    if (historySnap.docs.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Aucun historique à supprimer pour "$groupName".',
+                style: GoogleFonts.poppins()),
+            backgroundColor: _primary,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Supprimer l'historique du groupe + remettre les compteurs à zéro
+    // uniquement pour les recettes/ingrédients présents dans cet historique.
+    final db = FirebaseFirestore.instance;
+    final recipeIdsSeen = <String>{};
+    for (final doc in historySnap.docs) {
+      final data = doc.data();
+      final mealsData = (data['meals'] as List<dynamic>?) ?? [];
+      for (final m in mealsData) {
+        final mealData = m as Map<String, dynamic>;
+        if (mealData['isLeftoverMeal'] as bool? ?? false) continue;
+        final recipeId = mealData['recipeId'] as String? ?? '';
+        if (recipeId.isNotEmpty) recipeIdsSeen.add(recipeId);
+      }
+    }
+
+    final ingredientIdsSeen = <String>{};
+    for (final recipeId in recipeIdsSeen) {
+      try {
+        final recipeDoc = await db.collection('recipes').doc(recipeId).get();
+        if (!recipeDoc.exists) continue;
+        final ingredients =
+            (recipeDoc.data()?['ingredients'] as List<dynamic>?) ?? [];
+        for (final ing in ingredients) {
+          final ingId =
+              (ing as Map<String, dynamic>)['ingredientId'] as String? ?? '';
+          if (ingId.isNotEmpty) ingredientIdsSeen.add(ingId);
+        }
+      } catch (_) {}
+    }
+
+    final batch = db.batch();
+    for (final doc in historySnap.docs) {
+      batch.delete(doc.reference);
+    }
+    for (final recipeId in recipeIdsSeen) {
+      batch.update(db.collection('recipes').doc(recipeId), {'usageCount': 0});
+    }
+    for (final ingredientId in ingredientIdsSeen) {
+      batch.update(
+          db.collection('ingredients').doc(ingredientId), {'usageCount': 0});
+    }
+    await batch.commit();
+
+    FirebaseStatsRepository.instance.invalidateCache();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Historique supprimé pour "$groupName".',
+              style: GoogleFonts.poppins()),
+          backgroundColor: Colors.red.shade400,
+        ),
+      );
+    }
+  }
+
   Future<void> _confirmDeleteGroup(DocumentSnapshot group) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -825,6 +982,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
                   canEdit: true,
                   canDelete: true,
                   canResetStats: true,
+                  canClearHistory: true,
                 );
               },
             );
@@ -855,6 +1013,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
               canDelete: false,
               canEditCatalogueOnly: true,
               canResetStats: true,
+              canClearHistory: true,
             ),
           ],
         );
@@ -1710,7 +1869,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
   // Shared group card
   // -------------------------------------------------------------------------
   Widget _buildGroupCard(DocumentSnapshot group, List<Map<String, dynamic>> allUsers,
-      {required bool canEdit, required bool canDelete, bool canEditCatalogueOnly = false, bool canResetStats = false}) {
+      {required bool canEdit, required bool canDelete, bool canEditCatalogueOnly = false, bool canResetStats = false, bool canClearHistory = false}) {
     final groupData = group.data() as Map<String, dynamic>;
     final rawMembers = groupData['members'];
     List<String> memberIds = [];
@@ -1766,6 +1925,15 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
                     color: Colors.orange.shade700,
                     backgroundColor: Colors.orange.shade50,
                     onTap: () => _resetGroupStats(group),
+                  ),
+                ],
+                if (canClearHistory) ...[
+                  const SizedBox(width: 8),
+                  _IconActionButton(
+                    icon: Icons.history_toggle_off_rounded,
+                    color: Colors.red.shade400,
+                    backgroundColor: Colors.red.shade50,
+                    onTap: () => _deleteGroupHistory(group),
                   ),
                 ],
                 if (canEditCatalogueOnly) ...[  

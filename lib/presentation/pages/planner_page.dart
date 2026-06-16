@@ -3082,9 +3082,80 @@ class _PlannerPageState extends State<PlannerPage> {
 
       // YES mode: move displaced meals into the freed-up empty slots.
       if (reorganize) {
-        for (int i = 0; i < displacedMeals.length && i < emptySlots.length; i++) {
-          debugPrint('[SWAP] displaced[${displacedMeals[i].recipe.title}] → ${emptySlots[i].day}/${emptySlots[i].month}');
-          newMeals.add(displacedMeals[i].copyWith(date: emptySlots[i]));
+        // Determine the correct type for the freed-up slots:
+        // - N > M: empty slots come from freed src leftover positions → source.type
+        // - M > N: empty slots come from freed tgt leftover positions → target.type
+        final emptySlotType = N > M ? source.type : target.type;
+
+        // Diversity-aware scoring: for a given displaced meal and a candidate slot
+        // date, return a score (lower = better) based on three criteria:
+        //  1. Same-day same-recipe conflict  → +1000 (hard block)
+        //  2. Recency: same recipe within 4 days in [context] → proportional penalty
+        //  3. Ingredient similarity (Jaccard) to adjacent meals (±1 day) → weighted penalty
+        double scoreDisplaced(Meal dm, DateTime slotDay, List<Meal> context) {
+          double score = 0.0;
+          const int recencyWindow = 4;
+
+          final dmIngredients = dm.recipe.ingredients
+              .map((i) => i.ingredient.name.toLowerCase().trim())
+              .where((n) => n.isNotEmpty)
+              .toSet();
+
+          for (final m in context) {
+            if (m.isLeftoverMeal) continue;
+            final mDay = DateTime(m.date.year, m.date.month, m.date.day);
+            final daysDiff = slotDay.difference(mDay).inDays.abs();
+
+            // 1. Same-day same-recipe
+            if (daysDiff == 0 && m.recipe.id == dm.recipe.id) {
+              score += 1000.0;
+              continue;
+            }
+
+            // 2. Recency penalty
+            if (m.recipe.id == dm.recipe.id && daysDiff < recencyWindow) {
+              score += (recencyWindow - daysDiff) * 25.0;
+            }
+
+            // 3. Ingredient similarity to same-day and ±1-day meals
+            if (daysDiff <= 1 && dmIngredients.isNotEmpty) {
+              final otherIngredients = m.recipe.ingredients
+                  .map((i) => i.ingredient.name.toLowerCase().trim())
+                  .where((n) => n.isNotEmpty)
+                  .toSet();
+              if (otherIngredients.isNotEmpty) {
+                final union = dmIngredients.union(otherIngredients).length;
+                final intersection = dmIngredients.intersection(otherIngredients).length;
+                if (union > 0) {
+                  final jaccard = intersection / union;
+                  final proximity = daysDiff == 0 ? 2.0 : 1.0;
+                  score += jaccard * 60.0 * proximity;
+                }
+              }
+            }
+          }
+          return score;
+        }
+
+        // Greedy assignment: for each displaced meal, pick the lowest-scoring slot.
+        // The meal just placed is added to [newMeals] so it becomes context for the
+        // next displaced meal (avoids two displaced meals landing on adjacent days
+        // with similar ingredients).
+        final availableEmptySlots = List<DateTime>.from(emptySlots);
+        for (final dm in displacedMeals) {
+          if (availableEmptySlots.isEmpty) break;
+
+          int bestIdx = 0;
+          double bestScore = double.infinity;
+          for (int si = 0; si < availableEmptySlots.length; si++) {
+            final s = scoreDisplaced(dm, availableEmptySlots[si], newMeals);
+            if (kDebugMode) debugPrint('[SWAP] displaced[${dm.recipe.title}] candidate ${availableEmptySlots[si].day}/${availableEmptySlots[si].month} score=$s');
+            if (s < bestScore) { bestScore = s; bestIdx = si; }
+          }
+          final chosenSlot = availableEmptySlots.removeAt(bestIdx);
+          debugPrint('[SWAP] displaced[${dm.recipe.title}] → ${chosenSlot.day}/${chosenSlot.month} ${emptySlotType.name} (score=$bestScore)');
+          final placed = dm.copyWith(date: chosenSlot, type: emptySlotType);
+          newMeals.add(placed); // mise à jour du contexte pour le repas déplacé suivant
         }
       }
 
@@ -3117,6 +3188,59 @@ class _PlannerPageState extends State<PlannerPage> {
       if (mounted) setState(() => _generatedMealPlan = updatedPlan);
 
       debugPrint('[SWAP] ===== _swapMeals DONE =====');
+
+      // ── Warn about same-day recipe duplicates created by the swap ────────────
+      // This can happen when the target meal's recipe already appears on the
+      // source's day (or vice-versa) — the main swap has no way to avoid it
+      // since the user explicitly chose those two slots.
+      if (mounted) {
+        final sameDayDuplicates = <String>[];
+        // Group non-leftover meals by (normalised day, recipeId).
+        final dayRecipeCount = <String, int>{};
+        for (final m in newMeals) {
+          if (m.isLeftoverMeal) continue;
+          final dayKey = '${m.date.year}-${m.date.month}-${m.date.day}_${m.recipe.id}';
+          dayRecipeCount[dayKey] = (dayRecipeCount[dayKey] ?? 0) + 1;
+        }
+        for (final entry in dayRecipeCount.entries) {
+          if (entry.value < 2) continue;
+          final parts = entry.key.split('_');
+          final dayParts = parts[0].split('-');
+          final recipeId = parts[1];
+          final meal = newMeals.firstWhere(
+            (m) => m.recipe.id == recipeId && !m.isLeftoverMeal,
+            orElse: () => newMeals.first,
+          );
+          sameDayDuplicates.add(
+            '${meal.recipe.title} × ${entry.value} le ${dayParts[2]}/${dayParts[1]}',
+          );
+        }
+        if (sameDayDuplicates.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            duration: const Duration(seconds: 6),
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            backgroundColor: Colors.amber[800],
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  Text('Doublon dans le plan',
+                      style: GoogleFonts.poppins(
+                          fontWeight: FontWeight.w700, fontSize: 13, color: Colors.white)),
+                ]),
+                const SizedBox(height: 4),
+                ...sameDayDuplicates.map((s) => Text('• $s',
+                    style: GoogleFonts.poppins(fontSize: 12, color: Colors.white))),
+              ],
+            ),
+          ));
+        }
+      }
 
       // ── 7. Detect empty slots & optionally fill them ────────────────────────
       final now = DateTime.now();

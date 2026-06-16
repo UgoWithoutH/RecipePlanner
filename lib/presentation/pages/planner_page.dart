@@ -109,6 +109,10 @@ class _PlannerPageState extends State<PlannerPage> {
   /// Key: slot key (date_mealType_recipeId), identifies a specific Meal.
   final Set<String> _multiShuffleKeptSlots = {};
 
+  /// Swap mode: the meal currently selected as source for a slot swap.
+  /// When non-null, tapping another non-leftover future meal triggers the swap.
+  Meal? _swapSourceMeal;
+
   /// Slot keys (date_mealType) verrouillés lors du dernier multi-shuffle.
   /// Persistés dans SharedPreferences et restaurés au prochain passage en mode multi-shuffle.
   Set<String> _persistedLockedSlotKeys = {};
@@ -2796,6 +2800,414 @@ class _PlannerPageState extends State<PlannerPage> {
     }
   }
 
+  /// Returns consecutive leftover meals associated with [mainMeal]:
+  /// same recipe.id, same type, isLeftoverMeal=true, strictly after mainMeal's
+  /// date (same type order), stopping at the first non-leftover occurrence of
+  /// the same recipe (new independent serving).
+  List<Meal> _getConsecutiveLeftoversOfMeal(Meal mainMeal, List<Meal> allMeals) {
+    final mainDay = DateTime(mainMeal.date.year, mainMeal.date.month, mainMeal.date.day);
+    final futureSameType = allMeals
+        .where((m) => m.type == mainMeal.type)
+        .where((m) {
+          final mDay = DateTime(m.date.year, m.date.month, m.date.day);
+          return mDay.isAfter(mainDay);
+        })
+        .toList()
+      ..sort((a, b) {
+        final da = DateTime(a.date.year, a.date.month, a.date.day);
+        final db = DateTime(b.date.year, b.date.month, b.date.day);
+        return da.compareTo(db);
+      });
+
+    final leftovers = <Meal>[];
+    for (final m in futureSameType) {
+      if (m.recipe.id != mainMeal.recipe.id) continue;
+      if (!m.isLeftoverMeal) break; // nouvelle occurrence indépendante
+      leftovers.add(m);
+    }
+    return leftovers;
+  }
+
+  /// Échange les recettes de deux slots, en déplaçant leurs restes pour suivre
+  /// leurs nouveaux parents. Propose une réorganisation quand les chaînes de
+  /// restes sont inégales et qu'un repas existant serait écrasé.
+  Future<void> _swapMeals(Meal source, Meal target) async {
+    if (_generatedMealPlan == null) return;
+    setState(() { _swapSourceMeal = null; _isLoading = true; });
+    try {
+      final allMeals = List<Meal>.from(_generatedMealPlan!.meals);
+      final sameType = source.type == target.type;
+
+      debugPrint('[SWAP] ===== _swapMeals START =====');
+      debugPrint('[SWAP] SOURCE: ${source.recipe.title} @ ${_slotKey(source.date, source.type)} leftover=${source.isLeftoverMeal}');
+      debugPrint('[SWAP] TARGET: ${target.recipe.title} @ ${_slotKey(target.date, target.type)} leftover=${target.isLeftoverMeal}');
+      debugPrint('[SWAP] sameType=$sameType');
+
+      // ── 1. Collect leftover chains ──────────────────────────────────────────
+      // Les restes suivent toujours leur parent (même type qu'eux), quel que
+      // soit le type du slot cible — _getConsecutiveLeftoversOfMeal filtre déjà
+      // par m.type == mainMeal.type.
+      final srcLeftovers = _getConsecutiveLeftoversOfMeal(source, allMeals);
+      final tgtLeftovers = _getConsecutiveLeftoversOfMeal(target, allMeals);
+      final N = srcLeftovers.length;
+      final M = tgtLeftovers.length;
+
+      debugPrint('[SWAP] srcLeftovers ($N): ${srcLeftovers.map((m) => '${m.recipe.title}@${_slotKey(m.date, m.type)}').toList()}');
+      debugPrint('[SWAP] tgtLeftovers ($M): ${tgtLeftovers.map((m) => '${m.recipe.title}@${_slotKey(m.date, m.type)}').toList()}');
+
+      final srcDay = DateTime(source.date.year, source.date.month, source.date.day);
+      final tgtDay = DateTime(target.date.year, target.date.month, target.date.day);
+
+      final srcLeftoverKeys = srcLeftovers.map(_mealKey).toSet();
+      final tgtLeftoverKeys = tgtLeftovers.map(_mealKey).toSet();
+      final srcKey = _mealKey(source);
+      final tgtKey = _mealKey(target);
+
+      // ── 2. Compute new leftover positions ───────────────────────────────────
+      // Source's leftovers (type = source.type) move after tgtDay.
+      // Target's leftovers (type = target.type) move after srcDay.
+      // Each chain skips the day that now hosts the other main meal (same type
+      // conflict), and searches further if needed to place all N / M leftovers.
+      final planStart = DateTime(_generatedMealPlan!.startDate.year,
+          _generatedMealPlan!.startDate.month, _generatedMealPlan!.startDate.day);
+      final planEnd = planStart.add(Duration(days: _generatedMealPlan!.durationDays));
+
+      bool isInPlan(DateTime d) => !d.isBefore(planStart) && d.isBefore(planEnd);
+
+      // src leftovers take type=target.type after the swap.
+      // Block tgtDay (source meal is there at target.type).
+      // Block srcDay only if sameType (target meal is there at source.type == target.type).
+      bool isBlockedForSrcLeftover(DateTime d) {
+        if (d.year == tgtDay.year && d.month == tgtDay.month && d.day == tgtDay.day) return true;
+        if (sameType && d.year == srcDay.year && d.month == srcDay.month && d.day == srcDay.day) return true;
+        return false;
+      }
+      // tgt leftovers take type=source.type after the swap.
+      // Block srcDay (target meal is there at source.type).
+      // Block tgtDay only if sameType (source meal is there at target.type == source.type).
+      bool isBlockedForTgtLeftover(DateTime d) {
+        if (d.year == srcDay.year && d.month == srcDay.month && d.day == srcDay.day) return true;
+        if (sameType && d.year == tgtDay.year && d.month == tgtDay.month && d.day == tgtDay.day) return true;
+        return false;
+      }
+
+      // Search the first N available days after tgtDay for src leftovers.
+      final srcNewPositions = <DateTime>[];
+      for (int i = 1; srcNewPositions.length < N; i++) {
+        final d = tgtDay.add(Duration(days: i));
+        if (!isInPlan(d)) break;
+        if (isBlockedForSrcLeftover(d)) continue;
+        srcNewPositions.add(d);
+      }
+      // Search the first M available days after srcDay for tgt leftovers.
+      final tgtNewPositions = <DateTime>[];
+      for (int i = 1; tgtNewPositions.length < M; i++) {
+        final d = srcDay.add(Duration(days: i));
+        if (!isInPlan(d)) break;
+        if (isBlockedForTgtLeftover(d)) continue;
+        tgtNewPositions.add(d);
+      }
+
+      debugPrint('[SWAP] srcNewPositions: ${srcNewPositions.map((d) => '${d.day}/${d.month}').toList()}');
+      debugPrint('[SWAP] tgtNewPositions: ${tgtNewPositions.map((d) => '${d.day}/${d.month}').toList()}');
+
+      // ── 3. Find displaced meals & empty slots ───────────────────────────────
+      // A displaced meal is any meal at an "extra" new-leftover position that is
+      // not itself a src/tgt leftover (those are being moved already).
+      final List<Meal> displacedMeals = [];
+      final List<DateTime> emptySlots = [];
+
+      if (N > M) {
+        // Source has more leftovers: extra positions srcNewPositions[M..end]
+        // src leftovers have new type = target.type, so displaced meals have that type too.
+        for (int i = M; i < srcNewPositions.length; i++) {
+          final slotDate = srcNewPositions[i];
+          final displaced = allMeals.where((m) {
+            if (m.type != target.type) return false;
+            final mDay = DateTime(m.date.year, m.date.month, m.date.day);
+            if (mDay.year != slotDate.year || mDay.month != slotDate.month || mDay.day != slotDate.day) return false;
+            final mk = _mealKey(m);
+            if (mk == srcKey || mk == tgtKey) return false;
+            if (srcLeftoverKeys.contains(mk) || tgtLeftoverKeys.contains(mk)) return false;
+            return true;
+          }).toList();
+          displacedMeals.addAll(displaced);
+        }
+        // Empty slots: old src leftover positions beyond what target needs
+        for (int i = M; i < N; i++) {
+          emptySlots.add(DateTime(srcLeftovers[i].date.year,
+              srcLeftovers[i].date.month, srcLeftovers[i].date.day));
+        }
+      } else if (M > N) {
+        // Target has more leftovers: extra positions tgtNewPositions[N..end]
+        // tgt leftovers have new type = source.type, so displaced meals have that type too.
+        for (int i = N; i < tgtNewPositions.length; i++) {
+          final slotDate = tgtNewPositions[i];
+          final displaced = allMeals.where((m) {
+            if (m.type != source.type) return false;
+            final mDay = DateTime(m.date.year, m.date.month, m.date.day);
+            if (mDay.year != slotDate.year || mDay.month != slotDate.month || mDay.day != slotDate.day) return false;
+            final mk = _mealKey(m);
+            if (mk == srcKey || mk == tgtKey) return false;
+            if (srcLeftoverKeys.contains(mk) || tgtLeftoverKeys.contains(mk)) return false;
+            return true;
+          }).toList();
+          displacedMeals.addAll(displaced);
+        }
+        // Empty slots: old tgt leftover positions beyond what source needs
+        for (int i = N; i < M; i++) {
+          emptySlots.add(DateTime(tgtLeftovers[i].date.year,
+              tgtLeftovers[i].date.month, tgtLeftovers[i].date.day));
+        }
+      }
+
+      debugPrint('[SWAP] displacedMeals (${displacedMeals.length}): ${displacedMeals.map((m) => '${m.recipe.title}@${_slotKey(m.date, m.type)}').toList()}');
+      debugPrint('[SWAP] emptySlots (${emptySlots.length}): ${emptySlots.map((d) => '${d.day}/${d.month}').toList()}');
+
+      // ── 4. Ask for reorganisation if needed ─────────────────────────────────
+      bool reorganize = false;
+      if (displacedMeals.isNotEmpty && mounted) {
+        debugPrint('[SWAP] → showing reorganize dialog');
+        setState(() => _isLoading = false);
+        final result = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+            actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF6A5AE0).withOpacity(0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.compare_arrows_rounded,
+                      color: Color(0xFF6A5AE0), size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text('Réorganiser le plan ?',
+                      style: GoogleFonts.poppins(
+                          fontWeight: FontWeight.w600, fontSize: 16)),
+                ),
+              ],
+            ),
+            content: Text(
+              'Ces deux repas n\'ont pas le même nombre de restes.\n\n'
+              '${displacedMeals.length} repas ${displacedMeals.length == 1 ? 'sera déplacé' : 'seront déplacés'} '
+              'par les nouveaux restes. Voulez-vous les replacer dans les créneaux libérés ?',
+              style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54, height: 1.5),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                style: TextButton.styleFrom(foregroundColor: Colors.black54),
+                child: Text('Non', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6A5AE0),
+                  foregroundColor: Colors.white,
+                ),
+                child: Text('Oui, réorganiser',
+                    style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+              ),
+            ],
+          ),
+        );
+        if (result == null) return; // dialog dismissed without choice
+        reorganize = result;
+        debugPrint('[SWAP] user chose reorganize=$reorganize');
+        setState(() => _isLoading = true);
+      }
+
+      // ── 5. Build updated meal list ──────────────────────────────────────────
+      final toRemoveKeys = <String>{srcKey, tgtKey};
+      for (final m in srcLeftovers) toRemoveKeys.add(_mealKey(m));
+      for (final m in tgtLeftovers) toRemoveKeys.add(_mealKey(m));
+      // In YES case, displaced meals are removed so they can be re-placed.
+      if (reorganize) {
+        for (final m in displacedMeals) toRemoveKeys.add(_mealKey(m));
+      }
+
+      debugPrint('[SWAP] toRemoveKeys (${toRemoveKeys.length}): $toRemoveKeys');
+
+      final newMeals = allMeals.where((m) => !toRemoveKeys.contains(_mealKey(m))).toList();
+
+      // Swap main meals: date AND type are exchanged so each meal lands on
+      // the exact slot (day + meal type) previously occupied by the other.
+      newMeals.add(source.copyWith(date: tgtDay, type: target.type));
+      newMeals.add(target.copyWith(date: srcDay, type: source.type));
+      debugPrint('[SWAP] main swap: ${source.recipe.title} → ${tgtDay.day}/${tgtDay.month} ${target.type.name}, ${target.recipe.title} → ${srcDay.day}/${srcDay.month} ${source.type.name}');
+
+      // Place source's leftovers after tgtDay.
+      for (int i = 0; i < srcNewPositions.length && i < N; i++) {
+        final newDate = srcNewPositions[i];
+        if (!reorganize && N > M && i >= M) {
+          // NO mode: skip if a displaced meal is already occupying this slot.
+          final hasDisplaced = displacedMeals.any((dm) {
+            final dmDay = DateTime(dm.date.year, dm.date.month, dm.date.day);
+            return dmDay.year == newDate.year && dmDay.month == newDate.month && dmDay.day == newDate.day;
+          });
+          if (hasDisplaced) {
+            debugPrint('[SWAP] srcLeftover[$i] skipped (slot ${newDate.day}/${newDate.month} occupied by displaced meal)');
+            continue;
+          }
+        }
+        debugPrint('[SWAP] srcLeftover[$i] ${srcLeftovers[i].recipe.title} → ${newDate.day}/${newDate.month} ${target.type.name}');
+        newMeals.add(srcLeftovers[i].copyWith(date: newDate, type: target.type));
+      }
+
+      // Place target's leftovers after srcDay.
+      for (int i = 0; i < tgtNewPositions.length && i < M; i++) {
+        final newDate = tgtNewPositions[i];
+        if (!reorganize && M > N && i >= N) {
+          final hasDisplaced = displacedMeals.any((dm) {
+            final dmDay = DateTime(dm.date.year, dm.date.month, dm.date.day);
+            return dmDay.year == newDate.year && dmDay.month == newDate.month && dmDay.day == newDate.day;
+          });
+          if (hasDisplaced) {
+            debugPrint('[SWAP] tgtLeftover[$i] skipped (slot ${newDate.day}/${newDate.month} occupied by displaced meal)');
+            continue;
+          }
+        }
+        debugPrint('[SWAP] tgtLeftover[$i] ${tgtLeftovers[i].recipe.title} → ${newDate.day}/${newDate.month} ${source.type.name}');
+        newMeals.add(tgtLeftovers[i].copyWith(date: newDate, type: source.type));
+      }
+
+      // YES mode: move displaced meals into the freed-up empty slots.
+      if (reorganize) {
+        for (int i = 0; i < displacedMeals.length && i < emptySlots.length; i++) {
+          debugPrint('[SWAP] displaced[${displacedMeals[i].recipe.title}] → ${emptySlots[i].day}/${emptySlots[i].month}');
+          newMeals.add(displacedMeals[i].copyWith(date: emptySlots[i]));
+        }
+      }
+
+      debugPrint('[SWAP] final meal count: ${newMeals.length} (was ${allMeals.length})');
+
+      // ── Log plan après swap ─────────────────────────────────────────────────
+      debugPrint('[SWAP] ===== Plan après swap =====');
+      final swapMealsByDay = <String, List<Meal>>{};
+      for (final m in newMeals) {
+        final key = '${m.date.year}-${m.date.month.toString().padLeft(2,'0')}-${m.date.day.toString().padLeft(2,'0')}';
+        swapMealsByDay.putIfAbsent(key, () => []).add(m);
+      }
+      for (final day in (swapMealsByDay.keys.toList()..sort())) {
+        final dayMeals = swapMealsByDay[day]!..sort((a, b) => a.type.index.compareTo(b.type.index));
+        for (final m in dayMeals) {
+          final type = m.type == MealType.lunch ? 'MIDI' : 'SOIR';
+          final leftover = m.isLeftoverMeal ? ' [RESTE]' : '';
+          final portions = m.userServings.isEmpty
+              ? '${m.totalServings}p'
+              : m.userServings.entries.map((e) => '${e.key.substring(0,6)}:${e.value}p').join(', ');
+          debugPrint('[SWAP]   $day $type | ${m.recipe.title}$leftover  ($portions)');
+        }
+      }
+      debugPrint('[SWAP] ================================');
+
+      // ── 6. Save ─────────────────────────────────────────────────────────────
+      final updatedPlan = _generatedMealPlan!.copyWith(meals: newMeals);
+      await _mealPlanRepo.saveMealPlan(updatedPlan);
+      await ShoppingListGenerator().generateAndSaveShoppingList(updatedPlan);
+      if (mounted) setState(() => _generatedMealPlan = updatedPlan);
+
+      debugPrint('[SWAP] ===== _swapMeals DONE =====');
+
+      // ── 7. Detect empty slots & optionally fill them ────────────────────────
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final filledSlotKeys = newMeals
+          .map((m) => _slotKey(m.date, m.type))
+          .toSet();
+      final emptyFutureSlotKeys = <String>{};
+      for (int d = 0; d < _generatedMealPlan!.durationDays; d++) {
+        final day = planStart.add(Duration(days: d));
+        if (day.isBefore(today)) continue;
+        for (final type in MealType.values) {
+          final sk = _slotKey(day, type);
+          if (!filledSlotKeys.contains(sk)) emptyFutureSlotKeys.add(sk);
+        }
+      }
+      debugPrint('[SWAP] emptyFutureSlotKeys après swap (${emptyFutureSlotKeys.length}): $emptyFutureSlotKeys');
+
+      if (emptyFutureSlotKeys.isNotEmpty && mounted) {
+        final fillResult = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+            actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF6A5AE0).withOpacity(0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.restaurant_menu_rounded,
+                      color: Color(0xFF6A5AE0), size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    '${emptyFutureSlotKeys.length} créneau${emptyFutureSlotKeys.length > 1 ? 'x' : ''} vide${emptyFutureSlotKeys.length > 1 ? 's' : ''}',
+                    style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
+                  ),
+                ),
+              ],
+            ),
+            content: Text(
+              'L\'échange de recette a laissé ${emptyFutureSlotKeys.length == 1 ? 'un créneau vide' : '${emptyFutureSlotKeys.length} créneaux vides'} dans le plan.\n\nVoulez-vous générer ${emptyFutureSlotKeys.length == 1 ? 'un repas' : 'des repas'} pour les remplir ?',
+              style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54, height: 1.5),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                style: TextButton.styleFrom(foregroundColor: Colors.black54),
+                child: Text('Non', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6A5AE0),
+                  foregroundColor: Colors.white,
+                ),
+                child: Text('Oui, générer',
+                    style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+              ),
+            ],
+          ),
+        );
+        if (fillResult == true && mounted) {
+          debugPrint('[SWAP] → filling empty slots with _fillVacatedSlots: $emptyFutureSlotKeys');
+          await _fillVacatedSlots(onlySlotKeys: emptyFutureSlotKeys);
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Repas échangés !',
+              style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w500)),
+          backgroundColor: const Color(0xFF6A5AE0),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          duration: const Duration(seconds: 3),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   /// Shuffle unitaire : verrouille tous les autres slots et délègue à _shuffleFreeSlots.
   Future<void> _autoChangeMealRecipe(
     Meal mealToChange, {
@@ -4658,6 +5070,35 @@ class _PlannerPageState extends State<PlannerPage> {
                             ),
                           const SizedBox(height: 16),
                         ],
+                        // ── Zone swap (plan uniquement) ──
+                        if (_generatedMealPlan != null && _swapSourceMeal != null) ...[
+                          Container(
+                            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEDE9FF),
+                              border: Border.all(color: const Color(0xFF6A5AE0).withOpacity(0.4)),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.compare_arrows_rounded, color: Color(0xFF6A5AE0), size: 16),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Touchez un repas pour l\'échanger avec « ${_swapSourceMeal!.recipe.title} »',
+                                    style: GoogleFonts.poppins(fontSize: 12, color: Color(0xFF3D2F9E), fontWeight: FontWeight.w500),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                GestureDetector(
+                                  onTap: () => setState(() => _swapSourceMeal = null),
+                                  child: const Icon(Icons.close_rounded, color: Color(0xFF6A5AE0), size: 20),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
                         const SizedBox(height: 8),
                         _buildMealDetails(),
                         const SizedBox(height: 88),
@@ -5098,6 +5539,15 @@ class _PlannerPageState extends State<PlannerPage> {
       final isKept = _multiShuffleKeptSlots.contains(_slotKey(meal.date, meal.type));
       final isSelectableMeal = _isMultiShuffleMode && !meal.isLeftoverMeal && !isPastDay;
       final liveRating = _currentRecipeRating(meal.recipe);
+      final isSwapSource = _swapSourceMeal != null &&
+          _swapSourceMeal!.date.year == meal.date.year &&
+          _swapSourceMeal!.date.month == meal.date.month &&
+          _swapSourceMeal!.date.day == meal.date.day &&
+          _swapSourceMeal!.type == meal.type &&
+          _swapSourceMeal!.recipe.id == meal.recipe.id;
+      final isSwapTarget = _swapSourceMeal != null && !isSwapSource &&
+          !meal.isLeftoverMeal && !isPastDay;
+      final isSwapDimmed = _swapSourceMeal != null && !isSwapSource && !isSwapTarget;
 
       return Card(
         color: Colors.white,
@@ -5235,8 +5685,8 @@ class _PlannerPageState extends State<PlannerPage> {
               ),
                   ), // InkWell (left content)
                   ), // Expanded (left)
-                  // ── Right: action buttons row (hidden in multi-shuffle) ──
-                  if (!_isMultiShuffleMode)
+                  // ── Right: action buttons row (hidden in multi-shuffle and swap mode) ──
+                  if (!_isMultiShuffleMode && _swapSourceMeal == null)
                   Builder(builder: (context) {
                     final btnHPad = (MediaQuery.of(context).size.width * 0.014).clamp(10.0, 20.0);
                   return Container(
@@ -5257,6 +5707,16 @@ class _PlannerPageState extends State<PlannerPage> {
                               ),
                             ),
                             VerticalDivider(width: 1, thickness: 1, color: Colors.grey.shade200),
+                            if (!meal.isLeftoverMeal) ...[
+                              InkWell(
+                                onTap: () => setState(() => _swapSourceMeal = meal),
+                                child: Padding(
+                                  padding: EdgeInsets.symmetric(horizontal: btnHPad, vertical: 12),
+                                  child: Icon(Icons.compare_arrows_rounded, color: Colors.grey.shade500, size: 20),
+                                ),
+                              ),
+                              VerticalDivider(width: 1, thickness: 1, color: Colors.grey.shade200),
+                            ],
                           ],
                           InkWell(
                             onTap: () async {
@@ -5328,6 +5788,77 @@ class _PlannerPageState extends State<PlannerPage> {
                   ], // Row children (left content + right buttons)
                 ), // Row
               ), // IntrinsicHeight
+              // ── Swap source overlay ──
+              if (isSwapSource)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFF6A5AE0), width: 2),
+                      ),
+                      child: Align(
+                        alignment: Alignment.topRight,
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF6A5AE0),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.compare_arrows_rounded, color: Colors.white, size: 16),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              // ── Swap target overlay (tap to confirm swap) ──
+              if (isSwapTarget)
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: () => _swapMeals(_swapSourceMeal!, meal),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF6A5AE0).withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: const Color(0xFF6A5AE0).withOpacity(0.45),
+                          width: 1.5,
+                        ),
+                      ),
+                      child: Align(
+                        alignment: Alignment.topRight,
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF6A5AE0).withOpacity(0.75),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.swap_horiz_rounded, color: Colors.white, size: 16),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              // ── Swap dimmed overlay (past / leftover / not eligible) ──
+              if (isSwapDimmed)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.06),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                  ),
+                ),
               // ── Selection overlay (multi-shuffle mode) ──
               if (isSelectableMeal)
                 Positioned.fill(

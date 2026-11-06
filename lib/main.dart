@@ -10,11 +10,11 @@ import 'package:recipe_planner/data/services/seed_data_service.dart';
 import 'package:recipe_planner/data/services/notification_service.dart';
 import 'package:recipe_planner/data/services/recipes_cache_service.dart';
 
-import 'presentation/pages/recipes_page.dart';
-import 'presentation/pages/planner_page.dart';
-import 'presentation/pages/ingredients_page.dart';
-import 'presentation/pages/shopping_list_page.dart';
-import 'presentation/pages/fridge_pantry_page.dart';
+import 'presentation/pages/recipes/recipes_page.dart';
+import 'presentation/pages/planner/planner_page.dart';
+import 'presentation/pages/ingredients/ingredients_page.dart';
+import 'presentation/pages/shopping_list/shopping_list_page.dart';
+import 'presentation/pages/fridge_pantry/fridge_pantry_page.dart';
 import 'presentation/pages/login_page.dart';
 import 'presentation/pages/access_denied_page.dart';
 import 'presentation/pages/no_group_page.dart';

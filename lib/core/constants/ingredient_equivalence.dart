@@ -32,7 +32,7 @@ class IngredientEquivalence {
   }
 
   static List<IngredientEquivalence> listFromRaw(Object? raw) {
-    if (raw is! List) return const [];
+    if (raw is! List) return <IngredientEquivalence>[];
     return raw.map(fromMap).whereType<IngredientEquivalence>().toList();
   }
 }

@@ -42,6 +42,8 @@ class ModernSelectorCard extends StatelessWidget {
               const SizedBox(height: 12),
               Text(
                 title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: GoogleFonts.poppins(
                   fontSize: 12,
                   color: Colors.grey[600],
@@ -50,6 +52,8 @@ class ModernSelectorCard extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 value,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: GoogleFonts.poppins(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
@@ -99,12 +103,16 @@ class ModernGradientButton extends StatelessWidget {
           children: [
             Icon(icon, color: Colors.white),
             const SizedBox(width: 8),
-            Text(
-              label,
-              style: GoogleFonts.poppins(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.poppins(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
               ),
             ),
           ],

@@ -73,7 +73,12 @@ class AccessDeniedPage extends ConsumerWidget {
                 // Top illustration area
                 Expanded(
                   flex: 5,
-                  child: Column(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => SingleChildScrollView(
+                      child: ConstrainedBox(
+                        constraints:
+                            BoxConstraints(minHeight: constraints.maxHeight),
+                        child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       // Icon in a frosted circle
@@ -111,6 +116,9 @@ class AccessDeniedPage extends ConsumerWidget {
                         ),
                       ),
                     ],
+                        ),
+                      ),
+                    ),
                   ),
                 ),
 
@@ -166,6 +174,7 @@ class AccessDeniedPage extends ConsumerWidget {
                           },
                           child: Text(
                             'Utiliser un autre compte',
+                            overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.poppins(
                               fontSize: 15,
                               fontWeight: FontWeight.w600,

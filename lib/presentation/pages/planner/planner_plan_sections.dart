@@ -50,9 +50,11 @@ extension _PlannerPlanSections on _PlannerPageState {
                     ),
                   ),
                   const SizedBox(height: 2),
-                  Row(
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
                     children: [
-                      if (normalCount > 0) ...[
+                      if (normalCount > 0)
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                           decoration: BoxDecoration(
@@ -68,8 +70,6 @@ extension _PlannerPlanSections on _PlannerPageState {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 6),
-                      ],
                       if (urgentCount > 0)
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),

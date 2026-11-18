@@ -45,7 +45,7 @@ class ModernPlannerHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 400 ? 16 : 24),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
@@ -263,26 +263,32 @@ class ModernPlannerHeader extends StatelessWidget {
                       child: const Icon(Icons.star_rounded, color: Color(0xFFFFA726), size: 18),
                     ),
                     const SizedBox(width: 10),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Note minimale',
-                          style: GoogleFonts.poppins(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF2D2D2D),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Note minimale',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.poppins(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF2D2D2D),
+                            ),
                           ),
-                        ),
-                        Text(
-                          'non notées toujours incluses',
-                          style: GoogleFonts.poppins(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w400,
-                            color: const Color(0xFF9E9E9E),
+                          Text(
+                            'non notées toujours incluses',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.poppins(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w400,
+                              color: const Color(0xFF9E9E9E),
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ],
                 ),

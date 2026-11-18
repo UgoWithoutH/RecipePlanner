@@ -149,12 +149,16 @@ class _SectionHeader extends StatelessWidget {
       children: [
         Icon(icon, size: 16, color: const Color(0xFF6A5AE0)),
         const SizedBox(width: 6),
-        Text(
-          label,
-          style: GoogleFonts.poppins(
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            color: const Color(0xFF6A5AE0),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.poppins(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF6A5AE0),
+            ),
           ),
         ),
       ],

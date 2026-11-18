@@ -63,7 +63,22 @@ extension _CreateRecipeSections on _CreateRecipePageState {
                 },
               ),
               const SizedBox(height: 12),
-              Row(
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final narrow = constraints.maxWidth < 330;
+                  final unitActions = <Widget>[
+                  IconButton(
+                    tooltip: 'Gérer les unités',
+                    onPressed: _openUnitsPage,
+                    icon: Icon(Icons.straighten_rounded, color: Colors.grey[600], size: 22),
+                  ),
+                  FloatingActionButton.small(
+                    onPressed: _addIngredient,
+                    backgroundColor: const Color(0xFF6A5AE0),
+                    child: const Icon(Icons.add, color: Colors.white),
+                  ),
+                  ];
+                  final qtyUnitRow = Row(
                 children: [
                   Expanded(
                     flex: 2,
@@ -94,30 +109,34 @@ extension _CreateRecipeSections on _CreateRecipePageState {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text('Unité', style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[500])),
-                              Text(u.label, style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
+                              Text('Unité', maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[500])),
+                              Text(u.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
                             ],
                           )).toList(),
                           items: Unit.values.map((u) => DropdownMenuItem<Unit>(
                             value: u,
-                            child: Text(u.label, style: GoogleFonts.poppins(fontSize: 14)),
+                            child: Text(u.label, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(fontSize: 14)),
                           )).toList(),
                           onChanged: (u) => setState(() => _selectedIngredientUnit = u),
                         ),
                       ),
                     ),
                   ),
-                  IconButton(
-                    tooltip: 'Gérer les unités',
-                    onPressed: _openUnitsPage,
-                    icon: Icon(Icons.straighten_rounded, color: Colors.grey[600], size: 22),
-                  ),
-                  FloatingActionButton.small(
-                    onPressed: _addIngredient,
-                    backgroundColor: const Color(0xFF6A5AE0),
-                    child: const Icon(Icons.add, color: Colors.white),
-                  ),
+                  if (!narrow) ...unitActions,
                 ],
+                  );
+                  if (!narrow) return qtyUnitRow;
+                  return Column(
+                    children: [
+                      qtyUnitRow,
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: unitActions,
+                      ),
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 12),
               _buildModernInput(
@@ -190,8 +209,10 @@ extension _CreateRecipeSections on _CreateRecipePageState {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 4,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
                                   children: [
                                     Text(
                                       ingredient.ingredient.name,
@@ -200,8 +221,7 @@ extension _CreateRecipeSections on _CreateRecipePageState {
                                         color: Colors.black87,
                                       ),
                                     ),
-                                    if (hasType) ...[
-                                      const SizedBox(width: 8),
+                                    if (hasType)
                                       Container(
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: 10,
@@ -213,6 +233,7 @@ extension _CreateRecipeSections on _CreateRecipePageState {
                                               BorderRadius.circular(12),
                                         ),
                                         child: Row(
+                                          mainAxisSize: MainAxisSize.min,
                                           children: [
                                             Container(
                                               width: 10,
@@ -234,10 +255,8 @@ extension _CreateRecipeSections on _CreateRecipePageState {
                                           ],
                                         ),
                                       ),
-                                    ],
-                                    const SizedBox(width: 8),
                                     Text(
-                                      '- ${fmtQty(ingredient.quantity)} ${ingredient.unit.label}',
+                                      '${fmtQty(ingredient.quantity)} ${ingredient.unit.label}',
                                       style: GoogleFonts.poppins(
                                         color: Colors.grey[600],
                                       ),
@@ -422,7 +441,45 @@ extension _CreateRecipeSections on _CreateRecipePageState {
                       ),
                     ],
                   ),
-                  child: Row(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final narrow = constraints.maxWidth < 280;
+                      final actions = <Widget>[
+                          InkWell(
+                            onTap: () => _showEditInstructionDialog(index),
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF6A5AE0).withOpacity(0.08),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(Icons.edit_rounded, size: 18, color: Color(0xFF6A5AE0)),
+                            ),
+                          ),
+                          SizedBox(width: narrow ? 0 : 8, height: narrow ? 8 : 0),
+                          InkWell(
+                            onTap: () async {
+                              final confirm = await _showDeleteConfirmSheet(
+                                title: 'Supprimer l\'étape',
+                                message: 'Voulez-vous vraiment supprimer l\'étape ${index + 1} ?',
+                              );
+                              if (confirm == true) {
+                                setState(() => _instructions.removeAt(index));
+                              }
+                            },
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.red.withOpacity(0.08),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red[400]),
+                            ),
+                          ),
+                      ];
+                      return Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Container(
@@ -450,45 +507,13 @@ extension _CreateRecipeSections on _CreateRecipePageState {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          InkWell(
-                            onTap: () => _showEditInstructionDialog(index),
-                            borderRadius: BorderRadius.circular(10),
-                            child: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF6A5AE0).withOpacity(0.08),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Icon(Icons.edit_rounded, size: 18, color: Color(0xFF6A5AE0)),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          InkWell(
-                            onTap: () async {
-                              final confirm = await _showDeleteConfirmSheet(
-                                title: 'Supprimer l\'étape',
-                                message: 'Voulez-vous vraiment supprimer l\'étape ${index + 1} ?',
-                              );
-                              if (confirm == true) {
-                                setState(() => _instructions.removeAt(index));
-                              }
-                            },
-                            borderRadius: BorderRadius.circular(10),
-                            child: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: Colors.red.withOpacity(0.08),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red[400]),
-                            ),
-                          ),
-                        ],
-                      ),
+                      if (narrow)
+                        Column(mainAxisSize: MainAxisSize.min, children: actions)
+                      else
+                        Row(mainAxisSize: MainAxisSize.min, children: actions),
                     ],
+                  );
+                    },
                   ),
                 ),
               );

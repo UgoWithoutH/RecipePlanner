@@ -14,8 +14,12 @@ class NoGroupPage extends ConsumerWidget {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F4F0),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32.0),
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32.0, vertical: 16),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -77,6 +81,9 @@ class NoGroupPage extends ConsumerWidget {
                 },
               ),
             ],
+          ),
+        ),
+            ),
           ),
         ),
       ),

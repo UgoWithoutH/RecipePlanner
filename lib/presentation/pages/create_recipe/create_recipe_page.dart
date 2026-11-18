@@ -230,14 +230,18 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                               Icons.arrow_back_ios_new_rounded,
                               () => Navigator.pop(context),
                             ),
-                            Text(
-                              widget.recipe == null
-                                  ? 'Créer une recette'
-                                  : 'Modifier la recette',
-                              style: GoogleFonts.poppins(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.black87,
+                            Flexible(
+                              child: Text(
+                                widget.recipe == null
+                                    ? 'Créer une recette'
+                                    : 'Modifier la recette',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.poppins(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.black87,
+                                ),
                               ),
                             ),
                             const SizedBox(width: 40),
@@ -274,28 +278,33 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
                                 max: 99,
                                 focusNode: _servingsFocusNode,
                               ),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: _buildNumberStepper(
-                                      controller: _preparationTimeController,
-                                      label: 'Préparation (min) *',
-                                      min: 0,
-                                      max: 999,
-                                      step: 5,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  Expanded(
-                                    child: _buildNumberStepper(
-                                      controller: _cookingTimeController,
-                                      label: 'Cuisson (min) *',
-                                      min: 0,
-                                      max: 999,
-                                      step: 5,
-                                    ),
-                                  ),
-                                ],
+                              LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final prep = _buildNumberStepper(
+                                    controller: _preparationTimeController,
+                                    label: 'Préparation (min) *',
+                                    min: 0,
+                                    max: 999,
+                                    step: 5,
+                                  );
+                                  final cook = _buildNumberStepper(
+                                    controller: _cookingTimeController,
+                                    label: 'Cuisson (min) *',
+                                    min: 0,
+                                    max: 999,
+                                    step: 5,
+                                  );
+                                  if (constraints.maxWidth < 340) {
+                                    return Column(children: [prep, cook]);
+                                  }
+                                  return Row(
+                                    children: [
+                                      Expanded(child: prep),
+                                      const SizedBox(width: 16),
+                                      Expanded(child: cook),
+                                    ],
+                                  );
+                                },
                               ),
 
                               const SizedBox(height: 32),

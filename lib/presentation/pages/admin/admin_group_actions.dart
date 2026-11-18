@@ -12,7 +12,7 @@ extension _AdminGroupActions on _AdminPageState {
       context: context,
       builder: (ctx) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -130,7 +130,7 @@ extension _AdminGroupActions on _AdminPageState {
       context: context,
       builder: (ctx) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -282,7 +282,7 @@ extension _AdminGroupActions on _AdminPageState {
       context: context,
       builder: (ctx) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -375,6 +375,54 @@ extension _AdminGroupActions on _AdminPageState {
         ? groupData['name'] as String
         : 'Groupe sans nom';
 
+    final narrow = MediaQuery.of(context).size.width < 400;
+    final actionButtons = <Widget>[
+      if (canEdit)
+        _IconActionButton(
+          icon: Icons.edit_outlined,
+          color: _primary,
+          backgroundColor: _primaryLight,
+          onTap: () => _showGroupDialog(group: group),
+        ),
+      if (canResetStats)
+        _IconActionButton(
+          icon: Icons.bar_chart_rounded,
+          color: Colors.orange.shade700,
+          backgroundColor: Colors.orange.shade50,
+          onTap: () => _resetGroupStats(group),
+        ),
+      if (canClearHistory)
+        _IconActionButton(
+          icon: Icons.history_toggle_off_rounded,
+          color: Colors.red.shade400,
+          backgroundColor: Colors.red.shade50,
+          onTap: () => _deleteGroupHistory(group),
+        ),
+      if (canEditCatalogueOnly)
+        _IconActionButton(
+          icon: Icons.menu_book_rounded,
+          color: _primary,
+          backgroundColor: _primaryLight,
+          onTap: () => _showCatalogueOnlyDialog(group),
+        ),
+      if (canDelete)
+        _IconActionButton(
+          icon: Icons.delete_outline,
+          color: Colors.red.shade400,
+          backgroundColor: Colors.red.shade50,
+          onTap: () => _confirmDeleteGroup(group),
+        ),
+    ];
+    final actionsRow = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < actionButtons.length; i++) ...[
+          if (i > 0) const SizedBox(width: 8),
+          actionButtons[i],
+        ],
+      ],
+    );
+
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
@@ -400,54 +448,18 @@ extension _AdminGroupActions on _AdminPageState {
                 Expanded(
                   child: Text(
                     groupName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.poppins(fontSize: 15, fontWeight: FontWeight.w600, color: const Color(0xFF1A1A1A)),
                   ),
                 ),
-                if (canEdit)
-                  _IconActionButton(
-                    icon: Icons.edit_outlined,
-                    color: _primary,
-                    backgroundColor: _primaryLight,
-                    onTap: () => _showGroupDialog(group: group),
-                  ),
-                if (canResetStats) ...[
-                  const SizedBox(width: 8),
-                  _IconActionButton(
-                    icon: Icons.bar_chart_rounded,
-                    color: Colors.orange.shade700,
-                    backgroundColor: Colors.orange.shade50,
-                    onTap: () => _resetGroupStats(group),
-                  ),
-                ],
-                if (canClearHistory) ...[
-                  const SizedBox(width: 8),
-                  _IconActionButton(
-                    icon: Icons.history_toggle_off_rounded,
-                    color: Colors.red.shade400,
-                    backgroundColor: Colors.red.shade50,
-                    onTap: () => _deleteGroupHistory(group),
-                  ),
-                ],
-                if (canEditCatalogueOnly) ...[  
-                  const SizedBox(width: 8),
-                  _IconActionButton(
-                    icon: Icons.menu_book_rounded,
-                    color: _primary,
-                    backgroundColor: _primaryLight,
-                    onTap: () => _showCatalogueOnlyDialog(group),
-                  ),
-                ],
-                if (canDelete) ...[
-                  const SizedBox(width: 8),
-                  _IconActionButton(
-                    icon: Icons.delete_outline,
-                    color: Colors.red.shade400,
-                    backgroundColor: Colors.red.shade50,
-                    onTap: () => _confirmDeleteGroup(group),
-                  ),
-                ],
+                if (!narrow) actionsRow,
               ],
             ),
+            if (narrow && actionButtons.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Align(alignment: Alignment.centerRight, child: actionsRow),
+            ],
             if (members.isNotEmpty) ...[
               const SizedBox(height: 12),
               Divider(height: 1, color: Colors.grey.shade100),
@@ -473,12 +485,16 @@ extension _AdminGroupActions on _AdminPageState {
                           color: isRoleAdmin ? _primary : Colors.black45,
                         ),
                         const SizedBox(width: 4),
-                        Text(
-                          name,
-                          style: GoogleFonts.poppins(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: isRoleAdmin ? _primary : Colors.black54,
+                        Flexible(
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.poppins(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: isRoleAdmin ? _primary : Colors.black54,
+                            ),
                           ),
                         ),
                       ],

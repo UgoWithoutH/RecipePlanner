@@ -109,6 +109,8 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final narrow = MediaQuery.of(context).size.width < 400;
+    final hPad = narrow ? 16.0 : 24.0;
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
@@ -129,7 +131,7 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
           children: [
             // --- Header ---
             Container(
-              padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
+              padding: EdgeInsets.fromLTRB(hPad, 20, hPad, 20),
               decoration: BoxDecoration(
                 color: const Color(0xFF6A5AE0).withOpacity(0.05),
                 borderRadius:
@@ -146,13 +148,15 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
                     child: const Icon(Icons.kitchen,
                         color: Color(0xFF6A5AE0), size: 24),
                   ),
-                  const SizedBox(width: 16),
+                  SizedBox(width: narrow ? 12 : 16),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           'Mon Frigo / Placard',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.poppins(
                             fontSize: 18,
                             fontWeight: FontWeight.w700,
@@ -161,6 +165,8 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
                         ),
                         Text(
                           'Ajoutez ce que vous avez déjà',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.poppins(
                             fontSize: 12,
                             color: Colors.grey[600],
@@ -181,13 +187,13 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
             // --- Scrollable Content ---
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
+                padding: EdgeInsets.all(hPad),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     // Input Card
                     Container(
-                      padding: const EdgeInsets.all(16),
+                      padding: EdgeInsets.all(narrow ? 12 : 16),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(16),
@@ -206,12 +212,16 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(
-                                _editingIndex != null ? 'Modifier l\'ingrédient' : 'Ajouter un ingrédient',
-                                style: GoogleFonts.poppins(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: const Color(0xFF1A1A1A),
+                              Flexible(
+                                child: Text(
+                                  _editingIndex != null ? 'Modifier l\'ingrédient' : 'Ajouter un ingrédient',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: const Color(0xFF1A1A1A),
+                                  ),
                                 ),
                               ),
                               if (_editingIndex != null)
@@ -375,6 +385,7 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
                                           value: u,
                                           child: Text(
                                             u.label,
+                                            overflow: TextOverflow.ellipsis,
                                             style: GoogleFonts.poppins(
                                                 fontSize: 14,
                                                 color: Colors.black87),
@@ -485,8 +496,8 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
                                   color: Colors.grey.withOpacity(0.15)),
                             ),
                             child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 4),
+                              contentPadding: EdgeInsets.symmetric(
+                                  horizontal: narrow ? 8 : 16, vertical: 4),
                               leading: CircleAvatar(
                                 radius: 18,
                                 backgroundColor:
@@ -503,6 +514,8 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
                               ),
                               title: Text(
                                 item.ingredient.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: GoogleFonts.poppins(
                                   fontWeight: FontWeight.w600,
                                   color: const Color(0xFF1A1A1A),
@@ -510,6 +523,8 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
                               ),
                               subtitle: Text(
                                 '$qtyStr ${item.unit.label}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: GoogleFonts.poppins(
                                   color: Colors.grey[600],
                                   fontSize: 13,
@@ -540,7 +555,7 @@ class _PantryInputDialogState extends State<PantryInputDialog> {
 
             // --- Bottom Validation Bar ---
             Container(
-              padding: const EdgeInsets.all(24),
+              padding: EdgeInsets.all(hPad),
               decoration: BoxDecoration(
                 color: Colors.white,
                 border: Border(top: BorderSide(color: Colors.grey.shade100)),

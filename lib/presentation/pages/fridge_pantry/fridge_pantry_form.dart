@@ -9,7 +9,7 @@ extension _FridgePantryForm on _FridgePantryPageState {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      builder: (ctx) => Padding(
+      builder: (ctx) => SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -86,7 +86,8 @@ extension _FridgePantryForm on _FridgePantryPageState {
                   BorderRadius.vertical(top: Radius.circular(24)),
             ),
             padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
-            child: Column(
+            child: SingleChildScrollView(
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -231,10 +232,14 @@ extension _FridgePantryForm on _FridgePantryPageState {
                       Icon(Icons.label_rounded,
                           size: 13, color: Colors.grey[400]),
                       const SizedBox(width: 6),
-                      Text(
-                        'Catégorie : $_selectedTypeName',
-                        style: GoogleFonts.poppins(
-                            fontSize: 12, color: Colors.grey[500]),
+                      Flexible(
+                        child: Text(
+                          'Catégorie : $_selectedTypeName',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(
+                              fontSize: 12, color: Colors.grey[500]),
+                        ),
                       ),
                     ],
                   ),
@@ -290,7 +295,10 @@ extension _FridgePantryForm on _FridgePantryPageState {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Text('Unité', style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[500])),
-                                Text(u.label, style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
+                                Text(u.label,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
                               ],
                             )).toList(),
                             onChanged: (u) => setSheetState(() => _selectedUnit = u ?? Unit.piece),
@@ -341,6 +349,8 @@ extension _FridgePantryForm on _FridgePantryPageState {
                             children: [
                               Text(
                                 'Utiliser en priorité',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: GoogleFonts.poppins(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600,
@@ -350,7 +360,7 @@ extension _FridgePantryForm on _FridgePantryPageState {
                                 ),
                               ),
                               Text(
-                                'L\'algorithme privilégiera les recettes\nqui utilisent cet ingrédient.',
+                                'L\'algorithme privilégiera les recettes qui utilisent cet ingrédient.',
                                 style: GoogleFonts.poppins(
                                   fontSize: 11,
                                   color: _formIsUrgent
@@ -401,6 +411,7 @@ extension _FridgePantryForm on _FridgePantryPageState {
                   ),
                 ),
               ],
+            ),
             ),
           ),
         );

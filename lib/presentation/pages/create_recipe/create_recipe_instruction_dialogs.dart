@@ -20,7 +20,8 @@ extension _CreateRecipeInstructionDialogs on _CreateRecipePageState {
           right: 24,
           top: 8,
         ),
-        child: Column(
+        child: SingleChildScrollView(
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -55,9 +56,13 @@ extension _CreateRecipeInstructionDialogs on _CreateRecipePageState {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Text(
-                  'Modifier l\'étape ${index + 1}',
-                  style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.black87),
+                Expanded(
+                  child: Text(
+                    'Modifier l\'étape ${index + 1}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.black87),
+                  ),
                 ),
               ],
             ),
@@ -124,6 +129,7 @@ extension _CreateRecipeInstructionDialogs on _CreateRecipePageState {
             ),
           ],
         ),
+        ),
       ),
     );
   }
@@ -149,7 +155,8 @@ extension _CreateRecipeInstructionDialogs on _CreateRecipePageState {
           right: 24,
           top: 8,
         ),
-        child: Column(
+        child: SingleChildScrollView(
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -184,12 +191,16 @@ extension _CreateRecipeInstructionDialogs on _CreateRecipePageState {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Text(
-                  isEdit ? 'Modifier l\'étape' : 'Nouvelle étape',
-                  style: GoogleFonts.poppins(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.black87,
+                Expanded(
+                  child: Text(
+                    isEdit ? 'Modifier l\'étape' : 'Nouvelle étape',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.poppins(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black87,
+                    ),
                   ),
                 ),
               ],
@@ -247,6 +258,7 @@ extension _CreateRecipeInstructionDialogs on _CreateRecipePageState {
               ),
             ),
           ],
+        ),
         ),
       ),
     );

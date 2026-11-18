@@ -293,11 +293,16 @@ class _PlannerPageState extends State<PlannerPage> {
                     child: Row(
                       children: [
                         Expanded(
-                          child: Text(
-                            'Planificateur de repas',
-                            style: GoogleFonts.poppins(
-                              fontSize: 28,
-                              fontWeight: FontWeight.w700,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Planificateur de repas',
+                              maxLines: 1,
+                              style: GoogleFonts.poppins(
+                                fontSize: 28,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
                         ),
@@ -604,6 +609,8 @@ class _PlannerPageState extends State<PlannerPage> {
                                           }),
                                           icon: const Icon(Icons.close_rounded, size: 15),
                                           label: Text('Annuler',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
                                               style: GoogleFonts.poppins(
                                                   fontWeight: FontWeight.w600,
                                                   fontSize: 13)),
@@ -624,6 +631,8 @@ class _PlannerPageState extends State<PlannerPage> {
                                           onPressed: _launchMultiShuffle,
                                           icon: const Icon(Icons.autorenew, size: 15),
                                           label: Text('Regénérer les autres',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
                                               style: GoogleFonts.poppins(
                                                   fontWeight: FontWeight.w600,
                                                   fontSize: 13)),

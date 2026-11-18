@@ -97,6 +97,8 @@ extension _AdminEmails on _AdminPageState {
                 children: [
                   Text(
                     email,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w600, color: const Color(0xFF1A1A1A)),
                   ),
                   if (groupName != null) ...[  
@@ -105,9 +107,13 @@ extension _AdminEmails on _AdminPageState {
                       children: [
                         const Icon(Icons.group_outlined, size: 12, color: Colors.black38),
                         const SizedBox(width: 4),
-                        Text(
-                          groupName,
-                          style: GoogleFonts.poppins(fontSize: 11, color: Colors.black45),
+                        Flexible(
+                          child: Text(
+                            groupName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.poppins(fontSize: 11, color: Colors.black45),
+                          ),
                         ),
                       ],
                     ),
@@ -138,7 +144,7 @@ extension _AdminEmails on _AdminPageState {
       context: context,
       builder: (ctx) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -219,7 +225,7 @@ extension _AdminEmails on _AdminPageState {
         builder: (ctx, setStateDialog) => Dialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
           insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -304,7 +310,9 @@ extension _AdminEmails on _AdminPageState {
                               : 'Groupe sans nom';
                           return DropdownMenuItem<String?>(
                             value: g.id,
-                            child: Text(gName, style: GoogleFonts.poppins(fontSize: 14)),
+                            child: Text(gName,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.poppins(fontSize: 14)),
                           );
                         }),
                       ],

@@ -240,15 +240,17 @@ extension _AdminGroupDialogs on _AdminPageState {
                                       : Colors.black87,
                                 ),
                               ),
-                              subtitle: Row(
+                              subtitle: Wrap(
+                                spacing: 6,
+                                runSpacing: 2,
+                                crossAxisAlignment: WrapCrossAlignment.center,
                                 children: [
                                   Text(
                                     user['email'],
                                     style: GoogleFonts.poppins(
                                         fontSize: 11, color: Colors.black38),
                                   ),
-                                  if (alreadyInGroup) ...[
-                                    const SizedBox(width: 6),
+                                  if (alreadyInGroup)
                                     Container(
                                       padding: const EdgeInsets.symmetric(
                                           horizontal: 6, vertical: 1),
@@ -263,7 +265,6 @@ extension _AdminGroupDialogs on _AdminPageState {
                                             color: Colors.orange.shade700),
                                       ),
                                     ),
-                                  ],
                                 ],
                               ),
                               onChanged: alreadyInGroup
@@ -457,7 +458,7 @@ extension _AdminGroupDialogs on _AdminPageState {
         builder: (ctx, setStateDialog) => Dialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
           insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisSize: MainAxisSize.min,

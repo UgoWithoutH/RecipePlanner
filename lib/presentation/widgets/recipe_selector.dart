@@ -330,6 +330,8 @@ class _RecipeSelectorState extends State<RecipeSelector> {
                                   ),
                                   title: Text(
                                     recipe.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                     style: GoogleFonts.poppins(
                                       fontWeight: FontWeight.w600,
                                       fontSize: 16,

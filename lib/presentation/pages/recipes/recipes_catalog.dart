@@ -217,12 +217,16 @@ extension _RecipesCatalog on _RecipesPageState {
                                       children: [
                                         const Icon(Icons.group_rounded, size: 12, color: Color(0xFF5C6BC0)),
                                         const SizedBox(width: 4),
-                                        Text(
-                                          groupName,
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w700,
-                                            color: const Color(0xFF5C6BC0),
+                                        Flexible(
+                                          child: Text(
+                                            groupName,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: GoogleFonts.poppins(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w700,
+                                              color: const Color(0xFF5C6BC0),
+                                            ),
                                           ),
                                         ),
                                       ],
@@ -265,21 +269,22 @@ extension _RecipesCatalog on _RecipesPageState {
                               ),
                             ),
                             const SizedBox(height: 16),
-                            Row(
+                            Wrap(
+                              spacing: 12,
+                              runSpacing: 8,
+                              crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
                                 _buildStatItem(
                                   Icons.access_time_rounded,
                                   '${prepTime + cookTime} min',
                                   const Color(0xFF5C6BC0),
                                 ),
-                                const SizedBox(width: 24),
                                 _buildStatItem(
                                   Icons.pie_chart_rounded,
                                   '$servings portions',
                                   const Color(0xFFFF8A65),
                                 ),
                                 if (rating > 0) ...[
-                                  const SizedBox(width: 12),
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                     decoration: BoxDecoration(
@@ -412,6 +417,7 @@ extension _RecipesCatalog on _RecipesPageState {
 
   Widget _buildStatItem(IconData icon, String text, Color color) {
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 18, color: color),
         const SizedBox(width: 6),

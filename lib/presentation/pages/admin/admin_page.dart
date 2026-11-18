@@ -204,7 +204,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
             }
             final allUsers = userSnapshot.data ?? [];
             return ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 96),
               itemCount: groups.length,
               itemBuilder: (context, index) {
                 return _buildGroupCard(
@@ -293,13 +293,17 @@ class _SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Text(
-          title.toUpperCase(),
-          style: GoogleFonts.poppins(
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            color: Colors.black38,
-            letterSpacing: 0.8,
+        Flexible(
+          child: Text(
+            title.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.poppins(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: Colors.black38,
+              letterSpacing: 0.8,
+            ),
           ),
         ),
         const SizedBox(width: 8),
@@ -369,6 +373,8 @@ class _RoleOption extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.poppins(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,

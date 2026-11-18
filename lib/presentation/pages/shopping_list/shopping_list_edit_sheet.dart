@@ -107,7 +107,9 @@ extension _ShoppingListEditSheet on _ShoppingListPageState {
                   style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 16),
-                Stack(
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Stack(
                   clipBehavior: Clip.none,
                   children: [
                     Column(
@@ -224,8 +226,12 @@ extension _ShoppingListEditSheet on _ShoppingListPageState {
                                   decoration: BoxDecoration(
                                       color: Color(t.color), shape: BoxShape.circle),
                                 ),
-                                Text(t.name,
-                                    style: GoogleFonts.poppins(fontSize: 14)),
+                                Flexible(
+                                  child: Text(t.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.poppins(fontSize: 14)),
+                                ),
                               ],
                             ),
                           )),
@@ -247,9 +253,13 @@ extension _ShoppingListEditSheet on _ShoppingListPageState {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text('Catégorie (optionnel)',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: GoogleFonts.poppins(
                                     fontSize: 11, color: Colors.grey[500])),
                             Text(name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style:
                                     GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
                           ],
@@ -337,11 +347,17 @@ extension _ShoppingListEditSheet on _ShoppingListPageState {
                                 Expanded(
                                   child: Text(name, style: GoogleFonts.poppins(fontSize: 14)),
                                 ),
-                                if (typeName != null && typeName.isNotEmpty)
-                                  Text(
-                                    typeName,
-                                    style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[500]),
+                                if (typeName != null && typeName.isNotEmpty) ...[
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Text(
+                                      typeName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[500]),
+                                    ),
                                   ),
+                                ],
                               ],
                             ),
                           ),
@@ -354,6 +370,8 @@ extension _ShoppingListEditSheet on _ShoppingListPageState {
             ),
         ],
         ),
+                  ),
+                ),
       ],
       ),
         ),

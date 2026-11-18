@@ -49,6 +49,9 @@ extension _PlannerMealDetails on _PlannerPageState {
         .toList()
       ..sort((a, b) => _firstUserName(a).compareTo(_firstUserName(b)));
 
+    // Sur téléphone, les boutons d'action passent sous le contenu du repas.
+    final isNarrow = MediaQuery.sizeOf(context).width < 480;
+
     Widget buildMealCard(Meal meal) {
       final isKept = _multiShuffleKeptSlots.contains(_slotKey(meal.date, meal.type));
       final isSelectableMeal = _isMultiShuffleMode && !meal.isLeftoverMeal && !isPastDay;
@@ -84,7 +87,8 @@ extension _PlannerMealDetails on _PlannerPageState {
             children: [
               // ── Main content + right-side buttons in a Row ──
               IntrinsicHeight(
-                    child: Row(
+                    child: Flex(
+                      direction: isNarrow ? Axis.vertical : Axis.horizontal,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                   // ── Left: tap to open recipe ──
@@ -176,8 +180,12 @@ extension _PlannerMealDetails on _PlannerPageState {
                                   children: [
                                     Icon(Icons.info_outline, size: 14, color: Colors.orange[700]),
                                     const SizedBox(width: 4),
-                                    Text('Restes du repas précédent',
-                                        style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.orange[700], fontStyle: FontStyle.italic)),
+                                    Flexible(
+                                      child: Text('Restes du repas précédent',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.orange[700], fontStyle: FontStyle.italic)),
+                                    ),
                                   ],
                                 ),
                               ],
@@ -203,15 +211,23 @@ extension _PlannerMealDetails on _PlannerPageState {
                   if (!_isMultiShuffleMode && _swapSourceMeal == null)
                   Builder(builder: (context) {
                     final btnHPad = (MediaQuery.of(context).size.width * 0.014).clamp(10.0, 20.0);
+                    List<Widget> expandIfNarrow(List<Widget> l) => isNarrow
+                        ? [for (final w in l) w is InkWell ? Expanded(child: w) : w]
+                        : l;
+                    Widget wrapActions(Widget row) => isNarrow
+                        ? SizedBox(height: 44, child: row)
+                        : IntrinsicWidth(child: row);
                   return Container(
                     decoration: BoxDecoration(
-                      border: Border(left: BorderSide(color: Colors.grey.shade200)),
+                      border: isNarrow
+                          ? Border(top: BorderSide(color: Colors.grey.shade200))
+                          : Border(left: BorderSide(color: Colors.grey.shade200)),
                     ),
-                    child: IntrinsicWidth(
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
+                    child: wrapActions(
+                      Row(
+                        mainAxisSize: isNarrow ? MainAxisSize.max : MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
+                        children: expandIfNarrow([
                           if (!isPastDay) ...[
                             InkWell(
                               onTap: () => _autoChangeMealRecipe(meal),
@@ -294,7 +310,7 @@ extension _PlannerMealDetails on _PlannerPageState {
                               child: Icon(Icons.delete_outline, color: Colors.red.shade300, size: 20),
                             ),
                           ),
-                        ],
+                        ]),
                       ),
                     ),
                   );

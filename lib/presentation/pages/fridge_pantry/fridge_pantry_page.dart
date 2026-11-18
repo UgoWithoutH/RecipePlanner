@@ -151,7 +151,7 @@ class _FridgePantryPageState extends State<FridgePantryPage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      builder: (ctx) => Padding(
+      builder: (ctx) => SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
         child: Column(
           mainAxisSize: MainAxisSize.min,

@@ -403,9 +403,11 @@ extension _PlannerSwap on _PlannerPageState {
                 Row(children: [
                   const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 18),
                   const SizedBox(width: 8),
-                  Text('Doublon dans le plan',
-                      style: GoogleFonts.poppins(
-                          fontWeight: FontWeight.w700, fontSize: 13, color: Colors.white)),
+                  Expanded(
+                    child: Text('Doublon dans le plan',
+                        style: GoogleFonts.poppins(
+                            fontWeight: FontWeight.w700, fontSize: 13, color: Colors.white)),
+                  ),
                 ]),
                 const SizedBox(height: 4),
                 ...sameDayDuplicates.map((s) => Text('• $s',

@@ -108,7 +108,10 @@ extension _RecipeDetailWidgets on _RecipeDetailPageState {
   }
 
   Widget _buildModernStatItem(IconData icon, String value, String label, Color color) {
-    return Column(
+    return Flexible(
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
@@ -136,6 +139,8 @@ extension _RecipeDetailWidgets on _RecipeDetailPageState {
           ),
         ),
       ],
+        ),
+      ),
     );
   }
 
@@ -255,6 +260,8 @@ extension _RecipeDetailWidgets on _RecipeDetailPageState {
               Expanded(
                 child: Text(
                   s.userName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.poppins(
                     fontWeight: FontWeight.w600, 
                     fontSize: 15,

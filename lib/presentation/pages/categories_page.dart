@@ -89,7 +89,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx2, setStateSheet) => Padding(
+        builder: (ctx2, setStateSheet) => SingleChildScrollView(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
             left: 24, right: 24, top: 8,
@@ -116,8 +116,12 @@ class _CategoriesPageState extends State<CategoriesPage> {
                     child: const Icon(Icons.add_rounded, size: 22, color: Color(0xFF6A5AE0)),
                   ),
                   const SizedBox(width: 12),
-                  Text('Nouvelle catégorie',
-                      style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.black87)),
+                  Flexible(
+                    child: Text('Nouvelle catégorie',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.black87)),
+                  ),
                 ],
               ),
               const SizedBox(height: 20),
@@ -210,7 +214,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx2, setStateSheet) => Padding(
+        builder: (ctx2, setStateSheet) => SingleChildScrollView(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
             left: 24, right: 24, top: 8,
@@ -237,8 +241,12 @@ class _CategoriesPageState extends State<CategoriesPage> {
                     child: const Icon(Icons.edit_rounded, size: 20, color: Color(0xFF6A5AE0)),
                   ),
                   const SizedBox(width: 12),
-                  Text('Modifier la catégorie',
-                      style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.black87)),
+                  Flexible(
+                    child: Text('Modifier la catégorie',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.black87)),
+                  ),
                 ],
               ),
               const SizedBox(height: 20),
@@ -326,7 +334,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      builder: (ctx) => Padding(
+      builder: (ctx) => SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -505,6 +513,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
                                       ),
                                       title: Text(
                                         cat.name,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
                                         style: GoogleFonts.poppins(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.black87),
                                       ),
                                       trailing: Row(

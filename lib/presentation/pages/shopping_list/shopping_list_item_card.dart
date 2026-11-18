@@ -52,7 +52,7 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (ctx) => Padding(
+      builder: (ctx) => SingleChildScrollView(
         padding: EdgeInsets.only(
           bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
         ),
@@ -83,6 +83,8 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
                   Expanded(
                     child: Text(
                       item.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.poppins(
                         fontSize: 18,
                         fontWeight: FontWeight.w600,
@@ -141,6 +143,8 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
                           children: [
                             Text(
                               c.recipeName,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style: GoogleFonts.poppins(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w500,
@@ -268,8 +272,10 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
                         child: Row(
                           children: [
                             Expanded(
-                              child: Text(
+                             child: Text(
                                 item.name,
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
                                 style: GoogleFonts.poppins(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w500,
@@ -285,7 +291,12 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
                             ),
                             const SizedBox(width: 6),
                             if (item.quantity > 0)
-                              Container(
+                              ConstrainedBox(
+                                constraints: BoxConstraints(
+                                    maxWidth:
+                                        MediaQuery.of(context).size.width *
+                                            0.45),
+                                child: Container(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 8, vertical: 4),
                                 decoration: BoxDecoration(
@@ -296,6 +307,8 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
                                 ),
                                 child: Text(
                                   '${widget.formatQuantity(item.quantity)} ${Unit.labelOf(item.unit)}${_equivalentText(item.quantity, item.unit)}',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
                                   style: GoogleFonts.poppins(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
@@ -303,6 +316,7 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
                                         ? Colors.grey[400]
                                         : const Color(0xFF6A5AE0),
                                   ),
+                                ),
                                 ),
                               ),
                             if (!item.isChecked &&
@@ -446,16 +460,22 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
 
   Widget _qRow(String label, String value, Color color, {bool bold = false}) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Text(label,
+            style:
+                GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
+        const SizedBox(width: 8),
         Expanded(
-            child: Text(label,
-                style: GoogleFonts.poppins(
-                    fontSize: 12, color: Colors.grey[600]))),
-        Text(value,
-            style: GoogleFonts.poppins(
-                fontSize: 12,
-                fontWeight: bold ? FontWeight.w700 : FontWeight.w600,
-                color: color)),
+          child: Text(value,
+              textAlign: TextAlign.right,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.poppins(
+                  fontSize: 12,
+                  fontWeight: bold ? FontWeight.w700 : FontWeight.w600,
+                  color: color)),
+        ),
       ],
     );
   }

@@ -119,7 +119,7 @@ extension _CreateRecipeIngredientDialogs on _CreateRecipePageState {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      builder: (ctx) => Padding(
+      builder: (ctx) => SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -247,6 +247,7 @@ extension _CreateRecipeIngredientDialogs on _CreateRecipePageState {
                 right: 24,
                 top: 8,
               ),
+              child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -274,9 +275,13 @@ extension _CreateRecipeIngredientDialogs on _CreateRecipePageState {
                         child: const Icon(Icons.edit_rounded, size: 20, color: Color(0xFF6A5AE0)),
                       ),
                       const SizedBox(width: 12),
-                      Text(
-                        'Modifier l\'ingrédient',
-                        style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.black87),
+                      Expanded(
+                        child: Text(
+                          'Modifier l\'ingrédient',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.black87),
+                        ),
                       ),
                     ],
                   ),
@@ -320,13 +325,16 @@ extension _CreateRecipeIngredientDialogs on _CreateRecipePageState {
                         elevation: 4,
                         borderRadius: BorderRadius.circular(12),
                         child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 180),
+                          constraints: BoxConstraints(
+                            maxHeight: 180,
+                            maxWidth: MediaQuery.of(ctx).size.width - 48,
+                          ),
                           child: ListView(
                             padding: const EdgeInsets.symmetric(vertical: 6),
                             shrinkWrap: true,
                             children: opts.map((o) => ListTile(
                               dense: true,
-                              title: Text(o['name']!, style: GoogleFonts.poppins(fontSize: 13)),
+                              title: Text(o['name']!, maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(fontSize: 13)),
                               onTap: () => onSel(o),
                             )).toList(),
                           ),
@@ -371,13 +379,13 @@ extension _CreateRecipeIngredientDialogs on _CreateRecipePageState {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Text('Unité', style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[500])),
-                                  Text(u.label, style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
+                                  Text('Unité', maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[500])),
+                                  Text(u.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
                                 ],
                               )).toList(),
                               items: Unit.values.map((u) => DropdownMenuItem<Unit>(
                                 value: u,
-                                child: Text(u.label, style: GoogleFonts.poppins(fontSize: 14)),
+                                child: Text(u.label, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(fontSize: 14)),
                               )).toList(),
                               onChanged: (u) { if (u != null) setStateDialog(() => selectedUnit = u); },
                             ),
@@ -447,6 +455,7 @@ extension _CreateRecipeIngredientDialogs on _CreateRecipePageState {
                   ),
                 ],
               ),
+              ),
             );
           },
         );
@@ -470,7 +479,8 @@ extension _CreateRecipeIngredientDialogs on _CreateRecipePageState {
               'Nouveau ingrédient',
               style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
             ),
-            content: Column(
+            content: SingleChildScrollView(
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -488,6 +498,7 @@ extension _CreateRecipeIngredientDialogs on _CreateRecipePageState {
                 ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
+                  isExpanded: true,
                   value: selectedTypeId,
                   decoration: InputDecoration(
                     border: OutlineInputBorder(
@@ -522,7 +533,13 @@ extension _CreateRecipeIngredientDialogs on _CreateRecipePageState {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            Text(type.name, style: GoogleFonts.poppins()),
+                            Flexible(
+                              child: Text(
+                                type.name,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.poppins(),
+                              ),
+                            ),
                           ],
                         ),
                       );
@@ -532,6 +549,7 @@ extension _CreateRecipeIngredientDialogs on _CreateRecipePageState {
                       setStateDialog(() => selectedTypeId = val),
                 ),
               ],
+            ),
             ),
             actions: [
               TextButton(

@@ -71,6 +71,7 @@ class _UnitsPageState extends State<UnitsPage>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         title: Text(unit == null ? 'Nouvelle unité' : 'Modifier l\'unité',
             style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
@@ -274,6 +275,7 @@ class _UnitsPageState extends State<UnitsPage>
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         title: Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 17)),
         content: Text(message, style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey[700])),
@@ -327,7 +329,10 @@ class _UnitsPageState extends State<UnitsPage>
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         leading: leading,
-        title: Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+        title: Text(title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
         subtitle: subtitle == null
             ? null
             : Text(subtitle, style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),

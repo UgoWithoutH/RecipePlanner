@@ -680,21 +680,22 @@ class _RecipesPageState extends State<RecipesPage> {
                                             ),
                                             const SizedBox(height: 16),
                                             // Footer stats
-                                            Row(
+                                            Wrap(
+                                              spacing: 12,
+                                              runSpacing: 8,
+                                              crossAxisAlignment: WrapCrossAlignment.center,
                                               children: [
                                                 _buildStatItem(
                                                   Icons.access_time_rounded,
                                                   '${recipe.preparationTime + recipe.cookingTime} min',
                                                   const Color(0xFF5C6BC0),
                                                 ),
-                                                const SizedBox(width: 24),
                                                 _buildStatItem(
                                                   Icons.pie_chart_rounded,
                                                   '${recipe.servings} portions',
                                                   const Color(0xFFFF8A65),
                                                 ),
                                                 if ((_recipeCounts[recipe.id] ?? 0) > 0) ...[
-                                                  const SizedBox(width: 12),
                                                   Container(
                                                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                                     decoration: BoxDecoration(
@@ -719,7 +720,6 @@ class _RecipesPageState extends State<RecipesPage> {
                                                   ),
                                                 ],
                                                 if (recipe.rating > 0) ...[
-                                                  const SizedBox(width: 12),
                                                   Container(
                                                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                                     decoration: BoxDecoration(

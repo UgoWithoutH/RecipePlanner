@@ -58,15 +58,19 @@ extension _PlannerPantryDialogs on _PlannerPageState {
                 children: [
                   const Icon(Icons.kitchen_rounded, color: Color(0xFF6A5AE0), size: 22),
                   const SizedBox(width: 10),
-                  Text(
-                    'Frigo / Placard de ce plan',
-                    style: GoogleFonts.poppins(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                      color: const Color(0xFF1A1A1A),
+                  Expanded(
+                    child: Text(
+                      'Frigo / Placard de ce plan',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.poppins(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF1A1A1A),
+                      ),
                     ),
                   ),
-                  const Spacer(),
+                  const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
@@ -211,15 +215,19 @@ extension _PlannerPantryDialogs on _PlannerPageState {
                 children: [
                   const Icon(Icons.kitchen_rounded, color: Color(0xFF6A5AE0), size: 22),
                   const SizedBox(width: 10),
-                  Text(
-                    'Frigo / Placard',
-                    style: GoogleFonts.poppins(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                      color: const Color(0xFF1A1A1A),
+                  Expanded(
+                    child: Text(
+                      'Frigo / Placard',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.poppins(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF1A1A1A),
+                      ),
                     ),
                   ),
-                  const Spacer(),
+                  const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
@@ -323,7 +331,9 @@ extension _PlannerPantryDialogs on _PlannerPageState {
             decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(2)),
           ),
           const SizedBox(width: 8),
-          Text(label, style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
+          Flexible(
+            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
+          ),
         ],
       ),
     );

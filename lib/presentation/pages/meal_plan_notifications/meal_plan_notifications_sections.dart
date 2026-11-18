@@ -48,10 +48,12 @@ extension _MealPlanNotificationsSections on _MealPlanNotificationsPageState {
     final timeStr =
         '${_notificationTime.hour.toString().padLeft(2, '0')}:${_notificationTime.minute.toString().padLeft(2, '0')}';
 
+    final narrow = MediaQuery.of(context).size.width < 400;
+
     return _card(
       child: ListTile(
         contentPadding:
-            const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            EdgeInsets.symmetric(horizontal: narrow ? 12 : 20, vertical: 8),
         leading: _iconBox(Icons.access_time_rounded),
         title: Text(
           'Heure de notification',
@@ -65,8 +67,8 @@ extension _MealPlanNotificationsSections on _MealPlanNotificationsPageState {
         trailing: GestureDetector(
           onTap: _pickTime,
           child: Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: EdgeInsets.symmetric(
+                horizontal: narrow ? 10 : 16, vertical: 8),
             decoration: BoxDecoration(
               color: _purple,
               borderRadius: BorderRadius.circular(12),
@@ -76,7 +78,7 @@ extension _MealPlanNotificationsSections on _MealPlanNotificationsPageState {
               style: GoogleFonts.poppins(
                 color: Colors.white,
                 fontWeight: FontWeight.w700,
-                fontSize: 18,
+                fontSize: narrow ? 16 : 18,
                 letterSpacing: 1,
               ),
             ),
@@ -221,15 +223,18 @@ extension _MealPlanNotificationsSections on _MealPlanNotificationsPageState {
 
     return Row(
       children: [
-        Text(
-          '$_futureActiveDaysCount rappel(s) sélectionné(s)',
-          style: GoogleFonts.poppins(
-            fontSize: 13,
-            color: Colors.black54,
-            fontWeight: FontWeight.w500,
+        Expanded(
+          child: Text(
+            '$_futureActiveDaysCount rappel(s) sélectionné(s)',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.poppins(
+              fontSize: 13,
+              color: Colors.black54,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ),
-        const Spacer(),
         TextButton(
           onPressed: () {
             setState(() {

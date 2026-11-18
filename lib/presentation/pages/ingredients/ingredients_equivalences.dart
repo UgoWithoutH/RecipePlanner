@@ -1,6 +1,8 @@
 // ignore_for_file: invalid_use_of_protected_member
 part of 'ingredients_page.dart';
 
+const _equivalenceAccent = Color(0xFF6A5AE0);
+
 extension _IngredientEquivalencesUi on _IngredientsPageState {
   String _equivalenceLabel(IngredientEquivalence e) {
     final target = Unit.labelOf(e.targetCode);
@@ -10,7 +12,7 @@ extension _IngredientEquivalencesUi on _IngredientsPageState {
   String _fmtAmount(double v) =>
       v == v.roundToDouble() ? v.toInt().toString() : v.toString();
 
-  /// Section « Équivalences » (ex : 1 paquet = 200 g) d'un ingrédient.
+  /// Section « Correspondances » (ex : 1 paquet = 200 g) d'un ingrédient.
   Widget _buildEquivalencesEditor(
     BuildContext context,
     List<IngredientEquivalence> equivalences,
@@ -19,52 +21,77 @@ extension _IngredientEquivalencesUi on _IngredientsPageState {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Équivalences',
+        Text('Correspondances',
             style: GoogleFonts.poppins(
                 fontWeight: FontWeight.w600, fontSize: 14)),
         const SizedBox(height: 2),
         Text(
-          'Permet au plan de repas et à la liste de courses de convertir '
-          'une unité (ex : paquet) pour cet ingrédient.',
-          style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[600]),
+          'Permet de convertir une unité (ex : paquet) pour cet ingrédient '
+          'dans le plan de repas et la liste de courses.',
+          style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
         ...equivalences.map(
           (e) => Container(
-            margin: const EdgeInsets.only(bottom: 6),
-            padding: const EdgeInsets.only(left: 12),
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
             decoration: BoxDecoration(
-              color: const Color(0xFFF8F8FF),
-              borderRadius: BorderRadius.circular(10),
+              color: _equivalenceAccent.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
               children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                      color: _equivalenceAccent.withOpacity(0.18),
+                      shape: BoxShape.circle),
+                  child: const Icon(Icons.swap_horiz_rounded,
+                      size: 18, color: _equivalenceAccent),
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(_equivalenceLabel(e),
-                      style: GoogleFonts.poppins(fontSize: 13)),
+                      style: GoogleFonts.poppins(
+                          fontSize: 14, fontWeight: FontWeight.w500)),
                 ),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  icon: Icon(Icons.close_rounded,
-                      size: 18, color: Colors.grey[500]),
-                  onPressed: () => setStateDialog(() => equivalences.remove(e)),
+                InkWell(
+                  onTap: () => setStateDialog(() => equivalences.remove(e)),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    child: Icon(Icons.delete_outline_rounded,
+                        size: 18, color: Colors.red[400]),
+                  ),
                 ),
               ],
             ),
           ),
         ),
-        TextButton.icon(
-          onPressed: () async {
-            final added = await _showEquivalenceDialog(context);
-            if (added == null) return;
-            setStateDialog(() {
-              equivalences.removeWhere((e) => e.unitCode == added.unitCode);
-              equivalences.add(added);
-            });
-          },
-          icon: const Icon(Icons.add_rounded, size: 18),
-          label: Text('Ajouter une équivalence',
-              style: GoogleFonts.poppins(fontSize: 13)),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: () async {
+              final added = await _showEquivalenceDialog(context);
+              if (added == null) return;
+              setStateDialog(() {
+                equivalences.removeWhere((e) => e.unitCode == added.unitCode);
+                equivalences.add(added);
+              });
+            },
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: Text('Ajouter une correspondance',
+                style: GoogleFonts.poppins(
+                    fontSize: 13, fontWeight: FontWeight.w500)),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _equivalenceAccent,
+              side: BorderSide(color: _equivalenceAccent.withOpacity(0.4)),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
         ),
       ],
     );
@@ -79,7 +106,7 @@ extension _IngredientEquivalencesUi on _IngredientsPageState {
     if (unit == target) target = units.firstWhere((u) => u != unit);
     final amountController = TextEditingController();
 
-    return showDialog<IngredientEquivalence>(
+    final result = await showDialog<IngredientEquivalence>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setStateEq) {
@@ -89,39 +116,52 @@ extension _IngredientEquivalencesUi on _IngredientsPageState {
           return AlertDialog(
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-            title: Text('Nouvelle équivalence',
+            title: Text('Nouvelle correspondance',
                 style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _unitDropdown('Unité', unit, units,
-                    (u) => setStateEq(() => unit = u)),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Text('1 ${unit.label} =',
-                        style: GoogleFonts.poppins(fontSize: 14)),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: amountController,
-                        keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true),
-                        onChanged: (_) => setStateEq(() {}),
-                        style: GoogleFonts.poppins(),
-                        decoration: InputDecoration(
-                          labelText: 'Quantité',
-                          border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12)),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('1 unité…',
+                      style: GoogleFonts.poppins(
+                          fontSize: 12, color: Colors.grey[600])),
+                  const SizedBox(height: 6),
+                  _unitDropdown(unit, units, (u) => setStateEq(() => unit = u)),
+                  const SizedBox(height: 16),
+                  Text('…est égale à',
+                      style: GoogleFonts.poppins(
+                          fontSize: 12, color: Colors.grey[600])),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: TextField(
+                          controller: amountController,
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          onChanged: (_) => setStateEq(() {}),
+                          style: GoogleFonts.poppins(),
+                          decoration: InputDecoration(
+                            hintText: '200',
+                            border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 14),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _unitDropdown('Dans l\'unité', target, units,
-                    (u) => setStateEq(() => target = u)),
-              ],
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 3,
+                        child: _unitDropdown(
+                            target, units, (u) => setStateEq(() => target = u)),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
             actions: [
               TextButton(
@@ -140,36 +180,42 @@ extension _IngredientEquivalencesUi on _IngredientsPageState {
                   child: Text('Ajouter',
                       style: GoogleFonts.poppins(
                           fontWeight: FontWeight.w600,
-                          color: valid
-                              ? const Color(0xFF6A5AE0)
-                              : Colors.grey))),
+                          color: valid ? _equivalenceAccent : Colors.grey))),
             ],
           );
         },
       ),
     );
+    amountController.dispose();
+    return result;
   }
 
-  Widget _unitDropdown(String label, Unit value, List<Unit> units,
-      ValueChanged<Unit> onChanged) {
-    return DropdownButtonFormField<Unit>(
-      value: units.contains(value) ? value : null,
-      isExpanded: true,
-      decoration: InputDecoration(
-        labelText: label,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+  Widget _unitDropdown(
+      Unit value, List<Unit> units, ValueChanged<Unit> onChanged) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[400]!),
       ),
-      dropdownColor: Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      items: units
-          .map((u) => DropdownMenuItem(
-              value: u, child: Text(u.label, style: GoogleFonts.poppins())))
-          .toList(),
-      onChanged: (u) {
-        if (u != null) onChanged(u);
-      },
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<Unit>(
+          value: units.contains(value) ? value : null,
+          isExpanded: true,
+          dropdownColor: Colors.white,
+          items: units
+              .map((u) => DropdownMenuItem<Unit>(
+                    value: u,
+                    child: Text(u.label,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.poppins(fontSize: 14)),
+                  ))
+              .toList(),
+          onChanged: (u) {
+            if (u != null) onChanged(u);
+          },
+        ),
+      ),
     );
   }
 }

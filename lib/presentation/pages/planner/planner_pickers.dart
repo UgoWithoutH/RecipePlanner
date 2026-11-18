@@ -121,9 +121,11 @@ extension _PlannerPickers on _PlannerPageState {
                           children: [
                             const Icon(Icons.touch_app_rounded, size: 15, color: Color(0xFF6A5AE0)),
                             const SizedBox(width: 6),
-                            Text(
-                              'Sélectionnez maintenant la date de fin',
-                              style: GoogleFonts.poppins(fontSize: 11, color: const Color(0xFF6A5AE0)),
+                            Flexible(
+                              child: Text(
+                                'Sélectionnez maintenant la date de fin',
+                                style: GoogleFonts.poppins(fontSize: 11, color: const Color(0xFF6A5AE0)),
+                              ),
                             ),
                           ],
                         ),
@@ -330,8 +332,10 @@ extension _PlannerPickers on _PlannerPageState {
                           ),
                         ),
                         // Quick presets
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        Wrap(
+                          alignment: WrapAlignment.spaceEvenly,
+                          runSpacing: 8,
+                          spacing: 6,
                           children: [3, 5, 7, 10, 14].map((days) {
                             final isSelected = tempDuration == days;
                             return InkWell(
@@ -471,7 +475,7 @@ extension _PlannerPickers on _PlannerPageState {
                         child: OutlinedButton.icon(
                           onPressed: isNoneSelected ? null : () => setStateDialog(() => tempSelected.clear()),
                           icon: const Icon(Icons.clear_all_rounded, size: 18),
-                          label: const Text('Tout décocher'),
+                          label: const Text('Tout décocher', maxLines: 1, overflow: TextOverflow.ellipsis),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.grey[700],
                             side: BorderSide(color: Colors.grey.shade300),
@@ -485,7 +489,7 @@ extension _PlannerPickers on _PlannerPageState {
                         child: OutlinedButton.icon(
                           onPressed: isAllSelected ? null : () => setStateDialog(() => tempSelected.addAll(validCategoryIds)),
                           icon: const Icon(Icons.select_all_rounded, size: 18),
-                          label: const Text('Tout cocher'),
+                          label: const Text('Tout cocher', maxLines: 1, overflow: TextOverflow.ellipsis),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFF6A5AE0),
                             side: const BorderSide(color: Color(0xFF6A5AE0)),
@@ -550,12 +554,15 @@ extension _PlannerPickers on _PlannerPageState {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text(
-                                  name,
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: textColor,
+                                Flexible(
+                                  child: Text(
+                                    name,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: textColor,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -595,6 +602,8 @@ extension _PlannerPickers on _PlannerPageState {
                           fontWeight: FontWeight.w600,
                           fontSize: 16,
                         ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ),

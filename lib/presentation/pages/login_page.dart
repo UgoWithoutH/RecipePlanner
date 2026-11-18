@@ -73,7 +73,12 @@ class LoginPage extends ConsumerWidget {
                 // Top illustration area
                 Expanded(
                   flex: 5,
-                  child: Column(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => SingleChildScrollView(
+                      child: ConstrainedBox(
+                        constraints:
+                            BoxConstraints(minHeight: constraints.maxHeight),
+                        child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       // Icon in a frosted circle
@@ -111,6 +116,9 @@ class LoginPage extends ConsumerWidget {
                         ),
                       ),
                     ],
+                        ),
+                      ),
+                    ),
                   ),
                 ),
 
@@ -247,12 +255,15 @@ class _GoogleSignInButton extends StatelessWidget {
                     child: CustomPaint(painter: _GoogleGPainter()),
                   ),
                   const SizedBox(width: 14),
-                  Text(
-                    'Continuer avec Google',
-                    style: GoogleFonts.poppins(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: const Color(0xFF1F1F1F),
+                  Flexible(
+                    child: Text(
+                      'Continuer avec Google',
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.poppins(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF1F1F1F),
+                      ),
                     ),
                   ),
                 ],

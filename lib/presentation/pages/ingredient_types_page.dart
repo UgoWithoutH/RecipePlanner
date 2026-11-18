@@ -42,6 +42,7 @@ class _IngredientTypesPageState extends State<IngredientTypesPage> {
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (context, setStateDialog) => AlertDialog(
+          scrollable: true,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
           title: Text(
             'Ajouter un type',
@@ -111,6 +112,7 @@ class _IngredientTypesPageState extends State<IngredientTypesPage> {
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (context, setStateDialog) => AlertDialog(
+          scrollable: true,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
           title: Text(
             'Modifier le type',
@@ -179,7 +181,7 @@ class _IngredientTypesPageState extends State<IngredientTypesPage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      builder: (ctx) => Padding(
+      builder: (ctx) => SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -335,6 +337,8 @@ class _IngredientTypesPageState extends State<IngredientTypesPage> {
                                   color: Color(type.color), size: 20),
                             ),
                             title: Text(type.name,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                                 style: GoogleFonts.poppins(
                                     fontWeight: FontWeight.w600)),
                             trailing: Row(

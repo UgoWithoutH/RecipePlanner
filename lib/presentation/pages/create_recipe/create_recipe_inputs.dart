@@ -459,6 +459,8 @@ extension _CreateRecipeInputs on _CreateRecipePageState {
                   Expanded(
                     child: Text(
                       user.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.poppins(
                         fontWeight: FontWeight.w600,
                         fontSize: 15,

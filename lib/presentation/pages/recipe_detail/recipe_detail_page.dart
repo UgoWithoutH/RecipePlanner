@@ -51,7 +51,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         ),
-        builder: (ctx) => Padding(
+        builder: (ctx) => SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -194,7 +194,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
           ),
           SafeArea(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.only(bottom: 24),
+              padding: EdgeInsets.only(
+                bottom: widget.isCatalogRecipe && !_isAlreadyImported ? 100 : 24,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -255,8 +257,11 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                           Center(
                             child: Padding(
                               padding: const EdgeInsets.only(bottom: 8),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
+                              child: Wrap(
+                                alignment: WrapAlignment.center,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                spacing: 8,
+                                runSpacing: 6,
                                 children: [
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -269,21 +274,24 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                       children: [
                                         const Icon(Icons.group_rounded, size: 14, color: Color(0xFF5C6BC0)),
                                         const SizedBox(width: 6),
-                                        Text(
-                                          widget.sourceGroupName?.isNotEmpty == true
-                                              ? widget.sourceGroupName!
-                                              : 'Catalogue',
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w700,
-                                            color: const Color(0xFF5C6BC0),
+                                        Flexible(
+                                          child: Text(
+                                            widget.sourceGroupName?.isNotEmpty == true
+                                                ? widget.sourceGroupName!
+                                                : 'Catalogue',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: GoogleFonts.poppins(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w700,
+                                              color: const Color(0xFF5C6BC0),
+                                            ),
                                           ),
                                         ),
                                       ],
                                     ),
                                   ),
-                                  if (_isAlreadyImported) ...[  
-                                    const SizedBox(width: 8),
+                                  if (_isAlreadyImported)
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                                       decoration: BoxDecoration(
@@ -306,7 +314,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                         ],
                                       ),
                                     ),
-                                  ],
                                 ],
                               ),
                             ),
@@ -583,9 +590,10 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          crossAxisAlignment: CrossAxisAlignment.center,
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 4,
+                                          crossAxisAlignment: WrapCrossAlignment.center,
                                           children: [
                                             Text(
                                               item.ingredient.name,
@@ -595,7 +603,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                                 color: Colors.black87,
                                               ),
                                             ),
-                                            const SizedBox(width: 8),
                                             if (item.ingredient.typeId != null)
                                               Builder(
                                                 builder: (context) {
@@ -643,12 +650,17 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                       ],
                                     ),
                                   ),
-                                  Text(
-                                    '${fmtQty(item.quantity)} ${item.unit.label}',
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w600,
-                                      color: Colors.black54,
+                                  const SizedBox(width: 8),
+                                  ConstrainedBox(
+                                    constraints: const BoxConstraints(maxWidth: 140),
+                                    child: Text(
+                                      '${fmtQty(item.quantity)} ${item.unit.label}',
+                                      textAlign: TextAlign.right,
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.black54,
+                                      ),
                                     ),
                                   ),
                                 ],

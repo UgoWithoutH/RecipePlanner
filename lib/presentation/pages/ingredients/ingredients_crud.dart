@@ -35,6 +35,7 @@ extension _IngredientsCrud on _IngredientsPageState {
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 value: selectedTypeId,
+                isExpanded: true,
                 decoration: InputDecoration(
                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -58,7 +59,11 @@ extension _IngredientsCrud on _IngredientsPageState {
                               color: Color(type.color), shape: BoxShape.circle),
                         ),
                         const SizedBox(width: 8),
-                        Text(type.name, style: GoogleFonts.poppins()),
+                        Expanded(
+                          child: Text(type.name,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.poppins()),
+                        ),
                       ],
                     ),
                   );
@@ -162,6 +167,7 @@ extension _IngredientsCrud on _IngredientsPageState {
                       fontWeight: FontWeight.w600, fontSize: 14)),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
+                isExpanded: true,
                 value: _types.any((t) => t.id == selectedTypeId)
                     ? selectedTypeId
                     : null,
@@ -188,7 +194,11 @@ extension _IngredientsCrud on _IngredientsPageState {
                                 color: Color(type.color), shape: BoxShape.circle),
                           ),
                           const SizedBox(width: 8),
-                          Text(type.name, style: GoogleFonts.poppins()),
+                          Expanded(
+                            child: Text(type.name,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.poppins()),
+                          ),
                         ],
                       ),
                     );
@@ -293,7 +303,7 @@ extension _IngredientsCrud on _IngredientsPageState {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      builder: (ctx) => Padding(
+      builder: (ctx) => SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
         child: Column(
           mainAxisSize: MainAxisSize.min,

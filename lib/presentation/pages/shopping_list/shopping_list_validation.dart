@@ -43,9 +43,13 @@ extension _ShoppingListValidation on _ShoppingListPageState {
                   child: const Icon(Icons.shopping_bag_outlined, color: Color(0xFF4CAF50), size: 22),
                 ),
                 const SizedBox(width: 12),
-                Text(
-                  'Valider les courses',
-                  style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600),
+                Expanded(
+                  child: Text(
+                    'Valider les courses',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600),
+                  ),
                 ),
               ],
             ),

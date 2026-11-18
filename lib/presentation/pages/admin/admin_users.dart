@@ -65,7 +65,7 @@ extension _AdminUsers on _AdminPageState {
         final authorizedUsers = usersList.where((u) => u['name'].toString().isEmpty).toList();
 
         return ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 96),
           children: [
             if (registeredUsers.isNotEmpty) ...[  
               _SectionHeader(title: 'Inscrits', count: registeredUsers.length),
@@ -95,8 +95,36 @@ extension _AdminUsers on _AdminPageState {
   Widget _buildUserRoleCard(Map<String, dynamic> user) {
     final isRoleAdmin = user['role'] == 'admin';
     final name = user['name'].toString().isNotEmpty ? user['name'] as String : user['email'] as String;
+    final narrow = MediaQuery.of(context).size.width < 400;
+    final roleChip = GestureDetector(
+      onTap: () => _showChangeRoleDialog(user),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: isRoleAdmin ? _primaryLight : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isRoleAdmin ? _primary.withOpacity(0.4) : Colors.black12,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              isRoleAdmin ? 'Admin' : 'Utilisateur',
+              style: GoogleFonts.poppins(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: isRoleAdmin ? _primary : Colors.black54,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Icon(Icons.expand_more, size: 14, color: isRoleAdmin ? _primary : Colors.black45),
+          ],
+        ),
+      ),
+    );
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -126,41 +154,22 @@ extension _AdminUsers on _AdminPageState {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.poppins(
                           fontSize: 14, fontWeight: FontWeight.w600, color: const Color(0xFF1A1A1A))),
                   Text(user['email'] as String,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.poppins(fontSize: 12, color: Colors.black38)),
+                  if (narrow) ...[
+                    const SizedBox(height: 6),
+                    roleChip,
+                  ],
                 ],
               ),
             ),
-            GestureDetector(
-              onTap: () => _showChangeRoleDialog(user),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: isRoleAdmin ? _primaryLight : Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: isRoleAdmin ? _primary.withOpacity(0.4) : Colors.black12,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      isRoleAdmin ? 'Admin' : 'Utilisateur',
-                      style: GoogleFonts.poppins(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: isRoleAdmin ? _primary : Colors.black54,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Icon(Icons.expand_more, size: 14, color: isRoleAdmin ? _primary : Colors.black45),
-                  ],
-                ),
-              ),
-            ),
+            if (!narrow) roleChip,
             const SizedBox(width: 8),
             _IconActionButton(
               icon: Icons.delete_outline,
@@ -180,7 +189,7 @@ extension _AdminUsers on _AdminPageState {
       context: context,
       builder: (ctx) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -270,7 +279,7 @@ extension _AdminUsers on _AdminPageState {
       context: context,
       builder: (ctx) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,

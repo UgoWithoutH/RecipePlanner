@@ -55,28 +55,30 @@ extension _FridgePantryList on _FridgePantryPageState {
               children: [
                 Text(
                   'Frigo / Placard',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.poppins(
                     fontSize: 22,
                     fontWeight: FontWeight.w700,
                     color: const Color(0xFF1A1A1A),
                   ),
                 ),
-                Row(
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
                   children: [
                     _buildCountBadge(
                       label:
                           '${_items.where((i) => !i.isUrgent).length} normaux',
                       color: const Color(0xFF6A5AE0),
                     ),
-                    if (_items.any((i) => i.isUrgent)) ...[
-                      const SizedBox(width: 6),
+                    if (_items.any((i) => i.isUrgent))
                       _buildCountBadge(
                         label:
                             '${_items.where((i) => i.isUrgent).length} urgents',
                         color: Colors.orange.shade700,
                         icon: Icons.local_fire_department_rounded,
                       ),
-                    ],
                   ],
                 ),
               ],
@@ -222,12 +224,16 @@ extension _FridgePantryList on _FridgePantryPageState {
             ),
           ),
           const SizedBox(width: 8),
-          Text(
-            label,
-            style: GoogleFonts.poppins(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: color,
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
             ),
           ),
         ],
@@ -271,6 +277,8 @@ extension _FridgePantryList on _FridgePantryPageState {
                       Flexible(
                         child: Text(
                           item.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.poppins(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
@@ -283,6 +291,8 @@ extension _FridgePantryList on _FridgePantryPageState {
                   const SizedBox(height: 2),
                   Text(
                     '${fmtQty(item.quantity)} ${item.unit.label}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.poppins(
                         fontSize: 12, color: Colors.grey[500]),
                   ),
@@ -312,17 +322,19 @@ extension _FridgePantryList on _FridgePantryPageState {
                           ? Colors.orange[700]
                           : Colors.grey[400],
                     ),
-                    const SizedBox(width: 3),
-                    Text(
-                      'Urgent',
-                      style: GoogleFonts.poppins(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: isUrgent
-                            ? Colors.orange[700]
-                            : Colors.grey[400],
+                    if (MediaQuery.of(context).size.width >= 360) ...[
+                      const SizedBox(width: 3),
+                      Text(
+                        'Urgent',
+                        style: GoogleFonts.poppins(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: isUrgent
+                              ? Colors.orange[700]
+                              : Colors.grey[400],
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),

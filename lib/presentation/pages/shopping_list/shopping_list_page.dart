@@ -314,7 +314,8 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Column(
+                      Expanded(
+                        child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
@@ -329,13 +330,17 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                             _mealPlan != null 
                               ? '${uncheckedItems.length} articles à acheter'
                               : 'Aucun plan actif',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.poppins(
                               fontSize: 14,
                               color: Colors.grey[600],
                             ),
                           ),
                         ],
+                        ),
                       ),
+                      const SizedBox(width: 12),
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
@@ -407,7 +412,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                 Expanded(
                   child: SlidableAutoCloseBehavior(
                   child: ListView(
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 88),
                     children: [
                       // Empty state when all items are checked
                       if (groupedUnchecked.isEmpty && checkedItems.isNotEmpty)
@@ -470,12 +475,16 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                                     ),
                                     const SizedBox(width: 8),
                                   ],
-                                  Text(
-                                    headerTitle,
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                      color: const Color(0xFF1A1A1A),
+                                  Flexible(
+                                    child: Text(
+                                      headerTitle,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        color: const Color(0xFF1A1A1A),
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 8),
@@ -552,7 +561,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
           shape: const RoundedRectangleBorder(
             borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
           ),
-          builder: (ctx) => Padding(
+          builder: (ctx) => SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -574,6 +583,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                   style: GoogleFonts.poppins(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.black87)),
                 const SizedBox(height: 8),
                 Text('Supprimer "${item.name}" de la liste ?',
+                  maxLines: 3, overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey[500]), textAlign: TextAlign.center),
                 if (isValidated) ...[
                   const SizedBox(height: 12),

@@ -9,7 +9,7 @@ extension _PlannerGeneration on _PlannerPageState {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      builder: (ctx) => Padding(
+      builder: (ctx) => SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -86,9 +86,11 @@ extension _PlannerGeneration on _PlannerPageState {
             children: [
               const Icon(Icons.info_outline_rounded, color: Colors.white),
               const SizedBox(width: 12),
-              Text(
-                'Veuillez sélectionner une date et une durée',
-                style: GoogleFonts.poppins(color: Colors.white),
+              Expanded(
+                child: Text(
+                  'Veuillez sélectionner une date et une durée',
+                  style: GoogleFonts.poppins(color: Colors.white),
+                ),
               ),
             ],
           ),

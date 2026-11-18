@@ -31,7 +31,7 @@ class ForceUpdateDialog extends StatelessWidget {
         backgroundColor: _purpleSurface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         insetPadding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(
             mainAxisSize: MainAxisSize.min,

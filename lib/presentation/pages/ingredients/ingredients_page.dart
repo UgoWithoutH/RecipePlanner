@@ -303,6 +303,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
                                             child: Wrap(
                                               crossAxisAlignment: WrapCrossAlignment.center,
                                               spacing: 8,
+                                              runSpacing: 4,
                                               children: [
                                                 Text(
                                                   name,

@@ -23,6 +23,7 @@ import 'presentation/providers/auth_state.dart';
 
 import 'data/repositories/notification_settings_repository.dart';
 import 'data/repositories/group_repository.dart';
+import 'data/repositories/firebase_unit_repository.dart';
 import 'data/services/force_update_service.dart';
 import 'presentation/widgets/force_update_dialog.dart';
 import 'firebase_options.dart';
@@ -175,6 +176,14 @@ class _DataLoaderState extends State<_DataLoader> {
     // Initialise les préférences de notification avec les valeurs par défaut
     // si l'utilisateur n'en a jamais configuré (première ouverture).
     await NotificationSettingsRepository().initializeDefaults();
+    // Charge les unités et correspondances du groupe (créées par défaut si absentes).
+    if (groupId != null) {
+      try {
+        await FirebaseUnitRepository().load();
+      } catch (e) {
+        debugPrint('Unit load failed: $e');
+      }
+    }
     if (mounted) {
       setState(() {
         _hasGroup = groupId != null;

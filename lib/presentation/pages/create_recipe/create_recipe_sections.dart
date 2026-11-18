@@ -107,7 +107,11 @@ extension _CreateRecipeSections on _CreateRecipePageState {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  IconButton(
+                    tooltip: 'Gérer les unités',
+                    onPressed: _openUnitsPage,
+                    icon: Icon(Icons.straighten_rounded, color: Colors.grey[600], size: 22),
+                  ),
                   FloatingActionButton.small(
                     onPressed: _addIngredient,
                     backgroundColor: const Color(0xFF6A5AE0),

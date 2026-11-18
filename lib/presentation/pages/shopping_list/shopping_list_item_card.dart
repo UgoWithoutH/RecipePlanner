@@ -27,13 +27,10 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
   bool _expanded = false;
 
   String _formatBase(double base, String displayUnit) {
-    final isVolume = displayUnit == 'l' || displayUnit == 'ml';
-    final isMass = displayUnit == 'kg' || displayUnit == 'g';
-    if (isVolume && base >= 1000) return '${fmtQty(base / 1000)} l';
-    if (isVolume) return '${fmtQty(base)} ml';
-    if (isMass && base >= 1000) return '${fmtQty(base / 1000)} kg';
-    if (isMass) return '${fmtQty(base)} g';
-    return '${fmtQty(base)} ${Unit.labelOf(displayUnit)}';
+    final unit = Unit.byName(displayUnit);
+    if (unit == null) return '${fmtQty(base)} ${Unit.labelOf(displayUnit)}';
+    final (qty, shown) = unit.displayFromBase(base);
+    return '${fmtQty(qty)} ${shown.label}';
   }
 
   void _showContributionsSheet(BuildContext context) {

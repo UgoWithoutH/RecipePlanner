@@ -24,6 +24,7 @@ import '../../../data/repositories/firebase_meal_plan_repository.dart';
 import '../../../domain/usecases/shopping_list_generator.dart';
 import '../../../domain/entities/ingredient_type.dart';
 import '../../../data/repositories/firebase_ingredient_type_repository.dart';
+import '../units_page.dart';
 
 import '../../../domain/entities/pending_ingredient.dart';
 
@@ -64,7 +65,18 @@ class _CreateRecipePageState extends State<CreateRecipePage> {
   late TextEditingController _instructionController;
 
   Unit? _selectedIngredientUnit;
-  final List<Unit> _units = Unit.values;
+
+  Future<void> _openUnitsPage() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const UnitsPage()),
+    );
+    if (!mounted) return;
+    setState(() {
+      final selected = _selectedIngredientUnit;
+      _selectedIngredientUnit = selected == null ? null : Unit.byName(selected.name);
+    });
+  }
 
   // Portions scaling
   late FocusNode _servingsFocusNode;

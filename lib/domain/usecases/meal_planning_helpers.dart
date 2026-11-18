@@ -163,27 +163,11 @@ void _consumePantryItems({
 }
 
 /// Retourne l'unité de base de la famille de l'unité donnée
-/// g/kg → g | ml/l → ml | c.à.s./tasse → c.à.t. | autres → inchangé
-Unit _baseUnit(Unit unit) {
-  switch (unit) {
-    case Unit.kg:         return Unit.g;
-    case Unit.l:          return Unit.ml;
-    case Unit.tablespoon: return Unit.teaspoon;
-    case Unit.cup:        return Unit.teaspoon;
-    default:              return unit;
-  }
-}
+/// (selon les correspondances configurées, ex : kg → g, tasse → c.à.c.)
+Unit _baseUnit(Unit unit) => unit.baseUnit;
 
 /// Convertit une quantité vers l'unité de base de sa famille
-double _toNormalized(double qty, Unit unit) {
-  switch (unit) {
-    case Unit.kg:         return qty * 1000.0; // kg → g
-    case Unit.l:          return qty * 1000.0; // l → ml
-    case Unit.tablespoon: return qty * 3.0;    // c.à.s. → c.à.t.
-    case Unit.cup:        return qty * 48.0;   // tasse → c.à.t. (1 tasse = 16 c.à.s. = 48 c.à.t.)
-    default:              return qty;
-  }
-}
+double _toNormalized(double qty, Unit unit) => unit.toBase(qty);
 
 /// Builds a cache of ingredient similarity between all recipe pairs
 Map<String, Map<String, double>> _buildSimilarityCache(List<Recipe> recipes, Map<String, double> ingredientWeights) {

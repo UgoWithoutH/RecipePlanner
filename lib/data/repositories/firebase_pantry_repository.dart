@@ -88,41 +88,17 @@ class FirebasePantryRepository {
   /// Si l'item existe → additionne la quantité. Sinon → crée un nouvel item.
   /// Ne traite que les unités identiques.
   // ── Helpers de conversion d'unités ──────────────────────────────────────
-  /// Convertit une quantité vers l'unité de base (ml pour liquides, g pour poids).
-  double _toBase(double qty, Unit unit) {
-    if (unit == Unit.l) return qty * 1000;
-    if (unit == Unit.kg) return qty * 1000;
-    return qty;
-  }
-
-  /// Retourne l'unité de base correspondante.
-  Unit _baseUnit(Unit unit) {
-    if (unit == Unit.l) return Unit.ml;
-    if (unit == Unit.kg) return Unit.g;
-    return unit;
-  }
+  /// Convertit une quantité vers l'unité de base de sa famille (selon les
+  /// correspondances d'unités du groupe).
+  double _toBase(double qty, Unit unit) => unit.toBase(qty);
 
   /// Convertit une quantité en base vers l'unité cible d'un item frigo.
   /// Renvoie la quantité dans l'unité d'origine du pantryItem.
-  double _fromBase(double baseQty, Unit targetUnit) {
-    if (targetUnit == Unit.l || targetUnit == Unit.ml) {
-      return targetUnit == Unit.l ? baseQty / 1000 : baseQty;
-    }
-    if (targetUnit == Unit.kg || targetUnit == Unit.g) {
-      return targetUnit == Unit.kg ? baseQty / 1000 : baseQty;
-    }
-    return baseQty;
-  }
+  double _fromBase(double baseQty, Unit targetUnit) =>
+      targetUnit.fromBase(baseQty);
 
   /// Vérifie si deux unités sont compatibles (même famille).
-  bool _unitsCompatible(Unit a, Unit b) {
-    if (a == b) return true;
-    final liquids = {Unit.ml, Unit.l};
-    final weights = {Unit.g, Unit.kg};
-    if (liquids.contains(a) && liquids.contains(b)) return true;
-    if (weights.contains(a) && weights.contains(b)) return true;
-    return false;
-  }
+  bool _unitsCompatible(Unit a, Unit b) => a.isSameDimension(b);
 
   Future<void> restoreFromMeals(List<Meal> meals) async {
     final pantryItems = await getAll();

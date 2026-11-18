@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import '../../core/constants/unit.dart';
 import '../../core/utils/ingredient_name_cache.dart';
 import '../../data/repositories/firebase_shopping_list_repository.dart';
 import '../entities/meal_plan.dart';
@@ -175,33 +176,19 @@ class ShoppingListGenerator {
       // Capture total required per ingredient BEFORE pantry deduction (in base units)
       final Map<String, double> totalRequiredBaseMap = {};
       for (final entry in shoppingListMap.entries) {
-        double base = entry.value.quantity;
-        final u = entry.value.unit;
-        if (u == 'l') base *= 1000;
-        if (u == 'kg') base *= 1000;
-        totalRequiredBaseMap[entry.key] = base;
+        final itemUnit = Unit.byName(entry.value.unit);
+        totalRequiredBaseMap[entry.key] = itemUnit == null
+            ? entry.value.quantity
+            : itemUnit.toBase(entry.value.quantity);
       }
 
       // Apply pantry reductions (items I already have)
-      // Units are normalised to a base unit before comparison:
-      //   ml & l  → ml   |   g & kg → g
-      // This allows e.g. "500 ml" in the pantry to correctly reduce "1 l" on the list.
-      double _toBase(double qty, String unit) {
-        if (unit == 'l') return qty * 1000;
-        if (unit == 'kg') return qty * 1000;
-        return qty; // ml, g, piece, etc. already in base
-      }
-
-      String _baseUnit(String unit) {
-        if (unit == 'l') return 'ml';
-        if (unit == 'kg') return 'g';
-        return unit;
-      }
-
+      // Units are normalised to the base unit of their family (configured in the
+      // unit conversions) before comparison, so that e.g. "500 ml" in the pantry
+      // correctly reduces "1 l" on the list.
       for (final pantryItem in mealPlan.pantryItems) {
         final pantryName = pantryItem.ingredient.name.trim().toLowerCase();
-        final pantryBaseUnit = _baseUnit(pantryItem.unit.name);
-        final pantryBaseQty = _toBase(pantryItem.quantity, pantryItem.unit.name);
+        final pantryBaseQty = pantryItem.unit.toBase(pantryItem.quantity);
 
         String? keyToRemove;
         String? keyToUpdate;
@@ -211,36 +198,19 @@ class ShoppingListGenerator {
         for (final entry in shoppingListMap.entries) {
           final item = entry.value;
           final itemName = item.name.trim().toLowerCase();
-          final itemBaseUnit = _baseUnit(item.unit);
+          final itemUnit = Unit.byName(item.unit);
 
-          if (itemName == pantryName && itemBaseUnit == pantryBaseUnit) {
-            final itemBaseQty = _toBase(item.quantity, item.unit);
-            final remaining = itemBaseQty - pantryBaseQty;
+          if (itemName == pantryName &&
+              itemUnit != null &&
+              itemUnit.isSameDimension(pantryItem.unit)) {
+            final remaining = itemUnit.toBase(item.quantity) - pantryBaseQty;
             if (remaining <= 0) {
               keyToRemove = entry.key;
             } else {
               keyToUpdate = entry.key;
-              // Convert back: if original unit was 'l' and remaining >= 1000, keep l; else use ml
-              if (item.unit == 'l' || item.unit == 'ml') {
-                if (remaining >= 1000) {
-                  newQty = remaining / 1000;
-                  newUnit = 'l';
-                } else {
-                  newQty = remaining;
-                  newUnit = 'ml';
-                }
-              } else if (item.unit == 'kg' || item.unit == 'g') {
-                if (remaining >= 1000) {
-                  newQty = remaining / 1000;
-                  newUnit = 'kg';
-                } else {
-                  newQty = remaining;
-                  newUnit = 'g';
-                }
-              } else {
-                newQty = remaining;
-                newUnit = item.unit;
-              }
+              final (qty, unit) = itemUnit.displayFromBase(remaining);
+              newQty = qty;
+              newUnit = unit.name;
             }
             break;
           }

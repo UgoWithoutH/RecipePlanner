@@ -8,6 +8,7 @@ import '../../widgets/ingredient_autocomplete.dart' show IngredientAutocomplete;
 
 import '../recipe_detail/recipe_detail_page.dart';
 import '../categories_page.dart';
+import '../units_page.dart';
 import '../create_recipe/create_recipe_page.dart';
 import '../../../data/repositories/firebase_recipe_repository.dart';
 import '../../../data/repositories/group_repository.dart';
@@ -197,6 +198,13 @@ class _RecipesPageState extends State<RecipesPage> {
     _fetchCategories();
   }
 
+  Future<void> _openUnitsPage() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const UnitsPage()),
+    );
+  }
+
   Future<void> _createNewRecipe() async {
     final result = await Navigator.push(
       context,
@@ -250,21 +258,46 @@ class _RecipesPageState extends State<RecipesPage> {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      InkWell(
-                        onTap: _openCategoriesPage,
-                        borderRadius: BorderRadius.circular(14),
-                        child: Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          InkWell(
+                            onTap: _openUnitsPage,
                             borderRadius: BorderRadius.circular(14),
+                            child: Tooltip(
+                              message: 'Unités',
+                              child: Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                child: const Icon(
+                                  Icons.straighten_rounded,
+                                  size: 22,
+                                  color: Color(0xFF6A5AE0),
+                                ),
+                              ),
+                            ),
                           ),
-                          child: const Icon(
-                            Icons.local_offer_rounded,
-                            size: 22,
-                            color: Color(0xFF6A5AE0),
+                          const SizedBox(width: 8),
+                          InkWell(
+                            onTap: _openCategoriesPage,
+                            borderRadius: BorderRadius.circular(14),
+                            child: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF6A5AE0).withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: const Icon(
+                                Icons.local_offer_rounded,
+                                size: 22,
+                                color: Color(0xFF6A5AE0),
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
                     ],
                   ),

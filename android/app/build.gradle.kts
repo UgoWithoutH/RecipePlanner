@@ -1,13 +1,13 @@
+import com.android.build.api.dsl.ApplicationExtension
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     // FlutterFire
     id("com.google.gms.google-services")
-    id("kotlin-android")
+    // Kotlin is built into AGP 9: the kotlin-android plugin must not be applied
     id("dev.flutter.flutter-gradle-plugin")
 }
-
-import java.util.Properties
-import java.io.FileInputStream
 
 // --- Charger les propriétés du keystore ---
 val keystorePropertiesFile = rootProject.file("key.properties")
@@ -16,7 +16,7 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
-android {
+extensions.configure<ApplicationExtension>("android") {
     namespace = "fr.ugowithouth.recipe_planner"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
@@ -33,10 +33,6 @@ android {
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
     }
 
     // --- Config signing release ---

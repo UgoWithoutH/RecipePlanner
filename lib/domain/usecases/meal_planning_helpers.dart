@@ -154,8 +154,8 @@ void _consumePantryItems({
     final pantryEntry = pantryRemaining[name];
     if (pantryEntry != null) {
       final (pantryQty, pantryBaseUnit) = pantryEntry;
-      if (pantryBaseUnit == _baseUnit(ingredient.unit)) {
-        final consumed = _toNormalized(ingredient.quantity * recipeMultiplier, ingredient.unit);
+      if (pantryBaseUnit == _baseUnit(name, ingredient.unit)) {
+        final consumed = _toNormalized(name, ingredient.quantity * recipeMultiplier, ingredient.unit);
         pantryRemaining[name] = (max(0.0, pantryQty - consumed), pantryBaseUnit);
       }
     }
@@ -163,11 +163,13 @@ void _consumePantryItems({
 }
 
 /// Retourne l'unité de base de la famille de l'unité donnée
-/// (selon les correspondances configurées, ex : kg → g, tasse → c.à.c.)
-Unit _baseUnit(Unit unit) => unit.baseUnit;
+/// (selon les correspondances configurées, ex : kg → g, tasse → c.à.c.),
+/// en tenant compte des équivalences propres à l'ingrédient [name].
+Unit _baseUnit(String name, Unit unit) => IngredientEquivalences.baseUnitFor(name, unit);
 
 /// Convertit une quantité vers l'unité de base de sa famille
-double _toNormalized(double qty, Unit unit) => unit.toBase(qty);
+double _toNormalized(String name, double qty, Unit unit) =>
+    IngredientEquivalences.toBaseFor(name, qty, unit);
 
 /// Builds a cache of ingredient similarity between all recipe pairs
 Map<String, Map<String, double>> _buildSimilarityCache(List<Recipe> recipes, Map<String, double> ingredientWeights) {

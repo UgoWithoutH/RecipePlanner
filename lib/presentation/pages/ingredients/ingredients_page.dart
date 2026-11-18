@@ -5,6 +5,7 @@ import '../../../core/utils/ingredient_name_cache.dart';
 import '../recipe_detail/recipe_detail_page.dart';
 import '../../../domain/entities/recipe.dart';
 import '../../../core/constants/unit.dart' show Unit;
+import '../../../core/constants/ingredient_equivalence.dart';
 import '../../../core/constants/meal_time.dart';
 import '../../../domain/entities/ingredient.dart';
 import '../../../domain/entities/recipe_ingredient.dart';
@@ -17,6 +18,7 @@ import '../../../data/repositories/group_repository.dart';
 import '../../../data/repositories/firebase_stats_repository.dart';
 
 part 'ingredients_crud.dart';
+part 'ingredients_equivalences.dart';
 part 'ingredients_filters.dart';
 
 part 'ingredients_widgets.dart';

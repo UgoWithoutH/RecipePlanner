@@ -33,6 +33,16 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
     return '${fmtQty(qty)} ${shown.label}';
   }
 
+  /// Équivalences propres à l'ingrédient, ex : " (1,5 paquet)".
+  String _equivalentText(double qty, String unitCode) {
+    final unit = Unit.byName(unitCode);
+    if (unit == null) return '';
+    final alternatives =
+        IngredientEquivalences.alternativesFor(widget.item.name, qty, unit);
+    if (alternatives.isEmpty) return '';
+    return ' (${alternatives.map((a) => '${fmtQty(a.$1)} ${a.$2.label}').join(', ')})';
+  }
+
   void _showContributionsSheet(BuildContext context) {
     final item = widget.item;
     showModalBottomSheet(
@@ -285,7 +295,7 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
-                                  '${widget.formatQuantity(item.quantity)} ${Unit.labelOf(item.unit)}',
+                                  '${widget.formatQuantity(item.quantity)} ${Unit.labelOf(item.unit)}${_equivalentText(item.quantity, item.unit)}',
                                   style: GoogleFonts.poppins(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
@@ -420,7 +430,7 @@ class _ShoppingListItemCardState extends State<_ShoppingListItemCard> {
                     _qRow(
                         'À acheter',
                         item.quantity > 0
-                            ? '${fmtQty(item.quantity)} ${Unit.labelOf(item.unit)}'
+                            ? '${fmtQty(item.quantity)} ${Unit.labelOf(item.unit)}${_equivalentText(item.quantity, item.unit)}'
                             : '—',
                         const Color(0xFF6A5AE0),
                         bold: true),

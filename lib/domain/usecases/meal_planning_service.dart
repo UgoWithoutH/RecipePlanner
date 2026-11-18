@@ -5,6 +5,7 @@ import '../entities/meal_plan.dart';
 import 'dart:math';
 import '../entities/recipe_ingredient.dart';
 import '../../core/constants/unit.dart';
+import '../../core/constants/ingredient_equivalence.dart';
 import '../../core/constants/meal_time.dart';
 
 part 'meal_planning_recipe_selection.dart';
@@ -150,8 +151,8 @@ class MealPlanningService {
     for (final item in pantryItems) {
       final name = item.ingredient.name.toLowerCase().trim();
       if (name.isNotEmpty) {
-        final baseUnitPantry = _baseUnit(item.unit);
-        final normalizedQty = _toNormalized(item.quantity, item.unit);
+        final baseUnitPantry = _baseUnit(name, item.unit);
+        final normalizedQty = _toNormalized(name, item.quantity, item.unit);
         final existing = pantryRemaining[name];
         if (existing != null && existing.$2 == baseUnitPantry) {
           pantryRemaining[name] = (existing.$1 + normalizedQty, baseUnitPantry);

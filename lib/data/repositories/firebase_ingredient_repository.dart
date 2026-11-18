@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../core/constants/ingredient_equivalence.dart';
 import 'group_repository.dart';
 
 class FirebaseIngredientRepository {
@@ -17,7 +18,10 @@ class FirebaseIngredientRepository {
   Future<List<Map<String, dynamic>>> getAllIngredients() async {
     final groupId = await _getGroupId();
     if (groupId == null) return [];
-    if (_cache.containsKey(groupId)) return _cache[groupId]!;
+    if (_cache.containsKey(groupId)) {
+      _configureEquivalences(_cache[groupId]!);
+      return _cache[groupId]!;
+    }
     final snap = await _ingredients.where('groupId', isEqualTo: groupId).get();
     final result = snap.docs.map((doc) {
       final data = doc.data() as Map<String, dynamic>;
@@ -26,10 +30,21 @@ class FirebaseIngredientRepository {
         'name': data['name'],
         'typeId': data.containsKey('typeId') ? data['typeId'] : null,
         'usageCount': (data['usageCount'] as num?)?.toInt() ?? 0,
+        'unitEquivalences': data['unitEquivalences'],
       };
     }).toList();
     _cache[groupId] = result;
+    _configureEquivalences(result);
     return result;
+  }
+
+  static void _configureEquivalences(List<Map<String, dynamic>> ingredients) {
+    IngredientEquivalences.configure({
+      for (final ing in ingredients)
+        if (ing['name'] is String)
+          ing['name'] as String:
+              IngredientEquivalence.listFromRaw(ing['unitEquivalences']),
+    });
   }
 
   /// Retourne l'ingrédient (id, name, typeId) correspondant à un nom (non sensible à la casse), ou null si absent

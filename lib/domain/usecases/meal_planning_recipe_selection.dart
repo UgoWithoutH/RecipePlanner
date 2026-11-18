@@ -232,13 +232,13 @@ Recipe? _selectBestRecipe({
         final pantryEntry = pantryRemaining[name];
         if (pantryEntry != null) {
           final (pantryQty, pantryBaseUnit) = pantryEntry;
-          if (pantryBaseUnit == _baseUnit(ingredient.unit) && pantryQty > 0.0) {
+          if (pantryBaseUnit == _baseUnit(name, ingredient.unit) && pantryQty > 0.0) {
             if (urgentPantryNames.contains(name)) {
               urgentMatchCount++;
             } else {
               normalMatchCount++;
             }
-            final normalizedIngQty = _toNormalized(ingredient.quantity, ingredient.unit);
+            final normalizedIngQty = _toNormalized(name, ingredient.quantity, ingredient.unit);
             if (normalizedIngQty > 0) {
               final usesNeeded = (pantryQty / normalizedIngQty).ceil();
               if (usesNeeded > maxUsesNeeded) maxUsesNeeded = usesNeeded;

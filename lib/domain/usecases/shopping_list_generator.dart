@@ -1,7 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../../core/constants/unit.dart';
+import '../../core/constants/ingredient_equivalence.dart';
 import '../../core/utils/ingredient_name_cache.dart';
+import '../../data/repositories/firebase_ingredient_repository.dart';
 import '../../data/repositories/firebase_shopping_list_repository.dart';
 import '../entities/meal_plan.dart';
 import '../entities/shopping_list.dart';
@@ -21,10 +23,14 @@ class ShoppingListGenerator {
   Future<void> generateAndSaveShoppingList(MealPlan mealPlan) async {
     try {
       final firestore = FirebaseFirestore.instance;
+      // Charge les équivalences d'unités propres à chaque ingrédient
+      await FirebaseIngredientRepository().getAllIngredients();
       // Map of ingredientId -> ShoppingItem
       final Map<String, ShoppingItem> shoppingListMap = {};
       // ingredient key → recipeId → accumulator
       final Map<String, Map<String, _ContribAccum>> ingredientContribs = {};
+      // ingredient key → quantités brutes (avec leur unité de recette)
+      final Map<String, List<(double, String)>> rawEntries = {};
 
       for (final meal in mealPlan.meals) {
         // Les repas "restes" n'ont pas besoin d'achat : les ingrédients ont déjà
@@ -109,6 +115,7 @@ class ShoppingListGenerator {
 
           // Track per-recipe contribution
           final recipeContribs = ingredientContribs.putIfAbsent(key, () => {});
+          rawEntries.putIfAbsent(key, () => []).add((qty * ratio, unit));
           if (recipeContribs.containsKey(meal.recipe.id)) {
             recipeContribs[meal.recipe.id]!.qty += qty * ratio;
           } else {
@@ -173,22 +180,47 @@ class ShoppingListGenerator {
         }
       }
 
+      // Fusionne les quantités exprimées dans des unités différentes (ex : « 1 paquet »
+      // + « 100 g » de lardons) grâce aux équivalences, puis exprime les unités
+      // à équivalence dans leur unité cible (1.5 paquet → 300 g).
+      for (final key in shoppingListMap.keys.toList()) {
+        final item = shoppingListMap[key]!;
+        final entries = rawEntries[key] ?? const [];
+        final firstUnit = Unit.byName(item.unit);
+        if (firstUnit == null) continue;
+        var total = 0.0;
+        for (final (qty, unitCode) in entries) {
+          final entryUnit = Unit.byName(unitCode);
+          final converted = entryUnit == null
+              ? null
+              : IngredientEquivalences.convertFor(
+                  item.name, qty, entryUnit, firstUnit);
+          total += converted ?? qty;
+        }
+        final (resolvedQty, resolvedUnit) =
+            IngredientEquivalences.resolve(item.name, total, firstUnit);
+        shoppingListMap[key] =
+            item.copyWith(quantity: resolvedQty, unit: resolvedUnit.name);
+      }
+
       // Capture total required per ingredient BEFORE pantry deduction (in base units)
       final Map<String, double> totalRequiredBaseMap = {};
       for (final entry in shoppingListMap.entries) {
         final itemUnit = Unit.byName(entry.value.unit);
         totalRequiredBaseMap[entry.key] = itemUnit == null
             ? entry.value.quantity
-            : itemUnit.toBase(entry.value.quantity);
+            : IngredientEquivalences.toBaseFor(
+                entry.value.name, entry.value.quantity, itemUnit);
       }
 
       // Apply pantry reductions (items I already have)
       // Units are normalised to the base unit of their family (configured in the
-      // unit conversions) before comparison, so that e.g. "500 ml" in the pantry
-      // correctly reduces "1 l" on the list.
+      // unit conversions and in the ingredient equivalences) before comparison,
+      // so that e.g. "500 ml" in the pantry correctly reduces "1 l" on the list.
       for (final pantryItem in mealPlan.pantryItems) {
         final pantryName = pantryItem.ingredient.name.trim().toLowerCase();
-        final pantryBaseQty = pantryItem.unit.toBase(pantryItem.quantity);
+        final pantryBaseQty = IngredientEquivalences.toBaseFor(
+            pantryName, pantryItem.quantity, pantryItem.unit);
 
         String? keyToRemove;
         String? keyToUpdate;
@@ -202,8 +234,11 @@ class ShoppingListGenerator {
 
           if (itemName == pantryName &&
               itemUnit != null &&
-              itemUnit.isSameDimension(pantryItem.unit)) {
-            final remaining = itemUnit.toBase(item.quantity) - pantryBaseQty;
+              IngredientEquivalences.isSameDimensionFor(
+                  itemName, itemUnit, pantryItem.unit)) {
+            final remaining = IngredientEquivalences.toBaseFor(
+                    itemName, item.quantity, itemUnit) -
+                pantryBaseQty;
             if (remaining <= 0) {
               keyToRemove = entry.key;
             } else {

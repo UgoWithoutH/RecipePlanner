@@ -5,6 +5,7 @@ extension _IngredientsCrud on _IngredientsPageState {
   Future<void> _addIngredient() async {
     final controller = TextEditingController();
     String? selectedTypeId;
+    final equivalences = <IngredientEquivalence>[];
 
     final result = await showDialog<bool>(
       context: context,
@@ -13,7 +14,8 @@ extension _IngredientsCrud on _IngredientsPageState {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
           title: Text('Ajouter un ingrédient',
               style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-          content: Column(
+          content: SingleChildScrollView(
+           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -63,7 +65,10 @@ extension _IngredientsCrud on _IngredientsPageState {
                 })],
                 onChanged: (val) => setStateDialog(() => selectedTypeId = val),
               ),
+              const SizedBox(height: 20),
+              _buildEquivalencesEditor(context, equivalences, setStateDialog),
             ],
+          ),
           ),
           actions: [
             TextButton(
@@ -105,6 +110,9 @@ extension _IngredientsCrud on _IngredientsPageState {
       if (selectedTypeId != null) {
         data['typeId'] = selectedTypeId;
       }
+      if (equivalences.isNotEmpty) {
+        data['unitEquivalences'] = equivalences.map((e) => e.toMap()).toList();
+      }
 
       final gid = await GroupRepository.instance.getCurrentGroupId();
       if (gid != null) data['groupId'] = gid;
@@ -121,6 +129,9 @@ extension _IngredientsCrud on _IngredientsPageState {
   Future<void> _editIngredient(String id, String oldName, String? oldTypeId) async {
     final controller = TextEditingController(text: oldName);
     String? selectedTypeId = oldTypeId;
+    final equivalences = IngredientEquivalence.listFromRaw(
+        _ingredients.firstWhere((ing) => ing['id'] == id,
+            orElse: () => const {})['unitEquivalences']);
 
     final result = await showDialog<bool>(
       context: context,
@@ -131,7 +142,8 @@ extension _IngredientsCrud on _IngredientsPageState {
             'Modifier l\'ingrédient',
             style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
           ),
-          content: Column(
+          content: SingleChildScrollView(
+           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -184,7 +196,10 @@ extension _IngredientsCrud on _IngredientsPageState {
                 ],
                 onChanged: (val) => setStateDialog(() => selectedTypeId = val),
               ),
+              const SizedBox(height: 20),
+              _buildEquivalencesEditor(context, equivalences, setStateDialog),
             ],
+          ),
           ),
           actions: [
             TextButton(
@@ -226,6 +241,7 @@ extension _IngredientsCrud on _IngredientsPageState {
 
       final updates = <String, dynamic>{'name': newName};
       updates['typeId'] = selectedTypeId; // Can be null to remove type
+      updates['unitEquivalences'] = equivalences.map((e) => e.toMap()).toList();
 
       await FirebaseFirestore.instance
           .collection('ingredients')

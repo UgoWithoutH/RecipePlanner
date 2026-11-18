@@ -14,6 +14,7 @@ import '../../../domain/usecases/shopping_list_generator.dart';
 import '../../../data/repositories/firebase_ingredient_type_repository.dart';
 import '../../../domain/entities/ingredient_type.dart';
 import '../../../core/constants/unit.dart';
+import '../../../core/constants/ingredient_equivalence.dart';
 import '../../../core/utils/qty_format.dart';
 import '../recipe_detail/recipe_detail_page.dart';
 

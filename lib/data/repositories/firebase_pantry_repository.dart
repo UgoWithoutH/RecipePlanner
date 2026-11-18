@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/constants/unit.dart';
+import '../../core/constants/ingredient_equivalence.dart';
 import '../../domain/entities/meal_plan.dart';
 import '../../domain/entities/pantry_item.dart';
 import 'group_repository.dart';
@@ -90,15 +91,17 @@ class FirebasePantryRepository {
   // ── Helpers de conversion d'unités ──────────────────────────────────────
   /// Convertit une quantité vers l'unité de base de sa famille (selon les
   /// correspondances d'unités du groupe).
-  double _toBase(double qty, Unit unit) => unit.toBase(qty);
+  double _toBase(String name, double qty, Unit unit) =>
+      IngredientEquivalences.toBaseFor(name, qty, unit);
 
   /// Convertit une quantité en base vers l'unité cible d'un item frigo.
   /// Renvoie la quantité dans l'unité d'origine du pantryItem.
-  double _fromBase(double baseQty, Unit targetUnit) =>
-      targetUnit.fromBase(baseQty);
+  double _fromBase(String name, double baseQty, Unit targetUnit) =>
+      IngredientEquivalences.fromBaseFor(name, baseQty, targetUnit);
 
   /// Vérifie si deux unités sont compatibles (même famille).
-  bool _unitsCompatible(Unit a, Unit b) => a.isSameDimension(b);
+  bool _unitsCompatible(String name, Unit a, Unit b) =>
+      IngredientEquivalences.isSameDimensionFor(name, a, b);
 
   Future<void> restoreFromMeals(List<Meal> meals) async {
     final pantryItems = await getAll();
@@ -113,17 +116,17 @@ class FirebasePantryRepository {
 
     for (final meal in meals) {
       for (final ingredient in meal.recipe.ingredients) {
-        final ingredientQtyBase =
-            _toBase(ingredient.quantity * meal.recipeMultiplier, ingredient.unit);
-
         PantryItem? existing =
             ingredient.ingredient.id.isNotEmpty ? byId[ingredient.ingredient.id] : null;
         existing ??= byName[ingredient.ingredient.name.toLowerCase().trim()];
+        final eqName = existing?.name ?? ingredient.ingredient.name;
+        final ingredientQtyBase = _toBase(
+            eqName, ingredient.quantity * meal.recipeMultiplier, ingredient.unit);
 
         if (existing != null) {
-          if (!_unitsCompatible(existing.unit, ingredient.unit)) continue;
+          if (!_unitsCompatible(eqName, existing.unit, ingredient.unit)) continue;
           // Convertit la quantité à remettre vers l'unité du pantryItem
-          final restoredInPantryUnit = _fromBase(ingredientQtyBase, existing.unit);
+          final restoredInPantryUnit = _fromBase(eqName, ingredientQtyBase, existing.unit);
           final updated = existing.copyWith(
             quantity: existing.quantity + restoredInPantryUnit,
             updatedAt: DateTime.now(),
@@ -192,18 +195,18 @@ class FirebasePantryRepository {
 
     for (final meal in meals) {
       for (final ingredient in meal.recipe.ingredients) {
-        final consumedBase =
-            _toBase(ingredient.quantity * meal.recipeMultiplier, ingredient.unit);
-
         PantryItem? pantryItem =
             ingredient.ingredient.id.isNotEmpty ? byId[ingredient.ingredient.id] : null;
         pantryItem ??= byName[ingredient.ingredient.name.toLowerCase().trim()];
 
         if (pantryItem == null) continue;
-        if (!_unitsCompatible(pantryItem.unit, ingredient.unit)) continue;
+        final eqName = pantryItem.name;
+        if (!_unitsCompatible(eqName, pantryItem.unit, ingredient.unit)) continue;
+        final consumedBase = _toBase(
+            eqName, ingredient.quantity * meal.recipeMultiplier, ingredient.unit);
 
         // Convertit le pantryItem en base pour la soustraction
-        final pantryBase = _toBase(pantryItem.quantity, pantryItem.unit);
+        final pantryBase = _toBase(eqName, pantryItem.quantity, pantryItem.unit);
         final remainingBase = pantryBase - consumedBase;
 
         if (remainingBase <= 0) {
@@ -212,7 +215,7 @@ class FirebasePantryRepository {
           byName.remove(pantryItem.name.toLowerCase().trim());
         } else {
           // Reconvertit le résultat vers l'unité d'origine du pantryItem
-          final newQty = _fromBase(remainingBase, pantryItem.unit);
+          final newQty = _fromBase(eqName, remainingBase, pantryItem.unit);
           final updated = pantryItem.copyWith(
             quantity: newQty,
             updatedAt: DateTime.now(),
